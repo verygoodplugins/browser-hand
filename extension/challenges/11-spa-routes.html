@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>11 — SPA routes</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>11 — SPA client routes</h1>
+    <p class="meta">Hash routes without full reload. Re-snapshot after navigation.</p>
+    <nav>
+      <a href="#/home">Home</a> ·
+      <a href="#/settings">Settings</a> ·
+      <a href="#/done">Done</a>
+    </nav>
+    <div id="view"></div>
+    <div id="oracle-status" data-ok="false">FAIL: incomplete route tour</div>
+    <script>
+      window.__CHALLENGE__ = { id: "11", name: "SPA client routes", version: 1 };
+      const visited = new Set();
+      let prefsSaved = false;
+
+      function route() {
+        const hash = location.hash || "#/home";
+        visited.add(hash);
+        const view = document.getElementById("view");
+        if (hash === "#/settings") {
+          view.innerHTML =
+            '<h2>Settings</h2><label for="theme">Theme</label>' +
+            '<select id="theme"><option value="light">Light</option><option value="dark">Dark</option></select>' +
+            '<button type="button" id="save-prefs" class="primary">Save prefs</button>';
+          document.getElementById("save-prefs").addEventListener("click", function () {
+            prefsSaved = true;
+            const theme = document.getElementById("theme").value;
+            sessionStorage.setItem("ch11-theme", theme);
+            window.__refreshOracle();
+          });
+        } else if (hash === "#/done") {
+          view.innerHTML = "<h2>Done</h2><p class='hint'>Finish flag page.</p>";
+        } else {
+          view.innerHTML = "<h2>Home</h2><p class='hint'>Visit Settings, save prefs, then Done.</p>";
+        }
+        window.__refreshOracle();
+      }
+
+      window.addEventListener("hashchange", route);
+      window.addEventListener("DOMContentLoaded", function () {
+        if (!location.hash) location.hash = "#/home";
+        route();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          visitedHome: visited.has("#/home"),
+          visitedSettings: visited.has("#/settings"),
+          visitedDone: visited.has("#/done"),
+          prefsSaved,
+        };
+        const ok =
+          checks.visitedHome &&
+          checks.visitedSettings &&
+          checks.visitedDone &&
+          checks.prefsSaved;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "SPA tour complete"
+            : "visit #/home, #/settings (save prefs), #/done without full reload",
+        };
+      };
+    </script>
+  </body>
+</html>

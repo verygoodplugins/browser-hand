@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>04 — Contenteditable bio</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      #bio {
+        min-height: 5rem;
+        max-width: 28rem;
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        padding: 0.5rem;
+        background: #fff;
+      }
+      #bio:empty:before {
+        content: attr(data-placeholder);
+        color: #888;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>04 — Contenteditable bio</h1>
+    <p class="meta">
+      Lexical-style trap: visible textContent can update without editor state if
+      you use execCommand / innerHTML without keyboard events.
+    </p>
+    <label for="bio">Bio</label>
+    <div
+      id="bio"
+      role="textbox"
+      contenteditable="true"
+      aria-label="Bio"
+      data-placeholder="Write a short bio…"
+    ></div>
+    <button type="button" id="save" class="primary">Save bio</button>
+    <div id="oracle-status" data-ok="false">FAIL: empty editor state</div>
+    <script>
+      window.__CHALLENGE__ = { id: "04", name: "Contenteditable bio", version: 1 };
+      // Editor state only updated on beforeinput/input from typing or paste events
+      let editorState = "";
+      let saved = null;
+      const bio = document.getElementById("bio");
+
+      bio.addEventListener("beforeinput", function (e) {
+        // mark that a real editing pipeline event fired
+        bio.dataset.realEdit = "1";
+      });
+
+      bio.addEventListener("input", function () {
+        if (bio.dataset.realEdit === "1") {
+          editorState = bio.innerText.replace(/\n$/, "");
+          window.__refreshOracle();
+        }
+      });
+
+      // Simulate Lexical: programmatic textContent/innerHTML does not set editorState
+      const desc = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+      // We don't override globally; instead oracle compares editorState to requirement.
+
+      document.getElementById("save").addEventListener("click", function () {
+        saved = editorState;
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const visible = (bio.innerText || "").replace(/\n$/, "").trim();
+        const checks = {
+          editorStateLongEnough: editorState.trim().length >= 10,
+          savedMatchesState: saved !== null && saved === editorState,
+          // classic trap: DOM shows text but editor state empty
+          notVisibleOnly: !(visible.length >= 10 && editorState.trim().length < 10),
+        };
+        const ok =
+          checks.editorStateLongEnough &&
+          checks.savedMatchesState &&
+          checks.notVisibleOnly;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "bio editor state saved"
+            : "type ≥10 chars via real keystrokes (input events), then Save bio",
+        };
+      };
+    </script>
+  </body>
+</html>

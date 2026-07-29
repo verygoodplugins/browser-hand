@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>03 — Controlled inputs</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>03 — Controlled inputs</h1>
+    <p class="meta">
+      Values only commit to app state on real <code>input</code> events. Setting
+      <code>.value</code> alone does not update state.
+    </p>
+    <form id="controlled-form">
+      <!-- Avoid Chrome password heuristics (label/id "username") which fire
+           debugger target_closed mid-type. Real username fields still need
+           extension soft-detach recovery. -->
+      <label for="handle">Handle</label>
+      <input
+        id="handle"
+        name="user_handle"
+        type="text"
+        autocomplete="off"
+        data-lpignore="true"
+        data-1p-ignore="true"
+      />
+
+      <label for="city">City</label>
+      <input id="city" name="city" type="text" autocomplete="off" />
+
+      <button type="submit" class="primary">Commit</button>
+    </form>
+    <p class="hint">State mirror: <code id="state-mirror">{}</code></p>
+    <div id="oracle-status" data-ok="false">FAIL: state empty</div>
+    <script>
+      window.__CHALLENGE__ = { id: "03", name: "Controlled inputs", version: 2 };
+      const state = { handle: "", city: "" };
+
+      function bindControlled(id, key) {
+        const el = document.getElementById(id);
+        el.addEventListener("input", function () {
+          state[key] = el.value;
+          document.getElementById("state-mirror").textContent = JSON.stringify(state);
+          window.__refreshOracle();
+        });
+      }
+
+      bindControlled("handle", "handle");
+      bindControlled("city", "city");
+
+      document.getElementById("controlled-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        window.__submitted = { ...state };
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const submitted = window.__submitted || null;
+        const checks = {
+          stateHandle: state.handle.length >= 3,
+          stateCity: state.city.length >= 2,
+          submitted: !!(
+            submitted &&
+            submitted.handle === state.handle &&
+            submitted.city === state.city
+          ),
+          notDomOnly:
+            !(document.getElementById("handle").value && !state.handle) &&
+            !(document.getElementById("city").value && !state.city),
+        };
+        const ok =
+          checks.stateHandle &&
+          checks.stateCity &&
+          checks.submitted &&
+          checks.notDomOnly;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "controlled state committed"
+            : "type real keystrokes (input events) into Handle+City, then Commit",
+        };
+      };
+    </script>
+  </body>
+</html>

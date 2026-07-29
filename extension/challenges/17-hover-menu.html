@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>17 — Hover menu</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      .menu { position: relative; display: inline-block; }
+      .flyout {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: 100%;
+        background: #fff;
+        border: 1px solid #bbb;
+        min-width: 10rem;
+        z-index: 5;
+      }
+      .menu:hover .flyout,
+      .menu:focus-within .flyout,
+      .menu.open .flyout { display: block; }
+      .flyout a {
+        display: block;
+        padding: 0.4rem 0.6rem;
+        text-decoration: none;
+        color: #1a1a1a;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>17 — Hover menu</h1>
+    <p class="meta">Reveal flyout (hover/focus/click), choose Account → Export.</p>
+    <div class="menu" id="menu">
+      <button type="button" id="menu-btn">Account ▾</button>
+      <div class="flyout" role="menu">
+        <a href="#profile" role="menuitem">Profile</a>
+        <a href="#export" role="menuitem" id="export-item">Export data</a>
+        <a href="#signout" role="menuitem">Sign out</a>
+      </div>
+    </div>
+    <p id="result" class="hint">No action yet.</p>
+    <div id="oracle-status" data-ok="false">FAIL: export not chosen</div>
+    <script>
+      window.__CHALLENGE__ = { id: "17", name: "Hover menu", version: 1 };
+      let exported = false;
+      const menu = document.getElementById("menu");
+      document.getElementById("menu-btn").addEventListener("click", () => {
+        menu.classList.toggle("open");
+      });
+      document.getElementById("export-item").addEventListener("click", (e) => {
+        e.preventDefault();
+        exported = true;
+        document.getElementById("result").textContent = "Export started.";
+        menu.classList.remove("open");
+        window.__refreshOracle();
+      });
+      window.__oracle = function () {
+        return {
+          ok: exported,
+          checks: { exported },
+          detail: exported ? "export chosen" : "open Account menu, click Export data",
+        };
+      };
+    </script>
+  </body>
+</html>

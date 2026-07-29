@@ -1,9 +1,10 @@
 {
-  "name": "dev-browser",
+  "name": "browser-hand",
   "version": "0.2.9",
-  "description": "CLI for controlling browsers with sandboxed JavaScript scripts",
+  "description": "Browser Hand — agent control of your real Chrome (Path A extension) plus upstream sandboxed CLI. Fork of SawyerHood/dev-browser.",
   "type": "module",
   "bin": {
+    "browser-hand": "./bin/dev-browser.js",
     "dev-browser": "./bin/dev-browser.js"
   },
   "scripts": {
@@ -16,6 +17,7 @@
     "scripts/",
     "daemon/dist/",
     "README.md",
+    "FORK.md",
     "LICENSE"
   ],
   "dependencies": {
@@ -29,12 +31,17 @@
     "playwright",
     "cli",
     "sandbox",
-    "quickjs"
+    "quickjs",
+    "chrome-extension",
+    "agent"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SawyerHood/dev-browser.git"
+    "url": "git+https://github.com/verygoodplugins/browser-hand.git"
   },
-  "author": "Sawyer Hood"
+  "author": "Very Good Plugins",
+  "contributors": [
+    "Sawyer Hood (upstream dev-browser)"
+  ]
 }

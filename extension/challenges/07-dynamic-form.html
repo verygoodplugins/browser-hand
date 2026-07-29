@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>07 — Dynamic form</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>07 — Dynamic form</h1>
+    <p class="meta">Choosing country injects extra fields. Re-snapshot after mutation.</p>
+    <form id="dyn-form">
+      <label for="country">Country</label>
+      <select id="country" name="country">
+        <option value="">— select —</option>
+        <option value="US">United States</option>
+        <option value="CA">Canada</option>
+        <option value="OTHER">Other</option>
+      </select>
+      <div id="extra"></div>
+      <button type="submit" class="primary">Submit address</button>
+    </form>
+    <div id="oracle-status" data-ok="false">FAIL: incomplete</div>
+    <script>
+      window.__CHALLENGE__ = { id: "07", name: "Dynamic form", version: 1 };
+      let payload = null;
+
+      document.getElementById("country").addEventListener("change", function (e) {
+        const box = document.getElementById("extra");
+        box.innerHTML = "";
+        if (e.target.value === "US") {
+          box.innerHTML =
+            '<label for="state">State</label><input id="state" name="state" type="text" />' +
+            '<label for="zip">ZIP</label><input id="zip" name="zip" type="text" />';
+        } else if (e.target.value === "CA") {
+          box.innerHTML =
+            '<label for="province">Province</label><input id="province" name="province" type="text" />' +
+            '<label for="postal">Postal code</label><input id="postal" name="postal" type="text" />';
+        } else if (e.target.value === "OTHER") {
+          box.innerHTML =
+            '<label for="region">Region</label><input id="region" name="region" type="text" />';
+        }
+        window.__refreshOracle();
+      });
+
+      document.getElementById("dyn-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const country = document.getElementById("country").value;
+        payload = { country };
+        if (country === "US") {
+          payload.state = (document.getElementById("state") || {}).value || "";
+          payload.zip = (document.getElementById("zip") || {}).value || "";
+        } else if (country === "CA") {
+          payload.province = (document.getElementById("province") || {}).value || "";
+          payload.postal = (document.getElementById("postal") || {}).value || "";
+        } else if (country === "OTHER") {
+          payload.region = (document.getElementById("region") || {}).value || "";
+        }
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const p = payload;
+        let checks = { submitted: !!p, countryUS: !!(p && p.country === "US") };
+        if (p && p.country === "US") {
+          checks.state = (p.state || "").trim().length >= 2;
+          checks.zip = /^\d{5}(-\d{4})?$/.test((p.zip || "").trim());
+        }
+        const ok =
+          checks.submitted &&
+          checks.countryUS &&
+          checks.state &&
+          checks.zip;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "US address accepted"
+            : "select United States, fill state + 5-digit ZIP, submit",
+        };
+      };
+    </script>
+  </body>
+</html>

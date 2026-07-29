@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>08 — Shadow DOM</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>08 — Shadow DOM</h1>
+    <p class="meta">Open shadow root form. Snapshot/selectors must pierce or evaluate inside.</p>
+    <div id="host"></div>
+    <div id="oracle-status" data-ok="false">FAIL: not submitted</div>
+    <script>
+      window.__CHALLENGE__ = { id: "08", name: "Shadow DOM", version: 1 };
+      let submitted = null;
+
+      const host = document.getElementById("host");
+      const shadow = host.attachShadow({ mode: "open" });
+      shadow.innerHTML =
+        '<style>label{display:block;margin-top:0.75rem;font-weight:600}input,button{font:inherit;margin-top:0.25rem}button{margin-top:1rem}</style>' +
+        '<form id="shadow-form">' +
+        '<label for="display-name">Display name</label>' +
+        '<input id="display-name" name="displayName" type="text" />' +
+        '<label for="handle">Handle</label>' +
+        '<input id="handle" name="handle" type="text" />' +
+        '<button type="submit">Save in shadow</button>' +
+        "</form>";
+
+      shadow.getElementById("shadow-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        submitted = {
+          displayName: shadow.getElementById("display-name").value.trim(),
+          handle: shadow.getElementById("handle").value.trim(),
+        };
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          submitted: !!submitted,
+          displayName: !!(submitted && submitted.displayName.length >= 2),
+          handle: !!(submitted && submitted.handle.length >= 2),
+        };
+        const ok = checks.submitted && checks.displayName && checks.handle;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "shadow form saved"
+            : "fill Display name + Handle inside shadow root, submit",
+        };
+      };
+    </script>
+  </body>
+</html>

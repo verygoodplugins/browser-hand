@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>09 — Iframe form</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>09 — Iframe form</h1>
+    <p class="meta">Same-origin iframe. Fill fields inside the frame.</p>
+    <iframe
+      id="ticket-frame"
+      src="./frames/09-inner.html"
+      title="Ticket form"
+      style="width: 100%; max-width: 28rem; height: 14rem; border: 1px solid #bbb; border-radius: 4px; background: #fff"
+    ></iframe>
+    <div id="oracle-status" data-ok="false">FAIL: not submitted</div>
+    <script>
+      window.__CHALLENGE__ = { id: "09", name: "Iframe form", version: 1 };
+      let payload = null;
+
+      window.addEventListener("message", function (e) {
+        if (e.data && e.data.type === "challenge-09") {
+          payload = e.data.payload;
+          window.__refreshOracle();
+        }
+      });
+
+      window.__oracle = function () {
+        // Also try reading iframe directly (same origin)
+        let fromFrame = payload;
+        try {
+          const win = document.getElementById("ticket-frame").contentWindow;
+          if (win && win.__innerSubmitted) fromFrame = win.__innerSubmitted;
+        } catch (_) {}
+        const checks = {
+          submitted: !!fromFrame,
+          ticket: !!(fromFrame && fromFrame.ticket.length >= 3),
+          subject: !!(fromFrame && fromFrame.subject.length >= 3),
+        };
+        const ok = checks.submitted && checks.ticket && checks.subject;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "iframe form submitted"
+            : "fill Ticket ID + Subject inside iframe, submit",
+        };
+      };
+    </script>
+  </body>
+</html>

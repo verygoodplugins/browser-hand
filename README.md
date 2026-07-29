@@ -1,13 +1,22 @@
+# Browser Hand
+
+**Very Good Plugins** fork of [SawyerHood/dev-browser](https://github.com/SawyerHood/dev-browser).
+
+> Product direction: **Path A first** — agents drive your **real logged-in Chrome** via a local extension relay, without stealing OS focus. Upstream CLI/daemon (sandboxed scripts, headless, `--connect`) stays available for CI and break-glass.
+
+See [FORK.md](./FORK.md) for how we differ from `dev-browser-enhanced` and from `dev-browser-eval`.
+
 <p align="center">
-  <img src="assets/header.png" alt="Dev Browser - Browser automation for Claude Code" width="100%">
+  <img src="assets/header.png" alt="Browser Hand (upstream Dev Browser header)" width="100%">
 </p>
 
-Brought to you by [Do Browser](https://dobrowser.io).
+Upstream project by [Do Browser](https://dobrowser.io) / Sawyer Hood (MIT).
 
-A browser automation tool that lets AI agents and developers control browsers with sandboxed JavaScript scripts.
+A browser automation tool that lets AI agents and developers control browsers with sandboxed JavaScript scripts — plus a **Chrome MV3 extension** path for real sessions.
 
 **Key features:**
 
+- **Path A extension** (`extension/`) — named targets, soft-detach, scripting fallback, background focus policy
 - **Sandboxed execution** - Scripts run in a QuickJS WASM sandbox with no host access
 - **Persistent pages** - Navigate once, interact across multiple scripts
 - **Auto-connect** - Connect to your running Chrome or launch a fresh Chromium

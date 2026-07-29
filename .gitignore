@@ -40,3 +40,9 @@ Thumbs.db
 tmp/
 yarn-debug.log*
 yarn-error.log*
+
+# Browser Hand Path A extension (WXT)
+extension/node_modules/
+extension/.output/
+extension/.wxt/
+extension/dist/

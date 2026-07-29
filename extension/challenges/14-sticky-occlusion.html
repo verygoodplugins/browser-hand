@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>14 — Sticky occlusion</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      .sticky {
+        position: sticky;
+        top: 0;
+        background: #1a5fb4;
+        color: #fff;
+        padding: 0.75rem 1rem;
+        z-index: 10;
+      }
+      .spacer { height: 70vh; }
+      #real-submit {
+        margin-bottom: 4rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="sticky">Sticky banner — may cover the first click target</div>
+    <h1>14 — Sticky occlusion</h1>
+    <p class="meta">Scroll so Submit is clear of the sticky bar, then click it.</p>
+    <form id="f">
+      <label for="note">Note</label>
+      <input id="note" type="text" />
+      <div class="spacer"></div>
+      <button type="submit" id="real-submit" class="primary">Submit note</button>
+    </form>
+    <div id="oracle-status" data-ok="false">FAIL: not submitted</div>
+    <script>
+      window.__CHALLENGE__ = { id: "14", name: "Sticky occlusion", version: 1 };
+      let submitted = null;
+      document.getElementById("f").addEventListener("submit", (e) => {
+        e.preventDefault();
+        submitted = document.getElementById("note").value.trim();
+        window.__refreshOracle();
+      });
+      window.__oracle = function () {
+        const checks = {
+          submitted: submitted !== null,
+          note: !!(submitted && submitted.length >= 3),
+        };
+        const ok = checks.submitted && checks.note;
+        return {
+          ok,
+          checks,
+          detail: ok ? "submitted below sticky" : "fill note, scroll clear of sticky, submit",
+        };
+      };
+    </script>
+  </body>
+</html>

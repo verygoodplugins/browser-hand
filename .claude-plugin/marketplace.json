@@ -1,21 +1,22 @@
 {
-  "name": "dev-browser-marketplace",
+  "name": "browser-hand-marketplace",
   "owner": {
-    "name": "Sawyer Hood",
-    "email": "sawyerjhood@gmail.com"
+    "name": "Very Good Plugins",
+    "email": "hello@verygoodplugins.com"
   },
   "plugins": [
     {
-      "name": "dev-browser",
+      "name": "browser-hand",
       "source": "./",
-      "description": "Browser automation skill with persistent page state for developers and AI agents",
+      "description": "Browser Hand — agent browser control (Path A extension + sandboxed CLI). Fork of SawyerHood/dev-browser.",
       "strict": false,
       "keywords": [
         "browser",
         "playwright",
         "automation",
         "testing",
-        "debugging"
+        "debugging",
+        "chrome-extension"
       ],
       "skills": [
         "./skills/dev-browser"
@@ -23,7 +24,7 @@
     }
   ],
   "metadata": {
-    "description": "Marketplace for the dev-browser skill",
+    "description": "Marketplace for the Browser Hand skill",
     "version": "0.2.9"
   }
 }

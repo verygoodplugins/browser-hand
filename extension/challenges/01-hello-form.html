@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>01 — Hello form</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>01 — Hello form</h1>
+    <p class="meta">Baseline fill + submit + verify.</p>
+    <form id="hello-form">
+      <label for="name">Full name</label>
+      <input id="name" name="name" type="text" autocomplete="name" />
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" />
+
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="3"></textarea>
+
+      <button type="submit" class="primary">Send</button>
+    </form>
+    <p id="success" hidden>Thanks — form received.</p>
+    <div id="oracle-status" data-ok="false">FAIL: not submitted</div>
+    <script>
+      window.__CHALLENGE__ = { id: "01", name: "Hello form", version: 1 };
+      let submitted = null;
+
+      document.getElementById("hello-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        submitted = {
+          name: document.getElementById("name").value.trim(),
+          email: document.getElementById("email").value.trim(),
+          message: document.getElementById("message").value.trim(),
+        };
+        document.getElementById("success").hidden = false;
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          submitted: !!submitted,
+          hasName: !!(submitted && submitted.name.length >= 2),
+          hasEmail: !!(submitted && /@/.test(submitted.email)),
+          hasMessage: !!(submitted && submitted.message.length >= 3),
+        };
+        const ok = checks.submitted && checks.hasName && checks.hasEmail && checks.hasMessage;
+        return {
+          ok,
+          checks,
+          detail: ok ? "form accepted" : "need name, email with @, message ≥3 chars, then submit",
+        };
+      };
+    </script>
+  </body>
+</html>

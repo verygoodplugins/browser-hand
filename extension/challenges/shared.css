@@ -1,0 +1,118 @@
+:root {
+  font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.45;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+body {
+  max-width: 44rem;
+  margin: 1.5rem auto;
+  padding: 0 1rem 3rem;
+}
+
+h1 {
+  font-size: 1.4rem;
+  margin-bottom: 0.25rem;
+}
+
+.meta {
+  color: #555;
+  font-size: 0.9rem;
+  margin-bottom: 1.25rem;
+}
+
+.hint {
+  color: #555;
+  font-size: 0.9rem;
+}
+
+label {
+  display: block;
+  margin-top: 0.85rem;
+  font-weight: 600;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+  margin-top: 0.25rem;
+}
+
+input[type="text"],
+input[type="email"],
+input[type="password"],
+input[type="number"],
+textarea,
+select {
+  width: 100%;
+  max-width: 28rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+button,
+[role="button"] {
+  margin-top: 1rem;
+  padding: 0.45rem 0.9rem;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button.primary,
+[role="button"].primary {
+  background: #1a5fb4;
+  color: #fff;
+  border-color: #1a5fb4;
+}
+
+.error {
+  color: #a40000;
+  font-size: 0.9rem;
+  margin-top: 0.35rem;
+}
+
+#oracle-status {
+  margin-top: 1.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  background: #eee;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+#oracle-status[data-ok="true"] {
+  background: #d4edda;
+  color: #0f5132;
+}
+
+#oracle-status[data-ok="false"] {
+  background: #f8d7da;
+  color: #842029;
+}
+
+nav.hub a {
+  display: block;
+  margin: 0.35rem 0;
+}
+
+.step {
+  display: none;
+}
+
+.step.active {
+  display: block;
+}
+
+.fake-button {
+  display: inline-block;
+  user-select: none;
+}

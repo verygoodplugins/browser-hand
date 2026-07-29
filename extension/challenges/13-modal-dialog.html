@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>13 — Modal dialog</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      .backdrop {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        align-items: center;
+        justify-content: center;
+      }
+      .backdrop.open { display: flex; }
+      .modal {
+        background: #fff;
+        padding: 1.25rem;
+        border-radius: 8px;
+        max-width: 22rem;
+        width: 90%;
+        box-shadow: 0 8px 30px rgba(0,0,0,.2);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>13 — Modal dialog</h1>
+    <p class="meta">Open a modal, fill fields inside the dialog, save.</p>
+    <button type="button" id="open-modal" class="primary">Open settings</button>
+    <div class="backdrop" id="backdrop" role="presentation">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title">Settings</h2>
+        <label for="display-name">Display name</label>
+        <input id="display-name" type="text" />
+        <label for="timezone">Timezone</label>
+        <select id="timezone">
+          <option value="">—</option>
+          <option value="UTC">UTC</option>
+          <option value="America/New_York">America/New_York</option>
+        </select>
+        <button type="button" id="save-modal" class="primary">Save settings</button>
+        <button type="button" id="cancel-modal">Cancel</button>
+      </div>
+    </div>
+    <div id="oracle-status" data-ok="false">FAIL: not saved</div>
+    <script>
+      window.__CHALLENGE__ = { id: "13", name: "Modal dialog", version: 1 };
+      let saved = null;
+      const backdrop = document.getElementById("backdrop");
+      document.getElementById("open-modal").addEventListener("click", () => {
+        backdrop.classList.add("open");
+      });
+      document.getElementById("cancel-modal").addEventListener("click", () => {
+        backdrop.classList.remove("open");
+      });
+      document.getElementById("save-modal").addEventListener("click", () => {
+        saved = {
+          displayName: document.getElementById("display-name").value.trim(),
+          timezone: document.getElementById("timezone").value,
+        };
+        backdrop.classList.remove("open");
+        window.__refreshOracle();
+      });
+      window.__oracle = function () {
+        const checks = {
+          saved: !!saved,
+          name: !!(saved && saved.displayName.length >= 2),
+          tz: !!(saved && saved.timezone),
+        };
+        const ok = checks.saved && checks.name && checks.tz;
+        return {
+          ok,
+          checks,
+          detail: ok ? "modal saved" : "open modal, fill name+timezone, Save settings",
+        };
+      };
+    </script>
+  </body>
+</html>

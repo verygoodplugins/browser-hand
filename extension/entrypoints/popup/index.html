@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dev Browser</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="popup">
+      <h1>Dev Browser</h1>
+      <div class="toggle-row">
+        <label class="toggle">
+          <input type="checkbox" id="active-toggle" />
+          <span class="slider"></span>
+        </label>
+        <span id="status-text">Inactive</span>
+      </div>
+      <p id="connection-status" class="connection-status"></p>
+
+      <label class="field-label" for="focus-policy">Focus while automating</label>
+      <select id="focus-policy" class="focus-select">
+        <option value="background">Background (default)</option>
+        <option value="tab">Activate tab only</option>
+        <option value="window">Focus Chrome window</option>
+      </select>
+      <p class="hint" id="focus-hint">
+        Agents keep working without stealing your keyboard focus.
+      </p>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

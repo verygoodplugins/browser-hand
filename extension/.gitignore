@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# WXT build output + cache (regenerate with `npm run build`)
+.output/
+.wxt/
+
+# Logs / OS cruft
+*.log
+.DS_Store

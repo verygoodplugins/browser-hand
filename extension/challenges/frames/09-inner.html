@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>09 inner</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0.75rem; }
+      label { display: block; margin-top: 0.5rem; font-weight: 600; }
+      input, button { font: inherit; margin-top: 0.25rem; }
+    </style>
+  </head>
+  <body>
+    <form id="inner-form">
+      <label for="ticket">Ticket ID</label>
+      <input id="ticket" name="ticket" type="text" />
+      <label for="subject">Subject</label>
+      <input id="subject" name="subject" type="text" />
+      <button type="submit">Submit ticket</button>
+    </form>
+    <script>
+      window.__innerSubmitted = null;
+      document.getElementById("inner-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        window.__innerSubmitted = {
+          ticket: document.getElementById("ticket").value.trim(),
+          subject: document.getElementById("subject").value.trim(),
+        };
+        parent.postMessage({ type: "challenge-09", payload: window.__innerSubmitted }, "*");
+      });
+    </script>
+  </body>
+</html>

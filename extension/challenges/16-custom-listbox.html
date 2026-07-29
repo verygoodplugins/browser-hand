@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>16 — Custom listbox</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      .listbox {
+        border: 1px solid #bbb;
+        border-radius: 4px;
+        max-width: 16rem;
+        background: #fff;
+      }
+      .listbox [role="option"] {
+        padding: 0.4rem 0.6rem;
+        cursor: pointer;
+      }
+      .listbox [role="option"][aria-selected="true"] {
+        background: #1a5fb4;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>16 — Custom listbox</h1>
+    <p class="meta">Not a native &lt;select&gt; — role=listbox options.</p>
+    <div id="plan" role="listbox" class="listbox" aria-label="Plan">
+      <div role="option" data-value="free" tabindex="0">Free</div>
+      <div role="option" data-value="pro" tabindex="0">Pro</div>
+      <div role="option" data-value="team" tabindex="0">Team</div>
+    </div>
+    <button type="button" id="confirm" class="primary">Confirm plan</button>
+    <div id="oracle-status" data-ok="false">FAIL: pick Pro</div>
+    <script>
+      window.__CHALLENGE__ = { id: "16", name: "Custom listbox", version: 1 };
+      let selected = null;
+      let confirmed = false;
+      document.querySelectorAll('[role="option"]').forEach((el) => {
+        el.addEventListener("click", () => {
+          document.querySelectorAll('[role="option"]').forEach((o) =>
+            o.setAttribute("aria-selected", "false")
+          );
+          el.setAttribute("aria-selected", "true");
+          selected = el.getAttribute("data-value");
+          window.__refreshOracle();
+        });
+      });
+      document.getElementById("confirm").addEventListener("click", () => {
+        confirmed = true;
+        window.__refreshOracle();
+      });
+      window.__oracle = function () {
+        const checks = {
+          selectedPro: selected === "pro",
+          confirmed,
+        };
+        const ok = checks.selectedPro && checks.confirmed;
+        return {
+          ok,
+          checks,
+          detail: ok ? "Pro plan confirmed" : "click Pro option, then Confirm plan",
+        };
+      };
+    </script>
+  </body>
+</html>

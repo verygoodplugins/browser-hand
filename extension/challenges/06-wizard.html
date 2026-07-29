@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>06 — Wizard</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>06 — Wizard (3 steps)</h1>
+    <p class="meta">Multi-step form; state must survive next/back.</p>
+
+    <section class="step active" data-step="1">
+      <h2>Step 1 — Identity</h2>
+      <label for="w-name">Name</label>
+      <input id="w-name" type="text" />
+      <button type="button" id="to-2" class="primary">Next</button>
+    </section>
+
+    <section class="step" data-step="2">
+      <h2>Step 2 — Contact</h2>
+      <label for="w-email">Email</label>
+      <input id="w-email" type="email" />
+      <button type="button" id="back-1">Back</button>
+      <button type="button" id="to-3" class="primary">Next</button>
+    </section>
+
+    <section class="step" data-step="3">
+      <h2>Step 3 — Confirm</h2>
+      <p id="summary" class="hint"></p>
+      <label for="w-note">Note</label>
+      <input id="w-note" type="text" />
+      <button type="button" id="back-2">Back</button>
+      <button type="button" id="confirm" class="primary">Confirm</button>
+    </section>
+
+    <div id="oracle-status" data-ok="false">FAIL: incomplete</div>
+    <script>
+      window.__CHALLENGE__ = { id: "06", name: "Wizard", version: 1 };
+      const data = { name: "", email: "", note: "" };
+      let confirmed = false;
+      let step = 1;
+
+      function showStep(n) {
+        step = n;
+        document.querySelectorAll(".step").forEach(function (el) {
+          el.classList.toggle("active", Number(el.dataset.step) === n);
+        });
+        if (n === 3) {
+          document.getElementById("summary").textContent =
+            "Name: " + data.name + " · Email: " + data.email;
+        }
+        window.__refreshOracle();
+      }
+
+      document.getElementById("to-2").addEventListener("click", function () {
+        data.name = document.getElementById("w-name").value.trim();
+        showStep(2);
+      });
+      document.getElementById("back-1").addEventListener("click", function () {
+        showStep(1);
+      });
+      document.getElementById("to-3").addEventListener("click", function () {
+        data.email = document.getElementById("w-email").value.trim();
+        showStep(3);
+      });
+      document.getElementById("back-2").addEventListener("click", function () {
+        showStep(2);
+      });
+      document.getElementById("confirm").addEventListener("click", function () {
+        data.note = document.getElementById("w-note").value.trim();
+        confirmed = true;
+        window.__refreshOracle();
+      });
+
+      // restore fields when returning
+      document.getElementById("w-name").addEventListener("input", function (e) {
+        data.name = e.target.value.trim();
+      });
+      document.getElementById("w-email").addEventListener("input", function (e) {
+        data.email = e.target.value.trim();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          name: data.name.length >= 2,
+          email: /@/.test(data.email),
+          note: data.note.length >= 2,
+          confirmed,
+          onStep3: step === 3,
+        };
+        const ok = checks.name && checks.email && checks.note && checks.confirmed;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "wizard confirmed"
+            : "complete all 3 steps with name, email, note, then Confirm",
+        };
+      };
+    </script>
+  </body>
+</html>

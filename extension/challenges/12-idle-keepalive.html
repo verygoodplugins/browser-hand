@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>12 — Idle keepalive</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>12 — Idle keepalive</h1>
+    <p class="meta">
+      Start the timer, wait ≥60s (extension SW must stay alive), then complete.
+    </p>
+    <p>Elapsed: <strong id="elapsed">0</strong>s</p>
+    <button type="button" id="start" class="primary">Start wait</button>
+    <button type="button" id="finish" disabled>Finish after idle</button>
+    <div id="oracle-status" data-ok="false">FAIL: not finished after idle</div>
+    <script>
+      window.__CHALLENGE__ = { id: "12", name: "Idle keepalive", version: 1 };
+      const REQUIRED_MS = 60000;
+      let startedAt = null;
+      let finishedAt = null;
+      let timer = null;
+
+      document.getElementById("start").addEventListener("click", function () {
+        startedAt = Date.now();
+        finishedAt = null;
+        document.getElementById("finish").disabled = false;
+        if (timer) clearInterval(timer);
+        timer = setInterval(function () {
+          const sec = Math.floor((Date.now() - startedAt) / 1000);
+          document.getElementById("elapsed").textContent = String(sec);
+          window.__refreshOracle();
+        }, 500);
+        window.__refreshOracle();
+      });
+
+      document.getElementById("finish").addEventListener("click", function () {
+        if (!startedAt) return;
+        finishedAt = Date.now();
+        if (timer) clearInterval(timer);
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const waited = startedAt && finishedAt ? finishedAt - startedAt : 0;
+        const checks = {
+          started: !!startedAt,
+          finished: !!finishedAt,
+          waitedAtLeast60s: waited >= REQUIRED_MS,
+          waitedMs: waited,
+        };
+        const ok = checks.started && checks.finished && checks.waitedAtLeast60s;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "idle wait survived (" + waited + "ms)"
+            : "Start wait, idle ≥60s, then Finish — tests MV3/relay keepalive",
+        };
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>15 — Multi checkbox</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>15 — Multi checkbox</h1>
+    <p class="meta">Select required interests, then continue.</p>
+    <form id="f">
+      <fieldset>
+        <legend>Interests (pick at least 2)</legend>
+        <label><input type="checkbox" name="i" value="music" /> Music</label>
+        <label><input type="checkbox" name="i" value="code" /> Code</label>
+        <label><input type="checkbox" name="i" value="travel" /> Travel</label>
+        <label><input type="checkbox" name="i" value="food" /> Food</label>
+      </fieldset>
+      <button type="submit" class="primary">Continue</button>
+    </form>
+    <div id="oracle-status" data-ok="false">FAIL: need ≥2</div>
+    <script>
+      window.__CHALLENGE__ = { id: "15", name: "Multi checkbox", version: 1 };
+      let chosen = null;
+      document.getElementById("f").addEventListener("submit", (e) => {
+        e.preventDefault();
+        chosen = Array.from(document.querySelectorAll('input[name="i"]:checked')).map(
+          (el) => el.value
+        );
+        window.__refreshOracle();
+      });
+      window.__oracle = function () {
+        const checks = {
+          submitted: Array.isArray(chosen),
+          count: !!(chosen && chosen.length >= 2),
+        };
+        const ok = checks.submitted && checks.count;
+        return {
+          ok,
+          checks,
+          detail: ok ? "interests saved" : "check ≥2 interests, Continue",
+        };
+      };
+    </script>
+  </body>
+</html>

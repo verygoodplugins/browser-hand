@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>19 — Real username</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>19 — Real username (password-heuristic stress)</h1>
+    <p class="meta">
+      Deliberately uses Chrome password-manager heuristics
+      (<code>id/name/label = username</code> + password field) so multi-step Path A
+      must survive debugger <code>target_closed</code> soft-detach.
+    </p>
+    <form id="login-form" autocomplete="on">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" />
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" />
+
+      <label for="note">Session note</label>
+      <input id="note" name="note" type="text" autocomplete="off" />
+
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+    <p class="hint">State: <code id="state-mirror">{}</code></p>
+    <div id="oracle-status" data-ok="false">FAIL: not signed in</div>
+    <script>
+      window.__CHALLENGE__ = { id: "19", name: "Real username", version: 1 };
+      const state = { username: "", password: "", note: "" };
+
+      function bind(id, key) {
+        const el = document.getElementById(id);
+        el.addEventListener("input", function () {
+          state[key] = el.value;
+          document.getElementById("state-mirror").textContent = JSON.stringify({
+            username: state.username,
+            note: state.note,
+            passwordLen: state.password.length,
+          });
+          window.__refreshOracle();
+        });
+      }
+
+      bind("username", "username");
+      bind("password", "password");
+      bind("note", "note");
+
+      document.getElementById("login-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        window.__submitted = { ...state };
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const submitted = window.__submitted || null;
+        const checks = {
+          stateUsername: state.username.length >= 3,
+          statePassword: state.password.length >= 4,
+          stateNote: state.note.length >= 2,
+          submitted: !!(
+            submitted &&
+            submitted.username === state.username &&
+            submitted.password === state.password &&
+            submitted.note === state.note
+          ),
+          notDomOnly:
+            !(document.getElementById("username").value && !state.username) &&
+            !(document.getElementById("password").value && !state.password),
+        };
+        const ok =
+          checks.stateUsername &&
+          checks.statePassword &&
+          checks.stateNote &&
+          checks.submitted &&
+          checks.notDomOnly;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "signed in after multi-step username path"
+            : "type Username, then Password, then Session note (separate ops), then Sign in — must keep same tab after username",
+        };
+      };
+    </script>
+  </body>
+</html>

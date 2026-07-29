@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>02 — Label chaos</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>02 — Label chaos</h1>
+    <p class="meta">
+      Broken associations: missing <code>for</code>, placeholder-only, aria-label only.
+    </p>
+    <form id="chaos-form">
+      <!-- Label text exists but for= points nowhere useful -->
+      <label for="missing-id">Company name</label>
+      <input id="company" name="company" type="text" />
+
+      <!-- Placeholder only, no label element -->
+      <input
+        id="job-title"
+        name="jobTitle"
+        type="text"
+        placeholder="Job title (placeholder only)"
+      />
+
+      <!-- aria-label only -->
+      <input
+        id="phone"
+        name="phone"
+        type="text"
+        aria-label="Work phone"
+      />
+
+      <button type="submit" class="primary">Save profile</button>
+    </form>
+    <div id="oracle-status" data-ok="false">FAIL: not submitted</div>
+    <script>
+      window.__CHALLENGE__ = { id: "02", name: "Label chaos", version: 1 };
+      let saved = null;
+
+      document.getElementById("chaos-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        saved = {
+          company: document.getElementById("company").value.trim(),
+          jobTitle: document.getElementById("job-title").value.trim(),
+          phone: document.getElementById("phone").value.trim(),
+        };
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          company: !!(saved && saved.company.length >= 2),
+          jobTitle: !!(saved && saved.jobTitle.length >= 2),
+          phone: !!(saved && saved.phone.replace(/\D/g, "").length >= 7),
+        };
+        const ok = checks.company && checks.jobTitle && checks.phone;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "all chaotic fields saved"
+            : "fill company, job title, work phone then submit",
+        };
+      };
+    </script>
+  </body>
+</html>

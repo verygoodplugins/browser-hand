@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>10 — Validation gauntlet</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>10 — Validation gauntlet</h1>
+    <p class="meta">Submit invalid data, read errors, recover, resubmit.</p>
+    <form id="val-form" novalidate>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" />
+      <div id="email-error" class="error" role="alert" hidden></div>
+
+      <label for="age">Age</label>
+      <input id="age" name="age" type="number" />
+      <div id="age-error" class="error" role="alert" hidden></div>
+
+      <button type="submit" class="primary">Register</button>
+    </form>
+    <p id="success" hidden>Registered.</p>
+    <div id="oracle-status" data-ok="false">FAIL: not registered</div>
+    <script>
+      window.__CHALLENGE__ = { id: "10", name: "Validation gauntlet", version: 1 };
+      let sawError = false;
+      let registered = null;
+
+      document.getElementById("val-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        const email = document.getElementById("email").value.trim();
+        const age = Number(document.getElementById("age").value);
+        let ok = true;
+
+        const emailErr = document.getElementById("email-error");
+        const ageErr = document.getElementById("age-error");
+        emailErr.hidden = true;
+        ageErr.hidden = true;
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          emailErr.textContent = "Enter a valid email address.";
+          emailErr.hidden = false;
+          ok = false;
+          sawError = true;
+        }
+        if (!Number.isFinite(age) || age < 18 || age > 120) {
+          ageErr.textContent = "Age must be between 18 and 120.";
+          ageErr.hidden = false;
+          ok = false;
+          sawError = true;
+        }
+
+        if (ok) {
+          registered = { email, age, recovered: sawError };
+          document.getElementById("success").hidden = false;
+        }
+        window.__refreshOracle();
+      });
+
+      window.__oracle = function () {
+        const checks = {
+          registered: !!registered,
+          recoveredFromError: !!(registered && registered.recovered),
+          validEmail: !!(registered && /@/.test(registered.email)),
+          validAge: !!(registered && registered.age >= 18),
+        };
+        // Recovery is required: agents must hit an error once, then fix.
+        // For first-try perfect fill, we still pass if registered — but encourage error path.
+        // Spec said "after recovery from invalid" — require sawError for ok.
+        const ok =
+          checks.registered &&
+          checks.recoveredFromError &&
+          checks.validEmail &&
+          checks.validAge;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "recovered and registered"
+            : "submit invalid once (see errors), then correct email+age≥18 and resubmit",
+        };
+      };
+    </script>
+  </body>
+</html>

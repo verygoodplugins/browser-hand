@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>05 — Synthetic click</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+  </head>
+  <body>
+    <h1>05 — Synthetic click</h1>
+    <p class="meta">
+      <code>div[role=button]</code> only accepts a full pointer sequence
+      (mousedown → mouseup → click). Bare <code>el.click()</code> from evaluate
+      is ignored.
+    </p>
+    <div
+      id="done"
+      class="fake-button primary"
+      role="button"
+      tabindex="0"
+    >
+      Done
+    </div>
+    <p id="result" class="hint">Not confirmed.</p>
+    <div id="oracle-status" data-ok="false">FAIL: not confirmed</div>
+    <script>
+      window.__CHALLENGE__ = { id: "05", name: "Synthetic click", version: 1 };
+      let confirmed = false;
+      const btn = document.getElementById("done");
+      let seq = { down: false, up: false };
+
+      // Ignore pure HTMLElement.click() that doesn't go through our sequence tracker
+      btn.addEventListener(
+        "click",
+        function (e) {
+          // Accept trusted events OR a complete synthetic mousedown/mouseup/click chain
+          // that our listeners saw (Playwright/CDP style). Reject bare .click() which
+          // only fires click without our prior down/up in the same gesture when
+          // isTrusted is false and seq incomplete — actually HTMLElement.click()
+          // does NOT fire mousedown/mouseup in browsers. So seq will be incomplete.
+          if (e.isTrusted || (seq.down && seq.up)) {
+            confirmed = true;
+            document.getElementById("result").textContent = "Confirmed.";
+            window.__refreshOracle();
+          } else {
+            document.getElementById("result").textContent =
+              "Ignored bare click() — need full pointer sequence.";
+            window.__refreshOracle();
+          }
+          seq = { down: false, up: false };
+        },
+        true
+      );
+
+      btn.addEventListener("mousedown", function () {
+        seq.down = true;
+      });
+      btn.addEventListener("mouseup", function () {
+        seq.up = true;
+      });
+      btn.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          confirmed = true;
+          document.getElementById("result").textContent = "Confirmed (keyboard).";
+          window.__refreshOracle();
+        }
+      });
+
+      window.__oracle = function () {
+        const checks = { confirmed };
+        return {
+          ok: confirmed,
+          checks,
+          detail: confirmed
+            ? "button confirmed via full sequence or keyboard"
+            : "use host-side click (mousedown/up/click) or keyboard — not evaluate el.click()",
+        };
+      };
+    </script>
+  </body>
+</html>
