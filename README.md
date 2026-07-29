@@ -26,21 +26,44 @@ Browser Hand takes a different route: a small **Chrome extension** bridges your 
 - **Agent gym** — local challenge pages under `extension/challenges/` built to exercise agent failure modes (labels, modals, SPA routes, username fields), not just “click the demo button once.”
 - **Optional headless** — upstream sandboxed QuickJS + Playwright CLI when you want CI or a clean browser, not your daily profile.
 
-## Quick start (extension + logged-in Chrome)
+## Install
+
+Two pieces: the **agent skill** (when to use Browser Hand, command recipes) and the **runtime** (Chrome extension + local relay + CLI).
+
+### 1. Skill via AutoVault (recommended)
+
+[AutoVault](https://github.com/autoworks-ai/autovault) is a local-first vault for agent skills: it validates and signs skill packages, then syncs them into Claude Code, Codex, and other agents so you are not copy-pasting `SKILL.md` files by hand. Docs: [autovault.dev](https://autovault.dev).
+
+If you already use AutoVault:
+
+```bash
+# Install or update AutoVault: https://autovault.dev  or  curl -fsSL https://autovault.sh | sh
+autovault add verygoodplugins/browser-hand:skills/browser-hand/SKILL.md --sync-profiles
+# equivalent:
+# autovault add https://github.com/verygoodplugins/browser-hand/tree/main/skills/browser-hand --sync-profiles
+```
+
+That admits the skill into your vault and links it into agent skill directories. It does **not** replace the runtime below — agents still need the extension bridge running on your machine.
+
+### 2. Runtime (extension + relay + CLI)
 
 ```bash
 git clone https://github.com/verygoodplugins/browser-hand.git
 cd browser-hand
-npm run install:extension     # builds relay + extension, installs the agent skill
+npm run install:extension     # builds relay + extension; also copies the skill if AutoVault is not in play
 
 # Chrome → chrome://extensions → Developer mode → Load unpacked
 #   → select: extension/.output/chrome-mv3
 
-npm run relay                 # keep the local bridge up (or use your own process manager)
+npm run relay                 # leave the local bridge up
 npm run doctor                # healthy when status is tab_bootstrap_works
 ```
 
-Drive a tab:
+### Without AutoVault
+
+Skip step 1. `npm run install:extension` copies `skills/browser-hand` into `~/.claude/skills` (and Codex/agents paths when present). You still need the runtime steps in §2.
+
+### Drive a tab
 
 ```bash
 browser-hand open --url https://example.com --page-name demo
@@ -55,31 +78,20 @@ Live smoke (uses your real Chrome):
 npm run smoke:live
 ```
 
+**Load the skill when** the task needs an **already signed-in browser** (forms, admin UIs, cookies, open tabs). Prefer it over a fresh Chromium whenever real logins matter.
+
+**Skip the skill** for plain public HTTP fetches, or for disposable headless browsers (upstream `dev-browser` CLI).
+
 ## Layout
 
 | Path | Role |
 |---|---|
-| `cli/` | `browser-hand` CLI for the extension bridge |
+| `path-a/` | `browser-hand` CLI for the extension bridge |
 | `relay/` | Local WebSocket bridge (extension ↔ automation) |
 | `extension/` | Chrome MV3 extension |
 | `skills/browser-hand/` | Agent skill (Claude Code, Codex, etc.) |
 | `extension/challenges/` | Agent obstacle course |
 | `bin/dev-browser` | Upstream headless / sandboxed CLI |
-
-> Note: the CLI package directory may still appear as `path-a/` in older checkouts; treat `browser-hand` as the command name.
-
-## Agent skill
-
-Install (also done by `npm run install:extension`):
-
-```bash
-# Copies skills/browser-hand → ~/.claude/skills/browser-hand (and agents/codex if present)
-bash scripts/install-path-a.sh
-```
-
-**Load the skill when** the user wants work in an **already signed-in browser**: fill a form on a real site, click through an admin UI, screenshot an authenticated page, use existing cookies/tabs. Prefer this over spinning a fresh Chromium for anything that needs real logins.
-
-**Do not load it for** pure public HTTP fetches, or when the user only needs a disposable headless browser (use the upstream `dev-browser` CLI for that).
 
 ## Headless / remote-debug (optional)
 
@@ -106,6 +118,15 @@ EOF
 | **Browser Hand** | Extension bridge into **real logged-in Chrome**, background focus, agent recovery + gym |
 
 More context: [FORK.md](./FORK.md).
+
+## Works with
+
+| | |
+|---|---|
+| **[AutoVault](https://github.com/autoworks-ai/autovault)** | Preferred way to install and sync this skill (and others) into your agents. Local validate → sign → profile sync. |
+| **[AutoMem](https://github.com/verygoodplugins/automem)** | Long-term memory for agents when a workflow needs durable recall across sessions — complementary, not required for browser control. |
+
+Browser Hand stands alone for logged-in Chrome automation. AutoVault is how skills land on the machine; AutoMem is where lasting memory lives when you need it.
 
 ## Demo (upstream)
 

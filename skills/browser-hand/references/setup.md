@@ -6,9 +6,20 @@ One-time setup for Browser Hand on a developer machine.
 
 - Google Chrome with your normal profile (cookies, logins, open tabs)
 - Node.js ≥ 18
-- This repository cloned locally
+- This repository cloned locally (for the runtime)
+- Optional: [AutoVault](https://github.com/autoworks-ai/autovault) for skill install/sync
 
-## Install
+## Skill install (recommended: AutoVault)
+
+[AutoVault](https://autovault.dev) is a local skill vault — validate, sign, and sync skills into Claude Code / Codex / etc. without hand-copying `SKILL.md`.
+
+```bash
+autovault add verygoodplugins/browser-hand:skills/browser-hand/SKILL.md --sync-profiles
+```
+
+Then install the **runtime** below (extension + relay). AutoVault only delivers the skill.
+
+## Runtime install
 
 From the repo root:
 
@@ -16,7 +27,7 @@ From the repo root:
 npm run install:extension
 ```
 
-That builds the local relay and extension, and copies the agent skill to:
+That builds the local relay and extension, and (if you skipped AutoVault) copies the agent skill to:
 
 - `~/.claude/skills/browser-hand`
 - `~/.agents/skills/browser-hand` (if present)
