@@ -93,11 +93,34 @@ export class TabManager {
   }
 
   /**
+   * Tabs we can safely list / attach to. chrome:// and chrome-extension://
+   * pages throw "Cannot access a chrome-extension:// URL of different
+   * extension" (and similar) and spam chrome://extensions errors.
+   */
+  isControllableUrl(url: string | undefined): boolean {
+    if (!url) return false;
+    if (url === "about:blank" || url.startsWith("about:blank?")) return true;
+    if (/^https?:\/\//i.test(url)) return true;
+    if (url.startsWith("file://")) return true;
+    return false;
+  }
+
+  /**
    * Register a Chrome tab with the relay without attaching debugger yet.
    * The debugger is attached lazily on the first CDP command for the tab.
    */
   async register(tab: chrome.tabs.Tab): Promise<TargetInfo | null> {
     if (!tab.id) return null;
+
+    const url = tab.url || tab.pendingUrl || "";
+    // Drop tracking if the tab left a controllable URL (e.g. chrome://extensions).
+    if (url && !this.isControllableUrl(url)) {
+      if (this.tabs.has(tab.id)) {
+        this.logger.debug("Ignoring non-controllable tab:", tab.id, url);
+        this.detach(tab.id, true);
+      }
+      return null;
+    }
 
     const existing = this.tabs.get(tab.id);
     const sessionId = existing?.sessionId ?? `pw-tab-${this.nextSessionId++}`;
@@ -111,6 +134,7 @@ export class TabManager {
       targetInfo,
       state: "connected",
       debuggerAttached: existing?.debuggerAttached ?? false,
+      debugTransport: existing?.debugTransport,
     });
 
     this.sendAttached(sessionId, targetInfo);
@@ -263,6 +287,25 @@ export class TabManager {
     }
 
     if (tab.debuggerAttached) return;
+
+    // Refuse attach on non-http(s) pages before Chrome logs a red extension error.
+    try {
+      const live = await chrome.tabs.get(tabId);
+      const liveUrl = live.url || live.pendingUrl || "";
+      if (liveUrl && !this.isControllableUrl(liveUrl)) {
+        throw new Error(
+          `Cannot attach debugger to non-page URL: ${liveUrl.slice(0, 120)}`
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.startsWith("Cannot attach debugger")
+      ) {
+        throw error;
+      }
+      // tab may have closed; fall through to attach attempt
+    }
 
     const debuggee = { tabId };
     this.logger.debug("Attaching debugger to tab:", tabId);

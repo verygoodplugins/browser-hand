@@ -14,6 +14,23 @@ const RECONNECT_INTERVAL = 3000;
 // toolbar click. The relay ignores unknown methods, so it's a server-side no-op.
 const HEARTBEAT_INTERVAL = 20000;
 
+/** Chrome often throws non-Error objects; never send empty `{}` to the relay. */
+function formatExtensionError(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "string" && error) return error;
+  if (error && typeof error === "object") {
+    const rec = error as Record<string, unknown>;
+    if (typeof rec.message === "string" && rec.message) return rec.message;
+    try {
+      const json = JSON.stringify(error);
+      if (json && json !== "{}") return json;
+    } catch {
+      // ignore
+    }
+  }
+  return String(error ?? "Unknown extension error");
+}
+
 export interface ConnectionManagerDeps {
   logger: Logger;
   onMessage: (message: ExtensionCommandMessage) => Promise<unknown>;
@@ -271,8 +288,9 @@ export class ConnectionManager {
       try {
         response.result = await this.onMessage(message);
       } catch (error) {
-        this.logger.debug("Error handling command:", error);
-        response.error = (error as Error).message;
+        const messageText = formatExtensionError(error);
+        this.logger.debug("Error handling command:", messageText);
+        response.error = messageText;
       }
       this.send(response);
     };
