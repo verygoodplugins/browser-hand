@@ -1,0 +1,28 @@
+{
+  "name": "browser-hand-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Path A extension↔CDP WebSocket relay for Browser Hand",
+  "bin": {
+    "browser-hand-relay": "./bin/browser-hand-relay.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/standalone.js",
+    "dev": "tsx src/standalone.ts"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.7",
+    "@hono/node-ws": "^1.2.0",
+    "hono": "^4.11.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

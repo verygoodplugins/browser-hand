@@ -1,5 +1,5 @@
 {
-  "name": "dev-browser-extension",
+  "name": "browser-hand-extension",
   "version": "1.0.0",
   "type": "module",
   "scripts": {

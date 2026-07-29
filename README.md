@@ -6,6 +6,29 @@
 
 See [FORK.md](./FORK.md) for how we differ from `dev-browser-enhanced` and from `dev-browser-eval`.
 
+## Path A (logged-in Chrome) — self-contained
+
+```bash
+git clone https://github.com/verygoodplugins/browser-hand.git
+cd browser-hand
+npm run install:path-a          # builds relay + extension, installs skill
+# Chrome → Load unpacked → extension/.output/chrome-mv3
+npm run doctor                  # expect tab_bootstrap_works
+npm run smoke:live              # live session smoke
+```
+
+Layout:
+
+| Path | Role |
+|---|---|
+| `path-a/` | CLI (`browser-hand`) — doctor/open/snapshot/fill/click/type/screenshot |
+| `relay/` | Extension↔CDP WebSocket bridge on `:9333` |
+| `extension/` | Chrome MV3 (focus policy, soft-detach, scripting fallback) |
+| `skills/browser-hand/` | Agent skill (installs to `~/.claude/skills/browser-hand`) |
+| `dev-browser` bin | Upstream Sawyer CLI (headless / `--connect` Path B) |
+
+
+
 <p align="center">
   <img src="assets/header.png" alt="Browser Hand (upstream Dev Browser header)" width="100%">
 </p>

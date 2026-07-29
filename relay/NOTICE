@@ -1,0 +1,2 @@
+Relay core derived from benkraus/dev-browser-mcp (extension↔CDP bridge).
+Browser Hand packages a slim standalone entry without the MCP server surface.

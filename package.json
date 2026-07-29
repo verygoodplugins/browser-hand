@@ -1,16 +1,25 @@
 {
   "name": "browser-hand",
   "version": "0.2.9",
-  "description": "Browser Hand — agent control of your real Chrome (Path A extension) plus upstream sandboxed CLI. Fork of SawyerHood/dev-browser.",
+  "description": "Browser Hand \u2014 agent control of your real Chrome (Path A extension) plus upstream sandboxed CLI. Fork of SawyerHood/dev-browser.",
   "type": "module",
   "bin": {
-    "browser-hand": "./bin/dev-browser.js",
+    "browser-hand": "./path-a/bin/browser-hand.js",
     "dev-browser": "./bin/dev-browser.js"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
     "version:sync": "node scripts/sync-version.js",
-    "version": "npm run version:sync && git add cli/Cargo.toml cli/Cargo.lock .claude-plugin/marketplace.json"
+    "version": "npm run version:sync && git add cli/Cargo.toml cli/Cargo.lock .claude-plugin/marketplace.json",
+    "build:relay": "npm run build -w browser-hand-relay",
+    "build:extension": "npm run build -w browser-hand-extension",
+    "build:path-a": "npm run build:relay",
+    "build": "npm run build:relay && npm run build:extension",
+    "path-a": "node path-a/src/cli.js",
+    "doctor": "node path-a/src/cli.js doctor",
+    "relay": "node path-a/src/cli.js relay",
+    "smoke:live": "bash scripts/smoke-live.sh",
+    "install:path-a": "bash scripts/install-path-a.sh"
   },
   "files": [
     "bin/",
@@ -43,5 +52,11 @@
   "author": "Very Good Plugins",
   "contributors": [
     "Sawyer Hood (upstream dev-browser)"
+  ],
+  "private": true,
+  "workspaces": [
+    "relay",
+    "path-a",
+    "extension"
   ]
 }

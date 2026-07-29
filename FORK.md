@@ -61,3 +61,17 @@ CLI binary remains `dev-browser` for upstream compatibility (native release asse
 ## License
 
 MIT. Upstream copyright Sawyer Hood; Browser Hand modifications © Very Good Plugins / contributors.
+
+
+## Monorepo layout (self-contained)
+
+| Path | Role |
+|---|---|
+| `path-a/` | Standalone Path A CLI (extracted from AutoHub feat branch agent UX) |
+| `relay/` | Slim Hono relay (from benkraus/dev-browser-mcp core) |
+| `extension/` | MV3 extension dogfood (focus, soft-detach, scripting, screenshot fallback) |
+| `skills/browser-hand/` | Agent skill (no AutoHub path hard-coding) |
+| `scripts/install-path-a.sh` | Build + skill install |
+| `scripts/smoke-live.sh` | Live logged-in session smoke |
+
+No AutoHub checkout required for Path A.

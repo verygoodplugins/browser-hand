@@ -334,6 +334,19 @@ export class CDPRouter {
         }
         return {};
       }
+
+      case "Page.captureScreenshot": {
+        if (!debuggee || !targetTabId) {
+          throw new Error(
+            `No debuggee found for Page.captureScreenshot (sessionId: ${msg.params.sessionId})`
+          );
+        }
+        return await this.captureScreenshot(
+          targetTabId,
+          debuggee,
+          (msg.params.params || {}) as Record<string, unknown>
+        );
+      }
     }
 
     if (!debuggee || !targetTab || !targetTabId) {
@@ -385,6 +398,104 @@ export class CDPRouter {
         return await this.tabManager.evaluateViaScripting(targetTabId, expression);
       }
       throw err;
+    }
+  }
+
+  /**
+   * Screenshot without hanging the relay. chrome.debugger Page.captureScreenshot
+   * can stall indefinitely on some background tabs; race a short CDP attempt,
+   * then fall back to tabs.captureVisibleTab after activating the tab in its
+   * window (does not force OS focus — chrome.windows.update is not called).
+   */
+  private async captureScreenshot(
+    tabId: number,
+    debuggee: chrome.debugger.Debuggee,
+    params: Record<string, unknown>
+  ): Promise<{ data: string }> {
+    await this.tabManager.ensureDebuggerAttached(tabId);
+
+    const format =
+      params.format === "jpeg" || params.format === "png"
+        ? params.format
+        : "png";
+
+    if (!this.tabManager.usesScriptingFallback(tabId)) {
+      try {
+        // Chrome 120+ requires fromSurface:true ("Only screenshots from surface
+        // are allowed"). That call can still hang on some background tabs, so
+        // race a short timeout then fall back to captureVisibleTab.
+        const cdpParams: Record<string, unknown> = {
+          ...params,
+          format,
+          fromSurface: true,
+        };
+        if (params.captureBeyondViewport === true) {
+          cdpParams.captureBeyondViewport = true;
+        }
+        const result = (await Promise.race([
+          chrome.debugger.sendCommand(
+            debuggee,
+            "Page.captureScreenshot",
+            cdpParams
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Page.captureScreenshot timed out")),
+              8000
+            )
+          ),
+        ])) as { data?: string } | undefined;
+        if (result?.data) {
+          return { data: result.data };
+        }
+      } catch (err) {
+        this.logger.debug(
+          "CDP screenshot failed, falling back to captureVisibleTab:",
+          err instanceof Error ? err.message : err
+        );
+      }
+    }
+
+    // Activate tab inside its window so captureVisibleTab sees it. Do not call
+    // chrome.windows.update(..., { focused: true }) — that steals OS focus.
+    const previous = await chrome.tabs.query({
+      active: true,
+      currentWindow: false,
+    });
+    let previousActiveId: number | undefined;
+    try {
+      const target = await chrome.tabs.get(tabId);
+      const inWindow = await chrome.tabs.query({
+        active: true,
+        windowId: target.windowId,
+      });
+      previousActiveId = inWindow[0]?.id;
+      if (previousActiveId !== tabId) {
+        await chrome.tabs.update(tabId, { active: true });
+        // brief settle for compositor
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      const dataUrl = await chrome.tabs.captureVisibleTab(target.windowId, {
+        format: format === "jpeg" ? "jpeg" : "png",
+      });
+      const data = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+      if (!data) {
+        throw new Error("captureVisibleTab returned empty image");
+      }
+      return { data };
+    } finally {
+      if (
+        previousActiveId &&
+        previousActiveId !== tabId &&
+        typeof previousActiveId === "number"
+      ) {
+        try {
+          await chrome.tabs.update(previousActiveId, { active: true });
+        } catch {
+          // ignore restore failures
+        }
+      }
+      void previous;
     }
   }
 

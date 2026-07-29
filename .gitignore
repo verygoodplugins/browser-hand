@@ -46,3 +46,12 @@ extension/node_modules/
 extension/.output/
 extension/.wxt/
 extension/dist/
+
+# Path A monorepo
+relay/node_modules/
+relay/dist/
+path-a/node_modules/
+extension/node_modules/
+extension/.output/
+extension/.wxt/
+.smoke/

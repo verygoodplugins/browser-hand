@@ -1,0 +1,4 @@
+Path A CLI tool logic derived from Very Good Plugins AutoHub's dev-browser-tool
+(feat/dev-browser-path-a-agent-ux), re-homed here without AutoHub runtime deps.
+Autofill still reads ~/.browser-hand/autofill.json with fallback to ~/.autohub/autofill.json
+and macOS keychain services autohub-profile-* / autohub-autofill-* for compatibility.
