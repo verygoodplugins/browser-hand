@@ -10,14 +10,32 @@ description: >
   Chrome, authenticated site, without remote debugging.
 license: MIT
 compatibility: Requires local Chrome with the Browser Hand extension and relay.
+category: browser
+tags: [browser, chrome, extension, automation, authenticated-sessions, agent]
+agents: [claude-code, codex, grok]
 metadata:
   author: verygoodplugins
-  version: "0.6.0"
+  version: "0.6.1"
+resources:
+  - path: references/setup.md
+    type: file
+  - path: references/extension-cli.md
+    type: file
+  - path: references/remote-debug-fallback.md
+    type: file
+  - path: references/platform-gotchas.md
+    type: file
+  - path: references/troubleshooting.md
+    type: file
+  - path: scripts/anon-screenshot.sh
+    type: file
 ---
 
 # Browser Hand
 
 Control the user’s **real Chrome profile** through a local extension bridge. No `--remote-debugging-port` on the everyday profile.
+
+This is a **skill**, not an MCP server: no always-on tool list and no extra MCP process. The agent loads it when the task matches (signed-in browser work).
 
 ## When to load this skill
 
