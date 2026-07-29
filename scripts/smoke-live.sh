@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Live Path A smoke: doctor + named open of a real site + snapshot/evaluate/screenshot.
+# Live Browser Hand smoke: doctor + named open of a real site + snapshot/evaluate/screenshot.
 # Requires: Chrome running, extension connected, relay on :9333.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

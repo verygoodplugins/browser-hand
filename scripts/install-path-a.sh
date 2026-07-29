@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Browser Hand Path A stack from this monorepo.
+# Install Browser Hand extension stack from this monorepo.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -43,7 +43,7 @@ if [[ -d "$LEGACY" ]] || [[ "${BROWSER_HAND_LEGACY_ALIAS:-1}" == "1" ]]; then
   cat > "$LEGACY/SKILL.md" <<'MD'
 ---
 name: dev-browser
-description: Alias — prefer skill browser-hand. Path A extension relay for logged-in Chrome.
+description: Alias — prefer skill browser-hand. extension extension relay for logged-in Chrome.
 ---
 
 # dev-browser → browser-hand

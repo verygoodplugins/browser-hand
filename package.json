@@ -1,7 +1,7 @@
 {
   "name": "browser-hand",
   "version": "0.2.9",
-  "description": "Browser Hand \u2014 agent control of your real Chrome (Path A extension) plus upstream sandboxed CLI. Fork of SawyerHood/dev-browser.",
+  "description": "Browser Hand \u2014 agents control your real logged-in Chrome via a local extension bridge. Fork of SawyerHood/dev-browser.",
   "type": "module",
   "bin": {
     "browser-hand": "./path-a/bin/browser-hand.js",
@@ -19,7 +19,9 @@
     "doctor": "node path-a/src/cli.js doctor",
     "relay": "node path-a/src/cli.js relay",
     "smoke:live": "bash scripts/smoke-live.sh",
-    "install:path-a": "bash scripts/install-path-a.sh"
+    "install:path-a": "bash scripts/install-path-a.sh",
+    "install:extension": "bash scripts/install-path-a.sh",
+    "cli": "node path-a/src/cli.js"
   },
   "files": [
     "bin/",
@@ -36,13 +38,15 @@
   },
   "keywords": [
     "browser",
+    "chrome",
+    "extension",
+    "agent",
     "automation",
     "playwright",
+    "logged-in",
     "cli",
-    "sandbox",
-    "quickjs",
-    "chrome-extension",
-    "agent"
+    "claude",
+    "codex"
   ],
   "license": "MIT",
   "repository": {

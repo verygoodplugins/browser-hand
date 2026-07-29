@@ -8,18 +8,18 @@
     {
       "name": "browser-hand",
       "source": "./",
-      "description": "Browser Hand — agent browser control (Path A extension + sandboxed CLI). Fork of SawyerHood/dev-browser.",
+      "description": "Browser Hand \u2014 agents drive your real logged-in Chrome via a local extension bridge (no remote-debug port on the default profile).",
       "strict": false,
       "keywords": [
         "browser",
+        "chrome-extension",
+        "agent",
+        "authenticated",
         "playwright",
-        "automation",
-        "testing",
-        "debugging",
-        "chrome-extension"
+        "automation"
       ],
       "skills": [
-        "./skills/dev-browser"
+        "./skills/browser-hand"
       ]
     }
   ],

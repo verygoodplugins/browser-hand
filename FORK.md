@@ -1,77 +1,48 @@
-# Browser Hand
+# Browser Hand — fork notes
 
-**Product name:** Browser Hand  
-**Org:** [verygoodplugins](https://github.com/verygoodplugins)  
+**Repo:** https://github.com/verygoodplugins/browser-hand  
 **Upstream:** [SawyerHood/dev-browser](https://github.com/SawyerHood/dev-browser) (MIT)  
-**Repo:** https://github.com/verygoodplugins/browser-hand
+**Maintainer:** [Very Good Plugins](https://github.com/verygoodplugins)
 
-This is a Very Good Plugins fork of Sawyer Hood’s `dev-browser`. We keep upstream CLI/daemon compatibility while productizing the **Path A** path: drive the user’s real logged-in Chrome via a local extension relay, without stealing OS focus.
+Browser Hand keeps upstream’s sandboxed CLI for headless/CI use and adds a **first-class extension bridge** so agents can drive the user’s **normal Chrome profile**.
 
-## Why a fork (and why not `dev-browser-enhanced`)
+## Why this exists
 
-| Project | What it is | Delta vs Sawyer |
+Remote debugging and WebDriver-style attach are the usual way to automate Chrome. They work poorly for “use my real Gmail / GitHub / admin session”:
+
+1. **Chrome 136+** will not open a remote-debugging port on the **default** profile without a separate `--user-data-dir`.
+2. **Many sites** (including Google sign-in/OAuth flows) treat debugger/automation surfaces as hostile and block or throttle them.
+3. **Focus** — attach APIs tend to activate tabs and steal the OS window mid-work.
+4. Agents need **recovery** when password managers and multi-step forms detach the debugger, plus **tests** that match those failure modes.
+
+The extension + local relay path avoids putting a debug port on the daily profile, keeps work in the background by default, and ships an obstacle course for agent UX.
+
+## What’s different from upstream
+
+| Area | Upstream `dev-browser` | Browser Hand |
 |---|---|---|
-| **SawyerHood/dev-browser** | Skill + CLI + sandboxed daemon, optional `--connect` to remote-debug Chrome | Baseline |
-| **code-yeongyu/dev-browser-enhanced** | Same stack + **rebrowser-patches** npm alias for anti-detection | **2 commits ahead**, **~38 behind** main. No agent UX work. |
-| **verygoodplugins/browser-hand** (this repo) | Upstream baseline + **Path A extension** agent UX (focus policy, soft-detach, scripting fallback, obstacle-course dogfood) | Product fork for real-session agent use |
+| Daily logged-in Chrome | Optional `--connect` (remote debug) | **Default:** MV3 extension + local relay |
+| Default profile | Debug port blocked on modern Chrome | Extension works in the normal profile |
+| Focus | Typical CDP activate behavior | Background-first; optional one-shot focus for humans |
+| Recovery | Standard CDP | Soft-detach, scripting fallback, reconnect hygiene |
+| Agent practice | General skill docs | Local challenge gym under `extension/challenges/` |
 
-`dev-browser-enhanced` is **not** a meaningful product alternative for our goals: it only patches Playwright for bot detection and has drifted far behind upstream.
+## Nearby forks
 
-## Eval / benchmarking note
+**[dev-browser-enhanced](https://github.com/code-yeongyu/dev-browser-enhanced)** applies Playwright anti-detection patches only (few commits, far behind upstream). It does not address logged-in default-profile use, focus, or agent recovery.
 
-[SawyerHood/dev-browser-eval](https://github.com/SawyerHood/dev-browser-eval) is a Claude Code **game-tracker** harness that compares:
+**[dev-browser-eval](https://github.com/SawyerHood/dev-browser-eval)** benchmarks full agent runs on a sample app (greenfield login/CRUD). Useful for CLI skill cost/latency; not a substitute for extension reliability on real sessions.
 
-| Method | Avg time | Cost | Turns | Success |
-|---|---|---|---|---|
-| Dev Browser | 3m 53s | $0.88 | 29 | 100% |
-| Playwright MCP | 4m 31s | $1.45 | 51 | 100% |
-| Playwright Skill | 8m 07s | $1.45 | 38 | 67% |
-| Claude native Chrome | 12m 54s | $2.81 | 80 | 100% |
+## Layout
 
-That suite is **not apples-to-apples** for Browser Hand Path A:
-
-1. Hard-codes `CLAUDE_PATH=/Users/sawyerhood/.claude/local/claude`
-2. Expects Sawyer’s private-ish local `~/game-tracker/.env.local` and plugin marketplace layout
-3. Measures full **Claude Code agent runs** on a greenfield app (account create → login → CRUD), not extension-relay reliability on real sessions
-4. Methods are plugin/MCP variants of Path B / headless, not “logged-in Chrome without focus steal”
-
-**Published upstream numbers still matter:** they show the skill+CLI approach beats Playwright MCP/skill and native Chrome on that task. We use them as a ceiling reference, not as our dogfood suite.
-
-Our internal validation is the **agent obstacle course** under `extension/challenges/` (password-manager wedges, focus, soft-detach, ARIA, shadow/iframe, multi-step same-target).
-
-## Path A product shape (Browser Hand)
-
-1. **Chrome MV3 extension** (`extension/`) — CDP router, named targets, soft-detach, scripting fallback, `focusPolicy` default `background`
-2. **Local relay** (port 9333) — WebSocket bridge agent ↔ extension
-3. **CLI / skill** — agent-facing API; prefer named pages + human-like I/O
-4. **Optional** headless/`--connect` kept from upstream for CI and break-glass; Path A is the default product story
-
-### Agent UX wins already in `extension/`
-
-- **No OS focus steal by default** (`focusPolicy: background`; one-shot agent override for human-in-the-loop)
-- **Soft-detach** when debugger wedges (password managers / username fields) without dropping named targets
-- **Scripting fallback** (`chrome.scripting`) when CDP `Runtime.enable` is stuck after remaps
-- **Reconnect hygiene** — late close of a replaced socket must not tear down the live extension↔relay link
-- Obstacle-course LEDGER for regression confidence
-
-## Naming
-
-CLI binary remains `dev-browser` for upstream compatibility (native release assets still download from Sawyer until we cut our own). Product and npm scope name is **browser-hand**; `browser-hand` is also registered as a bin alias.
+| Path | Role |
+|---|---|
+| `cli/` (package may be named `path-a` in tree) | Extension-bridge CLI (`browser-hand`) |
+| `relay/` | Local WebSocket bridge |
+| `extension/` | Chrome MV3 extension + challenges |
+| `skills/browser-hand/` | Agent skill |
+| `bin/dev-browser` | Upstream headless CLI |
 
 ## License
 
 MIT. Upstream copyright Sawyer Hood; Browser Hand modifications © Very Good Plugins / contributors.
-
-
-## Monorepo layout (self-contained)
-
-| Path | Role |
-|---|---|
-| `path-a/` | Standalone Path A CLI (extracted from AutoHub feat branch agent UX) |
-| `relay/` | Slim Hono relay (from benkraus/dev-browser-mcp core) |
-| `extension/` | MV3 extension dogfood (focus, soft-detach, scripting, screenshot fallback) |
-| `skills/browser-hand/` | Agent skill (no AutoHub path hard-coding) |
-| `scripts/install-path-a.sh` | Build + skill install |
-| `scripts/smoke-live.sh` | Live logged-in session smoke |
-
-No AutoHub checkout required for Path A.

@@ -1,23 +1,17 @@
 #!/usr/bin/env bash
-# anon-screenshot.sh — screenshot an ANONYMOUS / public URL via a throwaway,
-# isolated Google Chrome attached over CDP with `dev-browser --connect`.
+# anon-screenshot.sh — screenshot a public / anonymous URL via a throwaway
+# Chrome profile attached with `dev-browser --connect`.
 #
-# For unauthenticated captures ONLY (localhost dev servers, public pages). A
-# throwaway profile has no cookies — never use this for signed-in work; for
-# that, use the dev-browser skill's Path A (extension relay) or Path B
-# (--connect to the user's real Chrome).
+# Unauthenticated captures only (localhost, public pages). A throwaway profile
+# has no cookies — for signed-in work use the browser-hand extension CLI.
 #
-# Why it exists: when the extension relay's MV3 service worker is asleep (Path A
-# down) and the user isn't around to wake it, and you don't want to relaunch the
-# user's main Chrome with debug flags, this spins up a SEPARATE Chrome you fully
-# own, shoots, and tears it down — without touching the user's browser. Bare
-# `dev-browser run` (no --connect) is not an option: the daemon's bundled
-# Chromium SIGABRTs on this machine.
+# Useful when the extension service worker is asleep and you need a disposable
+# capture without touching the user's main browser.
 #
 # Usage:   anon-screenshot.sh <url> [output_name.png] [WIDTHxHEIGHT]
 # Example: anon-screenshot.sh http://127.0.0.1:8788/cloud cloud.png 1440x1000
 #
-# Output:  a PNG under ~/.dev-browser/tmp/ ; its path is printed to stdout.
+# Output:  PNG under ~/.browser-hand/tmp/ (or ~/.dev-browser/tmp/); path on stdout.
 # Env:     CHROME_BIN overrides the Chrome binary path.
 set -euo pipefail
 
