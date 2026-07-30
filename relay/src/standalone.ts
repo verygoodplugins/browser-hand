@@ -1,5 +1,5 @@
 /**
- * browser-hand Path A relay — WebSocket bridge between the Chrome extension
+ * browser-hand relay — WebSocket bridge between the Chrome extension
  * (ws://HOST:PORT/extension) and CDP clients (ws://HOST:PORT/cdp).
  */
 import { serveRelay } from "./relay.js";

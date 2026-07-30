@@ -1,10 +1,24 @@
-# Releasing dev-browser
+# Releasing Browser Hand
 
-## First-Time Setup
+This monorepo ships two related surfaces:
+
+| Surface | What ships | Audience |
+|---|---|---|
+| **Browser Hand** (product) | Extension + relay + `browser-hand` CLI + skill | Logged-in Chrome agents |
+| **Upstream headless** | `dev-browser` binary + daemon (historical package name) | CI / disposable Chromium |
+
+The steps below still describe the **upstream npm/binary release path** inherited from SawyerHood/dev-browser. Product-only changes (extension, `cli-js/`/`browser-hand` CLI, skill docs) often ship via git tags on this repo without republishing the `dev-browser` npm package — say so in the changelog.
+
+See [MIGRATING.md](./MIGRATING.md) for the rename map.
+
+## First-Time Setup (upstream binary / npm)
 
 npm publishing uses GitHub Actions trusted publishing (OIDC), so the release
-workflow does not need an `NPM_TOKEN`. In the npm package settings for
-`dev-browser`, configure a trusted publisher with:
+workflow does not need an `NPM_TOKEN`. When publishing the headless package still
+named `dev-browser`, configure a trusted publisher for the **current** GitHub
+repo (`verygoodplugins/browser-hand`) and workflow filename `release.yml`.
+
+Historical upstream settings looked like:
 
 - Organization or user: `SawyerHood`
 - Repository: `dev-browser`

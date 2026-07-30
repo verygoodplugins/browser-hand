@@ -1,8 +1,8 @@
 /**
- * dev-browser Chrome Extension Background Script
+ * Browser Hand Chrome Extension Background Script
  *
- * This extension connects to the dev-browser relay server and allows
- * Playwright automation of the user's existing browser tabs.
+ * Connects to the local Browser Hand relay and allows agents to drive
+ * the user's existing Chrome tabs (cookies, passkeys, open sessions).
  */
 
 import { createLogger } from "../utils/logger";
@@ -179,7 +179,7 @@ export default defineBackground(() => {
   // ~30s and on browser startup with no manual toggle. The connecting-guard in
   // ConnectionManager keeps this from racing the stored-state init into a
   // double connect.
-  const KEEPALIVE_ALARM = "dev-browser-keepalive";
+  const KEEPALIVE_ALARM = "browser-hand-keepalive";
 
   async function ensureConnectionIfActive(): Promise<void> {
     const { isActive } = await stateManager.getState();

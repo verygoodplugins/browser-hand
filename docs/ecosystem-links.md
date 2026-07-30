@@ -32,3 +32,7 @@ autovault add verygoodplugins/browser-hand:skills/browser-hand/SKILL.md --sync-p
 - Gating core functionality behind AutoVault or AutoMem
 - More than one primary hub CTA in the install section
 - Hard sell language (“you must”, “unlock”, “premium”)
+
+## Agent project surface
+
+New VGP product repos should ship the same agent/hygiene surface (canonical `AGENTS.md`, `@AGENTS.md` import, optional `MIGRATING.md`, `.github` security/PR hygiene). See skill `skills/vgp-repo-bootstrap/` in this monorepo — promote into AutoVault when it stabilizes.

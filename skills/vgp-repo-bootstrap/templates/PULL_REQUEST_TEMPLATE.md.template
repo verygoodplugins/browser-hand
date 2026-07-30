@@ -1,0 +1,23 @@
+<!--
+  Title format: <type>[(<scope>)]: <summary>  — scope is optional.
+  Examples: fix: retry on timeout · feat(cli): add doctor command
+  See https://www.conventionalcommits.org
+-->
+
+## Summary
+
+<!-- 1-3 sentences describing the change and why. -->
+
+## Changes
+
+- 
+
+## Test plan
+
+- [ ] Lint / typecheck (if present)
+- [ ] Tests
+- [ ] Manual verification (describe below)
+
+## Notes for reviewers
+
+<!-- Risk areas, follow-ups, migration notes. -->

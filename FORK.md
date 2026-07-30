@@ -37,11 +37,13 @@ The extension + local relay path avoids putting a debug port on the daily profil
 
 | Path | Role |
 |---|---|
-| `cli/` (package may be named `path-a` in tree) | Extension-bridge CLI (`browser-hand`) |
+| `cli-js/` | Product Node CLI (`browser-hand` bin; workspace `browser-hand-cli`) |
 | `relay/` | Local WebSocket bridge |
-| `extension/` | Chrome MV3 extension + challenges |
+| `extension/` | Chrome MV3 extension + challenges (load `extension/dist/chrome-mv3`) |
 | `skills/browser-hand/` | Agent skill |
-| `bin/dev-browser` | Upstream headless CLI |
+| `cli/` + `daemon/` + `bin/dev-browser` | Upstream headless CLI |
+| `AGENTS.md` | Canonical agent guide (`CLAUDE.md` → `@AGENTS.md`) |
+| `MIGRATING.md` | Rename map from historical “dev-browser” / Path A naming |
 
 ## License
 

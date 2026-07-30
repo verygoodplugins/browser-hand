@@ -1,0 +1,48 @@
+# AGENTS.md
+
+This file is the **canonical** project guidance for coding agents (Claude Code, Codex, Cursor, Grok Build, and others). `CLAUDE.md` is a one-line `@AGENTS.md` import so Claude Code loads the same content.
+
+## Project
+
+**{Product Name}** — {one-liner}.
+
+| Path | Role |
+|---|---|
+| `src/` | Primary implementation (adjust to real layout) |
+| `tests/` | Automated tests |
+| `skills/` | Optional in-repo agent skills |
+
+<!-- Add AutoMem bare tag: {slug} -->
+
+## Common commands
+
+```bash
+# Install / build / test — replace with real commands
+npm ci
+npm test
+npm run build
+```
+
+## Architecture
+
+<!-- Short map of entry points, data flow, and hard constraints. -->
+
+## Validation before claiming done
+
+Run the real test/build commands above and cite output. Do not claim green without evidence.
+
+## Commit style
+
+Conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`.
+
+## Security
+
+Report vulnerabilities privately via GitHub Security Advisories (see `.github/SECURITY.md`). Never file vulns as public issues.
+
+## Related docs
+
+| Doc | Use |
+|---|---|
+| [README.md](./README.md) | Human install and overview |
+| [MIGRATING.md](./MIGRATING.md) | Rename / fork migration (if present) |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Human contributor process |

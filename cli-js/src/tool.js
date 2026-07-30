@@ -1,8 +1,8 @@
 /**
- * Dev Browser Tool - current Chrome via extension relay, or headless
- * sandboxed Playwright via the dev-browser CLI.
+ * browser-hand tool — drive the user's real Chrome via extension relay, or
+ * sandboxed Playwright via the upstream headless `dev-browser` CLI.
  *
- * Path A (current mode) uses the Browser Hand extension relay. It does not
+ * Current mode (default) uses the Browser Hand extension relay. It does not
  * require Chrome to be launched with --remote-debugging-port and should not
  * trigger Chrome's WebDriver automation banner.
  *
@@ -28,7 +28,7 @@ import {
   readProfileSecret,
 } from './autofill-io.js';
 
-const cl = new ContextLogger('dev-browser-tool');
+const cl = new ContextLogger('browser-hand');
 
 const AUTOFILL_PATH =
   process.env.BROWSER_HAND_AUTOFILL_PATH ||
@@ -131,7 +131,7 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
   });
 
   if (pages.length === 0) {
-    throw new Error('No http(s) Chrome tabs are available through dev-browser');
+    throw new Error('No http(s) Chrome tabs are available through Browser Hand');
   }
 
   const explicit = Boolean(
@@ -250,7 +250,7 @@ function resolveRelayBin() {
     return cachedRelayBin;
   }
 
-  // Prefer the monorepo relay package (path-a/../relay).
+  // Prefer the monorepo relay package (cli-js/../relay).
   try {
     const here = fileURLToPath(import.meta.url);
     const monorepoRelay = path.resolve(
@@ -580,7 +580,7 @@ export function classifyDevBrowserDoctor({
   if (!relayInfo) {
     return {
       status: 'relay_down',
-      action: `Kickstart com.autohub.dev-browser-relay or start dev-browser-cli relay on ${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}.`,
+      action: `Start the Browser Hand relay: npm run relay  (or browser-hand relay) on ${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}.`,
     };
   }
   if (relayInfo.extensionConnected !== true) {
@@ -588,39 +588,39 @@ export function classifyDevBrowserDoctor({
       return {
         status: 'extension_asleep',
         action:
-          'Click the dev-browser Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.',
+          'Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.',
       };
     }
     return {
       status: 'extension_disconnected',
-      action: `Enable the dev-browser Chrome extension in the default Chrome profile and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
+      action: `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
     };
   }
   if (smoke?.success === true) {
     return {
       status: 'tab_bootstrap_works',
       action:
-        'Path A is healthy. Run authenticated work through the extension relay and dispatch per-surface subagents as needed.',
+        'Browser Hand is healthy. Run authenticated work through the extension relay.',
     };
   }
   if (/Extension connection replaced/i.test(String(smoke?.error || ''))) {
     return {
       status: 'extension_unstable',
       action:
-        'Reload the dev-browser extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.',
+        'Reload the Browser Hand extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.',
     };
   }
   if (targetCount === 0) {
     return {
       status: 'target_registry_empty',
       action:
-        'Reload the dev-browser extension in the same Chrome profile and verify site/access permissions; target creation is not reaching the relay registry.',
+        'Reload the Browser Hand extension in the same Chrome profile and verify site/access permissions; target creation is not reaching the relay registry.',
     };
   }
   return {
     status: 'path_b_required',
     action:
-      'Path A can see existing tabs but cannot create a named tab. Use an already-open tab for read-only work, or Path B with a separately logged-in debug profile for workflows requiring tab bootstrap.',
+      'Browser Hand can see existing tabs but cannot create a named tab. Use an already-open tab for read-only work, or a separately logged-in non-default debug profile (upstream headless / --connect) for workflows requiring tab bootstrap.',
   };
 }
 
@@ -649,7 +649,7 @@ function startRelayProcess() {
   const bin = resolveRelayBin();
   if (!bin) {
     throw new Error(
-      'Browser Hand relay is not installed. Build path-a monorepo relay (`npm run build -w relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
+      'Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
     );
   }
 
@@ -705,7 +705,7 @@ export async function startPersistentRelay() {
   const bin = resolveRelayBin();
   if (!bin) {
     throw new Error(
-      'Browser Hand relay is not installed. Build path-a monorepo relay (`npm run build -w relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
+      'Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
     );
   }
 
@@ -761,12 +761,12 @@ async function ensureRelayConnected(timeoutMs) {
 
   if (info?.wsEndpoint && info.extensionConnected !== true) {
     throw new Error(
-      `dev-browser extension relay is running at ${CURRENT_RELAY_URL}, but the Chrome extension is not connected. Enable the dev-browser extension and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`
+      `Browser Hand relay is running at ${CURRENT_RELAY_URL}, but the Chrome extension is not connected. Enable the Browser Hand extension (extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`
     );
   }
 
   throw new Error(
-    `dev-browser extension relay did not start at ${CURRENT_RELAY_URL}. Build/start browser-hand relay or set BROWSER_HAND_RELAY_BIN.`
+    `Browser Hand relay did not start at ${CURRENT_RELAY_URL}. Build/start browser-hand relay or set BROWSER_HAND_RELAY_BIN.`
   );
 }
 
@@ -1221,7 +1221,7 @@ async function runCurrentDoctor(timeoutMs) {
   result.success = classification.status === 'tab_bootstrap_works';
   if (classification.status !== 'tab_bootstrap_works') {
     result.pathBNote =
-      'Path B requires Chrome launched with a non-default, separately logged-in debug profile; it is not the default-profile auth path.';
+      'Tab bootstrap failed. For disposable/debug profiles use upstream headless or --connect on a non-default user-data-dir — not your everyday Chrome profile.';
   }
   return result;
 }

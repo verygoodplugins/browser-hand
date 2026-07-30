@@ -16,7 +16,7 @@ describe("createLogger", () => {
       const logger = createLogger(mockSendMessage);
       logger.log("test message", 123);
 
-      expect(console.log).toHaveBeenCalledWith("[dev-browser]", "test message", 123);
+      expect(console.log).toHaveBeenCalledWith("[browser-hand]", "test message", 123);
       expect(mockSendMessage).toHaveBeenCalledWith({
         method: "log",
         params: {
@@ -32,7 +32,7 @@ describe("createLogger", () => {
       const logger = createLogger(mockSendMessage);
       logger.debug("debug info");
 
-      expect(console.debug).toHaveBeenCalledWith("[dev-browser]", "debug info");
+      expect(console.debug).toHaveBeenCalledWith("[browser-hand]", "debug info");
       expect(mockSendMessage).toHaveBeenCalledWith({
         method: "log",
         params: {
@@ -48,7 +48,7 @@ describe("createLogger", () => {
       const logger = createLogger(mockSendMessage);
       logger.error("error occurred");
 
-      expect(console.error).toHaveBeenCalledWith("[dev-browser]", "error occurred");
+      expect(console.error).toHaveBeenCalledWith("[browser-hand]", "error occurred");
       expect(mockSendMessage).toHaveBeenCalledWith({
         method: "log",
         params: {

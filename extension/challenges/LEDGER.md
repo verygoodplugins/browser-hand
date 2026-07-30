@@ -1,6 +1,6 @@
 # Obstacle Course Ledger
 
-Updated 2026-07-29 after Path A dogfood + stack fixes.
+Updated 2026-07-29 after Browser Hand dogfood + stack fixes.
 
 | id | status | friction notes | fix commit(s) | re-run |
 |---|---|---|---|---|

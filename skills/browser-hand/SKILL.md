@@ -61,19 +61,21 @@ This is a **skill**, not an MCP server: no always-on tool list and no extra MCP 
 
 | Piece | Command / path |
 |---|---|
-| CLI | `browser-hand` or `node path-a/src/cli.js` |
+| CLI | `browser-hand` or `node cli-js/src/cli.js` |
 | Relay | `browser-hand-relay` / `npm run relay` — `ws://127.0.0.1:9333` |
-| Extension | Load unpacked `extension/.output/chrome-mv3` |
+| Extension | Load unpacked `extension/dist/chrome-mv3` (name: Browser Hand) |
 | Challenges | `extension/challenges/` (default gym port **8766**) |
 
 ## Setup (once)
 
 ```bash
-npm run install:extension
-# Chrome → Load unpacked → extension/.output/chrome-mv3
+npm run setup
+# Chrome → Load unpacked → extension/dist/chrome-mv3
 npm run relay    # leave running
 npm run doctor   # want status: tab_bootstrap_works
 ```
+
+Switching from old `dev-browser` skill/extension? `npm run setup -- --cleanup-legacy`
 
 Details: `references/setup.md`.
 

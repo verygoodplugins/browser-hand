@@ -4,7 +4,7 @@
   "description": "Browser Hand \u2014 agents control your real logged-in Chrome via a local extension bridge. Fork of SawyerHood/dev-browser.",
   "type": "module",
   "bin": {
-    "browser-hand": "./path-a/bin/browser-hand.js",
+    "browser-hand": "./cli-js/bin/browser-hand.js",
     "dev-browser": "./bin/dev-browser.js"
   },
   "scripts": {
@@ -13,15 +13,14 @@
     "version": "npm run version:sync && git add cli/Cargo.toml cli/Cargo.lock .claude-plugin/marketplace.json",
     "build:relay": "npm run build -w browser-hand-relay",
     "build:extension": "npm run build -w browser-hand-extension",
-    "build:path-a": "npm run build:relay",
     "build": "npm run build:relay && npm run build:extension",
-    "path-a": "node path-a/src/cli.js",
-    "doctor": "node path-a/src/cli.js doctor",
-    "relay": "node path-a/src/cli.js relay",
+    "setup": "bash scripts/setup.sh",
+    "browser-hand": "node cli-js/src/cli.js",
+    "doctor": "node cli-js/src/cli.js doctor",
+    "relay": "node cli-js/src/cli.js relay",
     "smoke:live": "bash scripts/smoke-live.sh",
-    "install:path-a": "bash scripts/install-path-a.sh",
-    "install:extension": "bash scripts/install-path-a.sh",
-    "cli": "node path-a/src/cli.js"
+    "install:extension": "bash scripts/setup.sh",
+    "cli": "node cli-js/src/cli.js"
   },
   "files": [
     "bin/",
@@ -60,7 +59,7 @@
   "private": true,
   "workspaces": [
     "relay",
-    "path-a",
+    "cli-js",
     "extension"
   ]
 }
