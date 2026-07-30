@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Upstream headless / sandboxed CLI install (Rust binary + daemon).
+# For the product extension path (real Chrome), use: npm run setup
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,9 +18,12 @@ echo "==> Installing embedded daemon runtime..."
 dev-browser install
 
 echo ""
-echo "✅ dev-browser installed!"
+echo "✅ Upstream headless CLI (dev-browser) installed!"
 echo ""
-echo "Usage:"
+echo "For Browser Hand (real Chrome + extension), use instead:"
+echo "  npm run setup && npm run relay && npm run doctor"
+echo ""
+echo "Headless usage:"
 echo "  dev-browser <<'EOF'"
 echo '  const page = await browser.getPage("main");'
 echo '  await page.goto("https://example.com");'

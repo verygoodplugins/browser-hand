@@ -1,25 +1,26 @@
 # Agent Obstacle Course
 
-Local gym for dogfooding Path A (`dev-browser` extension relay + AutoHub CLI).
+Local gym for dogfooding Browser Hand (extension relay + `browser-hand` CLI).
 
 ## Serve
 
 ```bash
-# from repo root
+# from extension/
 bash scripts/serve-challenges.sh
-# → http://127.0.0.1:8765/
+# → http://127.0.0.1:8766/  (default; 8765 often taken)
 ```
 
-## Dogfood (Path A)
+## Dogfood
 
 ```bash
-node ~/Projects/OpenAI/autohub/bin/dev-browser-cli.js doctor
-node ~/Projects/OpenAI/autohub/bin/dev-browser-cli.js open \
-  --url http://127.0.0.1:8765/01-hello-form.html \
+# from repository root (not extension/)
+npm run doctor
+browser-hand open \
+  --url http://127.0.0.1:8766/01-hello-form.html \
   --page-name ch-01
-node ~/Projects/OpenAI/autohub/bin/dev-browser-cli.js snapshot --page-name ch-01
+browser-hand snapshot --page-name ch-01
 # fill / type / click …
-node ~/Projects/OpenAI/autohub/bin/dev-browser-cli.js evaluate \
+browser-hand evaluate \
   --page-name ch-01 \
   --code 'JSON.stringify(window.__oracle())'
 ```

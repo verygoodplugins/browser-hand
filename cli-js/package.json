@@ -1,9 +1,9 @@
 {
-  "name": "browser-hand-path-a",
+  "name": "browser-hand-cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Path A CLI — drive logged-in Chrome via Browser Hand extension relay",
+  "description": "browser-hand CLI — drive logged-in Chrome via the Browser Hand extension relay",
   "bin": {
     "browser-hand": "./bin/browser-hand.js",
     "browser-hand-cli": "./bin/browser-hand.js"

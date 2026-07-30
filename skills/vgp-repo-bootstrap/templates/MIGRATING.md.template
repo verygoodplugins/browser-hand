@@ -1,0 +1,34 @@
+# Migrating to {Product Name}
+
+Map from historical **{old-name}** names and paths to the current product.
+
+## Why
+
+<!-- One short paragraph: what changed and why agents should care. -->
+
+## Quick map
+
+| Old | Current |
+|---|---|
+| Product name `{old-name}` | **{Product Name}** |
+| CLI `{old-name}` | **`{cli}`** |
+| Skill `{old-name}` | Skill **`{repo}`** (adjust) |
+| Agent rules only in `CLAUDE.md` | **`AGENTS.md` canonical**; `CLAUDE.md` is `@AGENTS.md` |
+
+## What keeps the old name (on purpose)
+
+| Artifact | Notes |
+|---|---|
+| <!-- package / env / config path --> | <!-- why it stays --> |
+
+## Operator habits to update
+
+| Habit | Replace with |
+|---|---|
+| <!-- old command --> | <!-- new command --> |
+
+## Docs agents should trust
+
+1. [AGENTS.md](./AGENTS.md)
+2. [README.md](./README.md)
+3. This file

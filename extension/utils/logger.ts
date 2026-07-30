@@ -1,5 +1,5 @@
 /**
- * Logger utility for the dev-browser extension.
+ * Logger utility for the Browser Hand extension.
  * Logs to console and optionally sends to relay server.
  */
 
@@ -46,15 +46,15 @@ export function createLogger(sendMessage: SendMessageFn) {
 
   return {
     log: (...args: unknown[]) => {
-      console.log("[dev-browser]", ...args);
+      console.log("[browser-hand]", ...args);
       sendLog("log", args);
     },
     debug: (...args: unknown[]) => {
-      console.debug("[dev-browser]", ...args);
+      console.debug("[browser-hand]", ...args);
       sendLog("debug", args);
     },
     error: (...args: unknown[]) => {
-      console.error("[dev-browser]", ...args);
+      console.error("[browser-hand]", ...args);
       sendLog("error", args);
     },
   };

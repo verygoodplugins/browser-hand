@@ -28,40 +28,43 @@ Browser Hand takes a different route: a small **Chrome extension** bridges your 
 
 ## Install
 
-Two pieces: the **agent skill** (when to use Browser Hand, command recipes) and the **runtime** (Chrome extension + local relay + CLI).
-
-### 1. Skill via AutoVault (recommended)
-
-[AutoVault](https://github.com/autoworks-ai/autovault) is a local-first vault for agent skills: it validates and signs skill packages, then syncs them into Claude Code, Codex, and other agents so you are not copy-pasting `SKILL.md` files by hand. Docs: [autovault.dev](https://autovault.dev).
-
-If you already use AutoVault:
-
-```bash
-# Install or update AutoVault: https://autovault.dev  or  curl -fsSL https://autovault.sh | sh
-autovault add verygoodplugins/browser-hand:skills/browser-hand/SKILL.md --sync-profiles
-# equivalent:
-# autovault add https://github.com/verygoodplugins/browser-hand/tree/main/skills/browser-hand --sync-profiles
-```
-
-That admits the skill into your vault and links it into agent skill directories. It does **not** replace the runtime below — agents still need the extension bridge running on your machine.
-
-### 2. Runtime (extension + relay + CLI)
+One command builds the product stack (relay + extension + skill copies). Chrome still needs a one-time **Load unpacked** — browsers do not allow that without a human.
 
 ```bash
 git clone https://github.com/verygoodplugins/browser-hand.git
 cd browser-hand
-npm run install:extension     # builds relay + extension; also copies the skill if AutoVault is not in play
+npm run setup                 # builds relay + extension + installs skill
 
 # Chrome → chrome://extensions → Developer mode → Load unpacked
-#   → select: extension/.output/chrome-mv3
+#   → select: extension/dist/chrome-mv3   (name: Browser Hand)
 
 npm run relay                 # leave the local bridge up
 npm run doctor                # healthy when status is tab_bootstrap_works
 ```
 
+`npm run setup` also opens the load folder in Finder on macOS.
+
+### Skill via AutoVault (optional)
+
+[AutoVault](https://github.com/autoworks-ai/autovault) syncs the agent skill into Claude Code / Codex without hand-copying. Docs: [autovault.dev](https://autovault.dev).
+
+```bash
+autovault add verygoodplugins/browser-hand:skills/browser-hand/SKILL.md --sync-profiles
+```
+
+That does **not** replace `npm run setup` — agents still need the extension bridge on your machine.
+
 ### Without AutoVault
 
-Skip step 1. `npm run install:extension` copies `skills/browser-hand` into `~/.claude/skills` (and Codex/agents paths when present). You still need the runtime steps in §2.
+`npm run setup` copies `skills/browser-hand` into `~/.claude/skills`, `~/.codex/skills`, and `~/.agents/skills` when those dirs exist.
+
+### Switching from old `dev-browser` installs
+
+```bash
+npm run setup -- --cleanup-legacy
+```
+
+Removes legacy skill aliases named `dev-browser` and prints how to remove an old unpacked Chrome extension. Does **not** delete Chrome profile data or `~/.dev-browser/`. See [MIGRATING.md](./MIGRATING.md).
 
 ### Drive a tab
 
@@ -86,12 +89,16 @@ npm run smoke:live
 
 | Path | Role |
 |---|---|
-| `path-a/` | `browser-hand` CLI for the extension bridge |
+| `cli-js/` | Product Node CLI (`browser-hand` bin; workspace `browser-hand-cli`) |
 | `relay/` | Local WebSocket bridge (extension ↔ automation) |
-| `extension/` | Chrome MV3 extension |
+| `extension/` | Chrome MV3 extension (load `extension/dist/chrome-mv3`) |
 | `skills/browser-hand/` | Agent skill (Claude Code, Codex, etc.) |
 | `extension/challenges/` | Agent obstacle course |
-| `bin/dev-browser` | Upstream headless / sandboxed CLI |
+| `cli/` + `daemon/` + `bin/dev-browser` | Upstream headless / sandboxed CLI (Rust + Node) |
+| `AGENTS.md` | Canonical agent project guide (`CLAUDE.md` → `@AGENTS.md`) |
+| `MIGRATING.md` | Rename map from historical “dev-browser” / Path A naming |
+
+Coming from upstream or an older AutoHub-era install? Start with **[MIGRATING.md](./MIGRATING.md)**.
 
 ## Headless / remote-debug (optional)
 

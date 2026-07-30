@@ -2,12 +2,12 @@
 
 ## Doctor status codes (extension mode)
 
-`node path-a/src/cli.js doctor` checks the relay, extension socket, named-page registry, `Target.getTargets`, and a create/close smoke tab. Use its `status` + `action` as authoritative:
+`node cli-js/src/cli.js doctor` checks the relay, extension socket, named-page registry, `Target.getTargets`, and a create/close smoke tab. Use its `status` + `action` as authoritative:
 
 - **`relay_down`** → no relay is listening. This is the usual cause of
   "connecting…". Start the persistent relay (`references/setup.md`, extension mode
   step 2). **Programmatically fixable — do not ask the user.**
-- **`extension_asleep`** → click the dev-browser Chrome toolbar icon once to
+- **`extension_asleep`** → click the Browser Hand Chrome toolbar icon once to
   wake the MV3 service worker; relay-side traffic does not wake it.
 - **`extension_disconnected`** → enable the extension in the default Chrome
   profile and confirm it points at `ws://127.0.0.1:9333/extension`.

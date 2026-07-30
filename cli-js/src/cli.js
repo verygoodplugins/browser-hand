@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * browser-hand — invoke the AutoHub dev_browser tool from the shell.
+ * browser-hand — CLI for the Browser Hand extension bridge.
  *
- * Lightweight wrapper so Claude Code (or any other client) can drive the
- * extension-relay path without registering AutoHub as a full MCP server.
+ * Drive the local relay + Chrome MV3 extension from the shell so agents
+ * can use real logged-in Chrome without AutoHub or remote debugging.
  *
  * Usage:
  *   browser-hand snapshot
@@ -41,7 +41,7 @@ const OP_ALIASES = {
   shot: 'screenshot',
 };
 
-const HELP = `browser-hand — drive Chrome via the Browser Hand Path A extension relay.
+const HELP = `browser-hand — drive your real Chrome via the Browser Hand extension relay.
 
 Operations:
   snapshot                              Summarize the active/current tab.

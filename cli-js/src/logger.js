@@ -1,5 +1,5 @@
 /**
- * Minimal stderr logger for browser-hand path-a (replaces AutoHub ContextLogger).
+ * Minimal stderr logger for browser-hand (replaces AutoHub ContextLogger).
  */
 export class ContextLogger {
   constructor(module = "browser-hand") {

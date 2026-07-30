@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Path A extension↔CDP WebSocket relay for Browser Hand",
+  "description": "Local WebSocket bridge (extension ↔ CLI) for Browser Hand",
   "bin": {
     "browser-hand-relay": "./bin/browser-hand-relay.js"
   },

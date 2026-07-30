@@ -1,9 +1,12 @@
 import { defineConfig } from "wxt";
 
 export default defineConfig({
+  // Stable non-hidden path for Chrome → Load unpacked
+  outDir: "dist",
   manifest: {
-    name: "dev-browser",
-    description: "Connect your browser to dev-browser for Playwright automation",
+    name: "Browser Hand",
+    description:
+      "Give agents a hand on your real Chrome — local extension bridge for Browser Hand",
     permissions: ["debugger", "scripting", "tabGroups", "tabs", "storage", "alarms"],
     host_permissions: ["<all_urls>"],
     icons: {

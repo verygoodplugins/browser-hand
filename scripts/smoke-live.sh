@@ -3,7 +3,7 @@
 # Requires: Chrome running, extension connected, relay on :9333.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLI=(node "$ROOT/path-a/src/cli.js")
+CLI=(node "$ROOT/cli-js/src/cli.js")
 PAGE_NAME="${BROWSER_HAND_SMOKE_PAGE:-bh-smoke-live}"
 # Default to GitHub — most agents have a session; override with BROWSER_HAND_SMOKE_URL
 URL="${BROWSER_HAND_SMOKE_URL:-https://github.com}"

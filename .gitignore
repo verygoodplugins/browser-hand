@@ -41,17 +41,14 @@ tmp/
 yarn-debug.log*
 yarn-error.log*
 
-# Browser Hand Path A extension (WXT)
+# Browser Hand extension (WXT)
 extension/node_modules/
 extension/.output/
 extension/.wxt/
 extension/dist/
 
-# Path A monorepo
+# Product CLI + relay
 relay/node_modules/
 relay/dist/
-path-a/node_modules/
-extension/node_modules/
-extension/.output/
-extension/.wxt/
+cli-js/node_modules/
 .smoke/
