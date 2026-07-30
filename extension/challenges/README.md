@@ -13,6 +13,7 @@ bash scripts/serve-challenges.sh
 ## Dogfood
 
 ```bash
+# from repository root (not extension/)
 npm run doctor
 browser-hand open \
   --url http://127.0.0.1:8766/01-hello-form.html \
