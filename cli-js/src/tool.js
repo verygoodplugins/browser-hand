@@ -456,12 +456,12 @@ function hasHttpTargets(targets = []) {
 // named relay tab for the full agent write path — not only read ops.
 // Without an explicit pageName, fill/click/type still use existing_target
 // selection so we do not silently mint tabs.
-const PAGE_NAME_OPERATIONS = new Set([
-  "open",
-  "goto",
-  "snapshot",
-  "screenshot",
-  "evaluate",
+const PAGE_NAME_OPERATIONS = new Set(["open", "goto", "snapshot", "screenshot", "evaluate"]);
+
+// Acting operations attach to an existing named tab but must never create one.
+// Creating a blank tab to click in is meaningless — a typo'd pageName used to
+// mint an empty tab and then report "No clickable element matched" from it.
+const PAGE_NAME_ATTACH_ONLY_OPERATIONS = new Set([
   "fill_fields",
   "click",
   "type",
@@ -534,6 +534,9 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
       pageName: DEFAULT_PAGE_NAME,
       createsTab: true,
     };
+  }
+  if (pageName && PAGE_NAME_ATTACH_ONLY_OPERATIONS.has(operation)) {
+    return { source: "named_page", pageName, createsTab: false };
   }
   return { source: "existing_target", createsTab: false };
 }
@@ -1008,6 +1011,17 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     targets,
   });
   if (plan.source === "named_page") {
+    if (!plan.createsTab) {
+      const known = await listNamedRelayPages();
+      const names = Array.isArray(known?.pages) ? known.pages : [];
+      if (!names.includes(plan.pageName)) {
+        throw new Error(
+          `No named page "${plan.pageName}" is open. Known pages: ${
+            names.length ? names.join(", ") : "none"
+          }. Use operation "open" with this pageName first.`
+        );
+      }
+    }
     const pageInfo = await openNamedRelayPage(plan.pageName);
     let selected = {
       targetId: pageInfo.targetId,
