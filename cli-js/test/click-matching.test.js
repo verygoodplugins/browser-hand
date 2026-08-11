@@ -14,8 +14,10 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 
 import {
+  CLICK_HELPER_SOURCE,
   classifyClickOutcome,
   collectElementLabels,
   normalizeLabelText,
@@ -37,6 +39,39 @@ function el({ attrs = {}, text = "", value = "", children = null }) {
 }
 
 const MATERIAL_ICON_GLYPH = String.fromCharCode(58670); // U+E52E, seen on Maps
+
+test("serialized helper source is self-contained", () => {
+  // The helpers are shipped into the page as text via fn.toString(). Any name
+  // they resolve from module scope in Node — including a default-parameter
+  // value — is simply undefined in the page. Running them in a bare VM context
+  // reproduces the page's scope, so this fails where a Node-scope test cannot.
+  const context = vm.createContext({});
+  vm.runInContext(CLICK_HELPER_SOURCE, context);
+
+  const probe = `collectElementLabels({
+    nodeType: 1,
+    getAttribute: name => (name === 'aria-label' ? 'Save' : null),
+    childNodes: [],
+  })`;
+  // Array.from: the VM realm has its own Array prototype, which strict
+  // deep-equality treats as a mismatch.
+  assert.deepEqual(Array.from(vm.runInContext(probe, context)), ["save"]);
+
+  // And the pieces the resolver calls by name are all present.
+  for (const name of [
+    "normalizeLabelText",
+    "collectElementLabels",
+    "scoreLabelMatch",
+    "pickClickCandidate",
+    "defaultIsHiddenNode",
+  ]) {
+    assert.equal(
+      vm.runInContext(`typeof ${name}`, context),
+      "function",
+      `${name} must be serialized into the page`
+    );
+  }
+});
 
 test("normalizeLabelText strips Private Use Area icon glyphs", () => {
   // The exact glyph observed inside <span class="google-symbols" aria-hidden>
@@ -77,6 +112,54 @@ test("collectElementLabels ignores text inside aria-hidden subtrees", () => {
   const labels = collectElementLabels(button);
   assert.ok(labels.includes("close"));
   assert.ok(!labels.includes("decorative"));
+});
+
+test("collectElementLabels excludes CSS-hidden descendants", () => {
+  // <button><span style="display:none">Delete</span>Edit</button>
+  // Collecting "deleteedit" would let a click for "Delete" dispatch Edit.
+  const hiddenSpan = el({ text: "Delete" });
+  const button = el({
+    children: [hiddenSpan, { nodeType: 3, nodeValue: "Edit" }],
+  });
+  const isHidden = (node) => node === hiddenSpan;
+
+  const labels = collectElementLabels(button, isHidden);
+  assert.deepEqual(labels, ["edit"]);
+  assert.ok(!labels.some((label) => label.includes("delete")));
+
+  // Without the probe the hidden text would leak in — guards the regression.
+  assert.ok(collectElementLabels(button, () => false).includes("deleteedit"));
+});
+
+test("collectElementLabels skips subtrees marked with the hidden attribute", () => {
+  const button = el({
+    children: [el({ attrs: { hidden: "" }, text: "Archive" }), { nodeType: 3, nodeValue: "Reply" }],
+  });
+  // The stub only answers getAttribute, so give it hasAttribute too.
+  button.childNodes[0].hasAttribute = (name) => name === "hidden";
+  assert.deepEqual(collectElementLabels(button), ["reply"]);
+});
+
+test("collectElementLabels keeps block boundaries as word breaks", () => {
+  // <button><div>Save</div><div>Changes</div></button>
+  // innerText yields "Save\nChanges"; concatenating text nodes yields
+  // "SaveChanges", so a click for the visible label "Save Changes" misses.
+  const first = el({ text: "Save" });
+  const second = el({ text: "Changes" });
+  const button = el({ children: [first, second] });
+  const isBlock = (node) => node === first || node === second;
+
+  assert.ok(collectElementLabels(button, () => false, isBlock).includes("save changes"));
+  // Inline boundaries must not gain a space: "Save<b>!</b>" is "Save!".
+  const bang = el({ text: "!" });
+  const inline = el({ children: [{ nodeType: 3, nodeValue: "Save" }, bang] });
+  assert.ok(
+    collectElementLabels(
+      inline,
+      () => false,
+      () => false
+    ).includes("save!")
+  );
 });
 
 test("collectElementLabels gathers title, value and visible text", () => {
@@ -181,18 +264,34 @@ test("classifyClickOutcome only fails a click it could not observe", () => {
   assert.equal(visibleNoChange.proven, false);
   assert.equal(visibleNoChange.reason, null);
 
-  // Hidden tab with nothing observed is the one case we cannot vouch for.
+  // Hidden tab with nothing observed: the dispatch ran, only confirmation
+  // failed. Reporting failure here is the more dangerous error — a caller that
+  // retries can repeat a non-idempotent action silently. Report it as run but
+  // unproven, and carry the reason.
   const hiddenNoChange = classifyClickOutcome({
     documentHidden: true,
     changed: false,
   });
-  assert.equal(hiddenNoChange.success, false);
+  assert.equal(hiddenNoChange.success, true);
   assert.equal(hiddenNoChange.proven, false);
-  assert.match(hiddenNoChange.reason, /foreground/);
+  assert.match(hiddenNoChange.reason, /could not be confirmed/);
+  assert.match(hiddenNoChange.reason, /retry/i);
 
-  // A failed post-click probe (changed === null) is not evidence of failure.
-  assert.equal(classifyClickOutcome({ documentHidden: false, changed: null }).success, true);
-  assert.equal(classifyClickOutcome({ documentHidden: true, changed: null }).success, false);
+  // Nothing reports failure from this function — only a resolve or dispatch
+  // error does, and those never reach here.
+  for (const documentHidden of [true, false]) {
+    for (const changed of [true, false, null]) {
+      assert.equal(
+        classifyClickOutcome({ documentHidden, changed }).success,
+        true,
+        `hidden=${documentHidden} changed=${changed} must not report failure`
+      );
+    }
+  }
+
+  // `proven` still discriminates, which is what a caller should branch on.
+  assert.equal(classifyClickOutcome({ documentHidden: true, changed: true }).proven, true);
+  assert.equal(classifyClickOutcome({ documentHidden: true, changed: null }).proven, false);
 });
 
 test("icon-only control still loses to an exact text match", () => {
