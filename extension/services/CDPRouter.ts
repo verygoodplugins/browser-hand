@@ -34,7 +34,7 @@ export class CDPRouter {
   private consumeFocusOverride?: () => Promise<void> | void;
   private setFocusOverride?: CDPRouterDeps["setFocusOverride"];
   private clearFocusOverride?: () => Promise<void> | void;
-  private devBrowserGroupId: number | null = null;
+  private browserHandGroupId: number | null = null;
 
   constructor(deps: CDPRouterDeps) {
     this.logger = deps.logger;
@@ -86,29 +86,29 @@ export class CDPRouter {
   }
 
   /**
-   * Gets or creates the "Dev Browser" tab group, returning its ID.
+   * Gets or creates the "Browser Hand" tab group, returning its ID.
    */
-  private async getOrCreateDevBrowserGroup(tabId: number): Promise<number> {
+  private async getOrCreateBrowserHandGroup(tabId: number): Promise<number> {
     // If we have a cached group ID, verify it still exists
-    if (this.devBrowserGroupId !== null) {
+    if (this.browserHandGroupId !== null) {
       try {
-        await chrome.tabGroups.get(this.devBrowserGroupId);
+        await chrome.tabGroups.get(this.browserHandGroupId);
         // Group exists, add tab to it
-        await chrome.tabs.group({ tabIds: [tabId], groupId: this.devBrowserGroupId });
-        return this.devBrowserGroupId;
+        await chrome.tabs.group({ tabIds: [tabId], groupId: this.browserHandGroupId });
+        return this.browserHandGroupId;
       } catch {
         // Group no longer exists, reset cache
-        this.devBrowserGroupId = null;
+        this.browserHandGroupId = null;
       }
     }
 
     // Create a new group with this tab
     const groupId = await chrome.tabs.group({ tabIds: [tabId] });
     await chrome.tabGroups.update(groupId, {
-      title: "Dev Browser",
+      title: "Browser Hand",
       color: "blue",
     });
-    this.devBrowserGroupId = groupId;
+    this.browserHandGroupId = groupId;
     return groupId;
   }
 
@@ -299,8 +299,8 @@ export class CDPRouter {
         const tab = await chrome.tabs.create({ url, active: false });
         if (!tab.id) throw new Error("Failed to create tab");
 
-        // Add tab to "Dev Browser" group
-        await this.getOrCreateDevBrowserGroup(tab.id);
+        // Add tab to "Browser Hand" group
+        await this.getOrCreateBrowserHandGroup(tab.id);
 
         await new Promise((resolve) => setTimeout(resolve, 100));
         await this.tabManager.register(tab);

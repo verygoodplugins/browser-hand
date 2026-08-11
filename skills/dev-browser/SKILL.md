@@ -1,11 +1,16 @@
 ---
 name: dev-browser
-description: Browser automation with persistent page state. Use when users ask to navigate websites, fill forms, take screenshots, extract web data, test web apps, or automate browser workflows. Trigger phrases include "go to [url]", "click on", "fill out the form", "take a screenshot", "scrape", "automate", "test the website", "log into", or any browser interaction request.
+description: Sandboxed throwaway-Chromium scripting via the upstream `dev-browser` CLI. Use ONLY for unauthenticated QA in a clean browser profile. For anything touching the user's real Chrome — the active tab, signed-in pages, filling forms, clicking, screenshotting "this page" — use the `browser-hand` skill instead.
 ---
 
-# Dev Browser
+# Dev Browser (upstream headless line)
 
-A CLI for controlling browsers with sandboxed JavaScript scripts.
+A CLI for controlling a sandboxed, throwaway browser with JavaScript scripts.
+
+This is **not** the skill for driving the user's own browser. Browser Hand's
+extension relay does that — it keeps the user's session and cookies and does not
+trigger Chrome's WebDriver banner. Reach for `browser-hand` first, and drop to
+this only when a clean, unauthenticated profile is specifically what you want.
 
 ## Installation
 
