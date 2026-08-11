@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node src/cli.js",
-    "doctor": "node src/cli.js doctor"
+    "doctor": "node src/cli.js doctor",
+    "test": "node --test \"test/*.test.js\""
   },
   "engines": {
     "node": ">=18"

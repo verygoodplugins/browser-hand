@@ -1356,23 +1356,20 @@ async function runCurrentOperation(input, timeoutMs) {
         buildPostClickExpression(resolved.signature)
       ).catch(() => null);
 
-      // A hidden tab cannot receive trusted input, so a click that produced no
-      // observable change there is unproven, not successful. Say so rather than
-      // reporting a no-op as a win. The tool never foregrounds the tab on its
-      // own — that is the caller's call to make.
+      // The tool never foregrounds the tab on its own — that is the caller's
+      // call to make.
       const changed = after ? after.changed : null;
-      const unproven = Boolean(resolved.documentHidden) && changed === false;
+      const outcome = classifyClickOutcome({
+        documentHidden: Boolean(resolved.documentHidden),
+        changed,
+      });
 
       return {
-        success: !unproven,
+        success: outcome.success,
         ...base,
-        ...(unproven
-          ? {
-              error:
-                'Target matched, but the tab is backgrounded (document.visibilityState is "hidden") and nothing changed. Chrome drops synthesized input to hidden tabs and many sites ignore untrusted events. Bring the tab to the foreground and retry.',
-            }
-          : {}),
+        ...(outcome.reason ? { error: outcome.reason } : {}),
         result: {
+          proven: outcome.proven,
           clicked: query,
           matched: resolved.matched,
           score: resolved.score,
@@ -1932,6 +1929,58 @@ export function pickClickCandidate(candidates, wanted) {
   };
 }
 
+/**
+ * Decide what a click result means.
+ *
+ * A hidden tab cannot receive trusted input, so a click there that produced no
+ * observable change is unproven rather than successful. It is still reported as
+ * success:false per the tool contract — but only `proven` is a statement about
+ * evidence, so callers can tell "we watched it fail" from "we could not watch".
+ */
+export function classifyClickOutcome({ documentHidden, changed }) {
+  if (changed === true) {
+    return { success: true, proven: true, reason: null };
+  }
+  if (!documentHidden) {
+    // Visible tab, trusted input delivered. Plenty of legitimate clicks produce
+    // no signature change (analytics, no-op toggles), so this is not a failure.
+    return {
+      success: true,
+      proven: changed === false ? false : null,
+      reason: null,
+    };
+  }
+  return {
+    success: false,
+    proven: false,
+    reason:
+      'Target matched, but the tab is backgrounded (document.visibilityState is "hidden") and no page change was observed. Chrome drops synthesized input to hidden tabs and many sites ignore untrusted events. Bring the tab to the foreground and retry.',
+  };
+}
+
+// Serialized into both the resolve and post-click expressions so they fingerprint
+// page state identically. Deliberately wider than URL+title: a checkbox toggle,
+// a dropdown opening, a tab switch or a modal all have to register, or a click
+// that worked gets reported as one that did not.
+const CLICK_STATE_SIGNATURE_FN = `function clickStateSignature(el) {
+    const parts = [];
+    try { parts.push(location.href, document.title); } catch (err) { /* detached */ }
+    try { parts.push('nodes:' + document.querySelectorAll('*').length); } catch (err) { /* noop */ }
+    try {
+      const active = document.activeElement;
+      parts.push('active:' + (active ? (active.tagName || '') + '#' + (active.id || '') : ''));
+    } catch (err) { /* noop */ }
+    if (el && typeof el.getAttribute === 'function') {
+      for (const attr of ['aria-expanded', 'aria-checked', 'aria-pressed', 'aria-selected', 'aria-current', 'open', 'disabled', 'class']) {
+        try { parts.push(attr + '=' + String(el.getAttribute(attr))); } catch (err) { /* noop */ }
+      }
+      try { parts.push('checked:' + String(el.checked)); } catch (err) { /* noop */ }
+      try { parts.push('value:' + String(el.value || '').slice(0, 80)); } catch (err) { /* noop */ }
+      try { parts.push('text:' + String(el.innerText || '').length); } catch (err) { /* noop */ }
+    }
+    return parts.join('|');
+  }`;
+
 const CLICK_HELPER_SOURCE = [
   normalizeLabelText,
   collectElementLabels,
@@ -1944,11 +1993,12 @@ const CLICK_HELPER_SOURCE = [
 /**
  * Resolve the click target and report where to click it. Does not click — the
  * caller dispatches trusted input via CDP. Stashes the element on
- * window.__autohubClickTarget for the synthetic fallback.
+ * window.__browserHandClickTarget for the synthetic fallback.
  */
 function buildClickResolveExpression({ selector, text }) {
   return `(() => {
     ${CLICK_HELPER_SOURCE}
+    ${CLICK_STATE_SIGNATURE_FN}
     const selector = ${JSON.stringify(selector || "")};
     const wanted = normalizeLabelText(${JSON.stringify(text || "")});
     const CLICK_SEL = 'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [role="link"], [role="switch"], input[type="button"], input[type="submit"], input[type="reset"], summary';
@@ -2023,7 +2073,7 @@ function buildClickResolveExpression({ selector, text }) {
         occluded = !(hit && (hit === el || el.contains(hit) || hit.contains(el)));
       } catch (err) { occluded = false; }
     }
-    window.__autohubClickTarget = el;
+    window.__browserHandClickTarget = el;
     const isTopDocument = el.ownerDocument === document;
     return {
       found: true,
@@ -2046,7 +2096,7 @@ function buildClickResolveExpression({ selector, text }) {
       documentHidden: document.visibilityState === 'hidden',
       x,
       y,
-      signature: location.href + '|' + document.title + '|' + (document.body ? document.body.childElementCount : 0),
+      signature: clickStateSignature(el),
     };
   })()`;
 }
@@ -2056,7 +2106,7 @@ function buildClickResolveExpression({ selector, text }) {
  *  el.click() is ignored by handlers bound to pointerdown/mousedown. */
 function buildSyntheticClickExpression() {
   return `(() => {
-    const el = window.__autohubClickTarget;
+    const el = window.__browserHandClickTarget;
     if (!el) throw new Error('Click target went away before dispatch');
     const rect = el.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
@@ -2086,9 +2136,10 @@ function buildSyntheticClickExpression() {
 /** Cheap post-click state probe so a no-op click is visible in the result. */
 function buildPostClickExpression(signature) {
   return `(() => {
+    ${CLICK_STATE_SIGNATURE_FN}
     const before = ${JSON.stringify(signature || "")};
-    const after = location.href + '|' + document.title + '|' + (document.body ? document.body.childElementCount : 0);
-    try { delete window.__autohubClickTarget; } catch (err) { window.__autohubClickTarget = null; }
+    const after = clickStateSignature(window.__browserHandClickTarget);
+    try { delete window.__browserHandClickTarget; } catch (err) { window.__browserHandClickTarget = null; }
     return { url: location.href, changed: before !== after };
   })()`;
 }
