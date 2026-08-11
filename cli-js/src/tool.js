@@ -1018,10 +1018,22 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     targets,
   });
   if (plan.source === "named_page") {
+    // Attach-only operations resolve an existing named tab; they must not
+    // conjure a blank one to act on. Checking the page list first would be
+    // check-then-create — the tab can close in the gap — so instead let the
+    // single create/get call report which it did, and undo a creation.
+    const pageInfo = await openNamedRelayPage(plan.pageName);
     if (!plan.createsTab) {
-      const known = await listNamedRelayPages();
-      const names = Array.isArray(known?.pages) ? known.pages : [];
-      if (!names.includes(plan.pageName)) {
+      const created =
+        pageInfo?.created === undefined
+          ? // Older relay with no `created` flag: a freshly minted tab reports
+            // an empty or about:blank URL, which is the best signal available.
+            ["", "about:blank"].includes(String(pageInfo?.url || "").trim())
+          : pageInfo.created === true;
+      if (created) {
+        await deleteNamedRelayPage(plan.pageName);
+        const known = await listNamedRelayPages();
+        const names = Array.isArray(known?.pages) ? known.pages : [];
         throw new Error(
           `No named page "${plan.pageName}" is open. Known pages: ${
             names.length ? names.join(", ") : "none"
@@ -1029,7 +1041,6 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
         );
       }
     }
-    const pageInfo = await openNamedRelayPage(plan.pageName);
     let selected = {
       targetId: pageInfo.targetId,
       title: pageInfo.title || "",
@@ -1335,8 +1346,18 @@ async function runCurrentOperation(input, timeoutMs) {
         Number.isFinite(resolved.x) &&
         Number.isFinite(resolved.y);
       let dispatched = "synthetic";
+      // Coordinates went stale between resolve and dispatch on a reflowing page?
+      // Refresh them, or drop to the synthetic path rather than clicking blind.
+      let revalidated = null;
       if (useCdp) {
-        const point = { x: resolved.x, y: resolved.y };
+        revalidated = await evalValue(
+          cdp,
+          sessionId,
+          buildRevalidateTargetExpression(clickToken)
+        ).catch(() => null);
+      }
+      if (useCdp && revalidated && revalidated.ok === true) {
+        const point = { x: revalidated.x, y: revalidated.y };
         await cdp.send(
           "Input.dispatchMouseEvent",
           { type: "mouseMoved", ...point, button: "none", buttons: 0 },
@@ -1406,6 +1427,9 @@ async function runCurrentOperation(input, timeoutMs) {
           occluded: resolved.occluded,
           documentHidden: Boolean(resolved.documentHidden),
           dispatched,
+          ...(useCdp && revalidated && revalidated.ok !== true
+            ? { revalidation: revalidated.reason }
+            : {}),
           url: after ? after.url : resolved.signature.split("|")[0],
           changed,
         },
@@ -1846,47 +1870,29 @@ export function normalizeLabelText(raw) {
     .trim();
 }
 
-/** Default CSS-visibility probe. No-ops outside a browser (unit tests). */
-function defaultIsHiddenNode(node) {
-  if (typeof getComputedStyle !== "function") {
-    return false;
-  }
-  try {
-    const style = getComputedStyle(node);
-    return style.display === "none" || style.visibility === "hidden";
-  } catch {
-    return false;
-  }
-}
-
-/** Block-level probe, so label text keeps innerText's word boundaries. */
-function defaultIsBlockLevel(node) {
-  if (typeof getComputedStyle !== "function") {
-    return false;
-  }
-  try {
-    const display = getComputedStyle(node).display;
-    return Boolean(display) && display !== "inline" && display !== "contents";
-  } catch {
-    return false;
-  }
+/**
+ * Visible text as the browser renders it.
+ *
+ * Deliberately `innerText` rather than a childNodes walk. Hand-deriving it meant
+ * re-implementing block boundaries, <br>, display:none, <td>/<li>, white-space
+ * and text-transform — each one a separate bug found one counterexample at a
+ * time. innerText already excludes non-rendered subtrees and inserts the right
+ * breaks, and it cannot drift from the browser.
+ */
+function defaultVisibleText(el) {
+  return typeof el.innerText === "string" ? el.innerText : "";
 }
 
 /**
  * Collect every normalized label an element could reasonably be addressed by.
  *
- * Returns an array rather than short-circuiting, so an icon glyph in the text
- * can never mask the aria-label. Skips `aria-hidden="true"` subtrees — that is
- * where icon spans live, and accessible-name computation ignores them too — and
- * CSS-hidden subtrees, which `innerText` also excluded. Both matter: the former
- * is how icon glyphs leak in, the latter is how a hidden "Delete" label can
- * attach itself to a visible "Edit" button.
+ * Returns an array rather than short-circuiting on the first non-empty source,
+ * so an icon glyph in the rendered text can never mask the aria-label. That,
+ * plus PUA stripping in normalizeLabelText, is what makes icon-only controls
+ * addressable — `innerText || value || aria-label` short-circuited on the
+ * invisible Private Use Area glyph and never reached the accessible name.
  */
-export function collectElementLabels(
-  el,
-  isHiddenNode = defaultIsHiddenNode,
-  isBlockLevel = defaultIsBlockLevel
-) {
+export function collectElementLabels(el, getVisibleText = defaultVisibleText) {
   const labels = [];
   const push = (raw) => {
     const value = normalizeLabelText(raw);
@@ -1900,47 +1906,7 @@ export function collectElementLabels(
     push(el.getAttribute("alt"));
     push(el.getAttribute("placeholder"));
   }
-  let text = "";
-  const walk = (node) => {
-    if (!node) {
-      return;
-    }
-    if (node.nodeType === 3) {
-      text += node.nodeValue || "";
-      return;
-    }
-    // innerText inserts a line break at block boundaries: <div>Save</div>
-    // <div>Changes</div> reads as "Save Changes", not "SaveChanges". Concatenating
-    // raw text nodes loses that, so a click for the visible label stops matching.
-    // Inline boundaries must NOT get a space ("Save<b>!</b>" is "Save!").
-    if (isBlockLevel(node)) {
-      text += " ";
-    }
-    if (node.nodeType !== 1) {
-      return;
-    }
-    if (
-      typeof node.getAttribute === "function" &&
-      (node.getAttribute("aria-hidden") === "true" || node.hasAttribute?.("hidden"))
-    ) {
-      return;
-    }
-    // innerText excluded display:none subtrees; a raw childNodes walk does not.
-    // Without this, <button><span style="display:none">Delete</span>Edit</button>
-    // reads as "deleteedit" and a click for "Delete" dispatches Edit.
-    if (isHiddenNode(node)) {
-      return;
-    }
-    const kids = node.childNodes || [];
-    for (let i = 0; i < kids.length; i += 1) {
-      walk(kids[i]);
-    }
-    if (isBlockLevel(node)) {
-      text += " ";
-    }
-  };
-  walk(el);
-  push(text);
+  push(getVisibleText(el));
   if (el.value) {
     push(el.value);
   }
@@ -2083,8 +2049,7 @@ const CLICK_STATE_SIGNATURE_FN = `function clickStateSignature(el) {
 // undefined once the source is serialized into the page.
 export const CLICK_HELPER_SOURCE = [
   normalizeLabelText,
-  defaultIsHiddenNode,
-  defaultIsBlockLevel,
+  defaultVisibleText,
   collectElementLabels,
   scoreLabelMatch,
   pickClickCandidate,
@@ -2270,6 +2235,45 @@ function buildSyntheticClickExpression(clickToken) {
     fire(MouseEvent, 'mouseup', { buttons: 0, detail: 1 });
     fire(MouseEvent, 'click', { buttons: 0, detail: 1 });
     return true;
+  })()`;
+}
+
+/**
+ * Re-hit-test the stashed target right before dispatching at cached coordinates.
+ *
+ * Resolve and dispatch are separate round trips now that input is trusted CDP,
+ * so a reflow between them can leave the cached point over a different control.
+ * el.click() never had this gap. Returns refreshed coordinates, or ok:false so
+ * the caller falls back to the in-page synthetic path, which dispatches on the
+ * element reference and cannot hit the wrong node.
+ */
+function buildRevalidateTargetExpression(clickToken) {
+  return `(() => {
+    const el = window[${JSON.stringify(`__browserHandClickTarget_${clickToken}`)}];
+    if (!el || !el.isConnected) return { ok: false, reason: 'target detached' };
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return { ok: false, reason: 'target has no box' };
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    if (!(x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight)) {
+      return { ok: false, reason: 'target left the viewport' };
+    }
+    let hit = el.ownerDocument.elementFromPoint(x, y);
+    for (let depth = 0; depth < 8; depth += 1) {
+      if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
+      const deeper = hit.shadowRoot.elementFromPoint(x, y);
+      if (!deeper || deeper === hit) break;
+      hit = deeper;
+    }
+    const chain = [];
+    for (let node = el, depth = 0; node && depth < 8; depth += 1) {
+      chain.push(node);
+      const root = node.getRootNode ? node.getRootNode() : null;
+      node = root && root.host ? root.host : null;
+    }
+    const stillOurs = Boolean(hit) && chain.some(node => hit === node || node.contains(hit) || hit.contains(node));
+    if (!stillOurs) return { ok: false, reason: 'another element now occupies the point' };
+    return { ok: true, x, y };
   })()`;
 }
 

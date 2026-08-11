@@ -63,7 +63,7 @@ test("serialized helper source is self-contained", () => {
     "collectElementLabels",
     "scoreLabelMatch",
     "pickClickCandidate",
-    "defaultIsHiddenNode",
+    "defaultVisibleText",
   ]) {
     assert.equal(
       vm.runInContext(`typeof ${name}`, context),
@@ -86,85 +86,30 @@ test("normalizeLabelText strips Private Use Area icon glyphs", () => {
   assert.equal(normalizeLabelText(undefined), "");
 });
 
+test("collectElementLabels uses the browser-rendered text verbatim", () => {
+  // innerText semantics (block breaks, <br>, display:none exclusion, <td>/<li>,
+  // white-space, text-transform) are the browser's job now — re-deriving them by
+  // hand produced a new edge-case bug in three consecutive review rounds. What
+  // this module still owns is assembling the label set, so that is what is
+  // tested here; the rendered-text semantics are covered on a real page.
+  const button = el({ attrs: { "aria-label": "Save" } });
+  const labels = collectElementLabels(button, () => "Save\nChanges");
+  assert.ok(labels.includes("save changes"), JSON.stringify(labels));
+  assert.ok(labels.includes("save"));
+});
+
 test("collectElementLabels reads aria-label past a truthy icon glyph", () => {
-  // Reproduces the Maps button: <button aria-label="Directions">
-  //   <span class="google-symbols" aria-hidden="true"></span>
-  // </button>
-  const button = el({
-    attrs: { "aria-label": "Directions" },
-    children: [el({ attrs: { "aria-hidden": "true" }, text: MATERIAL_ICON_GLYPH })],
-  });
-
-  const labels = collectElementLabels(button);
-  assert.ok(
-    labels.includes("directions"),
-    `expected aria-label to survive, got ${JSON.stringify(labels)}`
-  );
-  // The icon glyph must not leak in as a label of its own.
-  assert.ok(!labels.includes(MATERIAL_ICON_GLYPH.toLowerCase()));
-});
-
-test("collectElementLabels ignores text inside aria-hidden subtrees", () => {
-  const button = el({
-    attrs: { "aria-label": "Close" },
-    children: [el({ attrs: { "aria-hidden": "true" }, text: "decorative" })],
-  });
-  const labels = collectElementLabels(button);
-  assert.ok(labels.includes("close"));
-  assert.ok(!labels.includes("decorative"));
-});
-
-test("collectElementLabels excludes CSS-hidden descendants", () => {
-  // <button><span style="display:none">Delete</span>Edit</button>
-  // Collecting "deleteedit" would let a click for "Delete" dispatch Edit.
-  const hiddenSpan = el({ text: "Delete" });
-  const button = el({
-    children: [hiddenSpan, { nodeType: 3, nodeValue: "Edit" }],
-  });
-  const isHidden = (node) => node === hiddenSpan;
-
-  const labels = collectElementLabels(button, isHidden);
-  assert.deepEqual(labels, ["edit"]);
-  assert.ok(!labels.some((label) => label.includes("delete")));
-
-  // Without the probe the hidden text would leak in — guards the regression.
-  assert.ok(collectElementLabels(button, () => false).includes("deleteedit"));
-});
-
-test("collectElementLabels skips subtrees marked with the hidden attribute", () => {
-  const button = el({
-    children: [el({ attrs: { hidden: "" }, text: "Archive" }), { nodeType: 3, nodeValue: "Reply" }],
-  });
-  // The stub only answers getAttribute, so give it hasAttribute too.
-  button.childNodes[0].hasAttribute = (name) => name === "hidden";
-  assert.deepEqual(collectElementLabels(button), ["reply"]);
-});
-
-test("collectElementLabels keeps block boundaries as word breaks", () => {
-  // <button><div>Save</div><div>Changes</div></button>
-  // innerText yields "Save\nChanges"; concatenating text nodes yields
-  // "SaveChanges", so a click for the visible label "Save Changes" misses.
-  const first = el({ text: "Save" });
-  const second = el({ text: "Changes" });
-  const button = el({ children: [first, second] });
-  const isBlock = (node) => node === first || node === second;
-
-  assert.ok(collectElementLabels(button, () => false, isBlock).includes("save changes"));
-  // Inline boundaries must not gain a space: "Save<b>!</b>" is "Save!".
-  const bang = el({ text: "!" });
-  const inline = el({ children: [{ nodeType: 3, nodeValue: "Save" }, bang] });
-  assert.ok(
-    collectElementLabels(
-      inline,
-      () => false,
-      () => false
-    ).includes("save!")
-  );
+  // The Google Maps button: innerText is a Private Use Area ligature glyph,
+  // which is truthy, so `innerText || value || aria-label` never reached the
+  // accessible name. An array plus PUA stripping is what fixes it.
+  const button = el({ attrs: { "aria-label": "Directions" } });
+  const labels = collectElementLabels(button, () => MATERIAL_ICON_GLYPH);
+  assert.deepEqual(labels, ["directions"]);
 });
 
 test("collectElementLabels gathers title, value and visible text", () => {
-  const link = el({ attrs: { title: "Open map" }, text: "Map" });
-  const labels = collectElementLabels(link);
+  const link = el({ attrs: { title: "Open map" } });
+  const labels = collectElementLabels(link, () => "Map");
   assert.ok(labels.includes("open map"));
   assert.ok(labels.includes("map"));
 
