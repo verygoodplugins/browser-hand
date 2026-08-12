@@ -110,6 +110,36 @@ test("defaultVisibleText subtracts aria-hidden content from rendered text", () =
   assert.equal(defaultVisibleText(plain), "Save\nChanges");
 });
 
+test("defaultVisibleText removes only the hidden copy of repeated text", () => {
+  // <button><span aria-hidden="true">Save</span>Save</button>
+  // innerText is "Save Save"; a global replace strips the visible copy too and
+  // leaves the control unaddressable by its own label.
+  const icon = { innerText: "Save" };
+  const button = { innerText: "Save Save", querySelectorAll: () => [icon] };
+  assert.equal(defaultVisibleText(button).trim(), "Save");
+  assert.ok(
+    collectElementLabels({
+      nodeType: 1,
+      getAttribute: () => null,
+      innerText: "Save Save",
+      querySelectorAll: () => [icon],
+    }).includes("save")
+  );
+});
+
+test("defaultVisibleText does not subtract nested aria-hidden text twice", () => {
+  const inner = { innerText: "x" };
+  const outer = {
+    innerText: "x",
+    contains: (node) => node === inner,
+  };
+  const button = {
+    innerText: "x Keep",
+    querySelectorAll: () => [outer, inner],
+  };
+  assert.equal(defaultVisibleText(button).trim(), "Keep");
+});
+
 test("collectElementLabels keeps aria-label when aria-hidden text is removed", () => {
   const icon = { innerText: "delete" };
   const button = {

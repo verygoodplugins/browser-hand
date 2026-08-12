@@ -1320,7 +1320,9 @@ async function runCurrentOperation(input, timeoutMs) {
         return {
           success: false,
           ...base,
-          error: `No clickable element matched ${JSON.stringify(query)}`,
+          error: result?.disabled
+            ? `Matched ${JSON.stringify(query)}, but that control is disabled. A real click would do nothing, so this was not dispatched.`
+            : `No clickable element matched ${JSON.stringify(query)}`,
           result: result || null,
         };
       }
@@ -1819,10 +1821,25 @@ export function defaultVisibleText(el) {
   } catch {
     return text;
   }
-  for (const node of hidden) {
+  // Nested aria-hidden nodes would otherwise have their text subtracted twice.
+  const outermost = hidden.filter(
+    (node) =>
+      !hidden.some(
+        (other) => other !== node && typeof other.contains === "function" && other.contains(node)
+      )
+  );
+  for (const node of outermost) {
     const part = typeof node.innerText === "string" ? node.innerText : "";
-    if (part && part.trim() && text.includes(part)) {
-      text = text.split(part).join(" ");
+    if (!part || !part.trim()) {
+      continue;
+    }
+    // One occurrence, not all of them: for
+    // <button><span aria-hidden="true">Save</span>Save</button> innerText is
+    // "Save Save", and a global replace would strip the visible copy too,
+    // leaving the control unaddressable by its own label.
+    const at = text.indexOf(part);
+    if (at !== -1) {
+      text = `${text.slice(0, at)} ${text.slice(at + part.length)}`;
     }
   }
   return text;
@@ -1950,10 +1967,48 @@ function buildClickExpression({ selector, text }) {
           const root = !parent && node.getRootNode ? node.getRootNode() : null;
           node = parent || (root && root.host ? root.host : null);
         }
+        // Hit-test: checkVisibility does not do it, so a control under an
+        // overlay still looks visible — and because dispatch is by reference it
+        // would fire straight through the overlay. Ranking only; a target
+        // outside the viewport simply cannot be hit-tested, so it is not
+        // penalised for that.
+        const doc = el.ownerDocument;
+        const r = el.getBoundingClientRect();
+        const px = r.left + r.width / 2;
+        const py = r.top + r.height / 2;
+        if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
+          let hit = doc.elementFromPoint(px, py);
+          for (let d = 0; d < 8; d += 1) {
+            if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
+            const deeper = hit.shadowRoot.elementFromPoint(px, py);
+            if (!deeper || deeper === hit) break;
+            hit = deeper;
+          }
+          if (hit) {
+            const chain = [];
+            for (let node = el, d = 0; node && d < 8; d += 1) {
+              chain.push(node);
+              const root = node.getRootNode ? node.getRootNode() : null;
+              node = root && root.host ? root.host : null;
+            }
+            if (!chain.some(node => hit === node || node.contains(hit) || hit.contains(node))) return false;
+          }
+        }
         return true;
       } catch (err) {
         return false;
       }
+    };
+    // A real user click and el.click() both suppress activation on a disabled
+    // control; dispatchEvent does not. Without this, automation could fire a
+    // disabled destructive action that the UI does not offer.
+    const isDisabled = el => {
+      try {
+        if (el.disabled === true) return true;
+        if (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true') return true;
+        if (typeof el.closest === 'function' && el.closest('fieldset[disabled]')) return true;
+      } catch (err) { /* detached */ }
+      return false;
     };
     const areaOf = el => {
       try { const r = el.getBoundingClientRect(); return r.width * r.height; } catch (err) { return Infinity; }
@@ -1987,6 +2042,9 @@ function buildClickExpression({ selector, text }) {
           if (hit) { el = hit; frameVisible = entry.frameVisible; break; }
         } catch (err) { /* invalid selector for this root */ }
       }
+      if (el && isDisabled(el)) {
+        return { found: false, disabled: true, query: selector, candidateCount: 0 };
+      }
     }
     if (!el && wanted) {
       const pool = [];
@@ -1995,13 +2053,27 @@ function buildClickExpression({ selector, text }) {
         collect(entry.root, pool, 0);
         for (let i = before; i < pool.length; i += 1) pool[i].__frameVisible = entry.frameVisible;
       }
-      const candidates = pool.map(node => ({
+      const enabled = [];
+      const disabledPool = [];
+      for (const node of pool) (isDisabled(node) ? disabledPool : enabled).push(node);
+      const candidates = enabled.map(node => ({
         labels: collectElementLabels(node),
         visible: visibleIn(node, node.__frameVisible !== false),
         area: areaOf(node),
       }));
       pick = pickClickCandidate(candidates, wanted);
-      if (pick) { el = pool[pick.best.index]; frameVisible = el.__frameVisible !== false; }
+      if (pick) { el = enabled[pick.best.index]; frameVisible = el.__frameVisible !== false; }
+      if (!el && disabledPool.length) {
+        // Nothing enabled matched — report a disabled hit distinctly, so "it is
+        // disabled" is not indistinguishable from "it is not on the page".
+        const disabledHit = pickClickCandidate(
+          disabledPool.map(node => ({ labels: collectElementLabels(node), visible: true, area: areaOf(node) })),
+          wanted
+        );
+        if (disabledHit) {
+          return { found: false, disabled: true, query: ${JSON.stringify(text || "")}, candidateCount: disabledHit.candidateCount };
+        }
+      }
       for (const node of pool) { try { delete node.__frameVisible; } catch (err) { /* frozen */ } }
     }
     if (!el) {
