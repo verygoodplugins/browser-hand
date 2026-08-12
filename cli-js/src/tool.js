@@ -1908,11 +1908,15 @@ export function pickClickCandidate(candidates, wanted) {
     return null;
   }
   scored.sort((a, b) => {
-    if (a.visible !== b.visible) {
-      return a.visible ? -1 : 1;
-    }
+    // Score first, visibility only as a tie-break. The reverse let a visible
+    // partial match outrank a hidden exact one — "Delete" picking "Delete all
+    // archived items" — and dispatching the wrong destructive action is worse
+    // than dispatching nothing.
     if (a.score !== b.score) {
       return b.score - a.score;
+    }
+    if (a.visible !== b.visible) {
+      return a.visible ? -1 : 1;
     }
     const areaA = Number.isFinite(a.area) ? a.area : Infinity;
     const areaB = Number.isFinite(b.area) ? b.area : Infinity;
@@ -2004,10 +2008,14 @@ function buildClickExpression({ selector, text }) {
     // disabled destructive action that the UI does not offer.
     const isDisabled = el => {
       try {
-        if (el.disabled === true) return true;
         if (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true') return true;
-        if (typeof el.closest === 'function' && el.closest('fieldset[disabled]')) return true;
-      } catch (err) { /* detached */ }
+        // :disabled encodes the platform rules, including that fieldset
+        // disabling does not reach links, ARIA buttons, or controls in the
+        // fieldset's first legend. An ancestor scan for fieldset[disabled]
+        // rejected all of those, refusing clicks a real user can perform.
+        if (typeof el.matches === 'function') return el.matches(':disabled');
+        return el.disabled === true;
+      } catch (err) { /* detached or unsupported selector */ }
       return false;
     };
     const areaOf = el => {
@@ -2053,28 +2061,21 @@ function buildClickExpression({ selector, text }) {
         collect(entry.root, pool, 0);
         for (let i = before; i < pool.length; i += 1) pool[i].__frameVisible = entry.frameVisible;
       }
-      const enabled = [];
-      const disabledPool = [];
-      for (const node of pool) (isDisabled(node) ? disabledPool : enabled).push(node);
-      const candidates = enabled.map(node => ({
+      // Score the WHOLE pool, disabled included, then check the winner. Filtering
+      // disabled candidates out first let a disabled exact match be discarded so
+      // an enabled prefix match won instead — "Delete" dispatching "Delete all
+      // archived items".
+      const candidates = pool.map(node => ({
         labels: collectElementLabels(node),
         visible: visibleIn(node, node.__frameVisible !== false),
         area: areaOf(node),
       }));
       pick = pickClickCandidate(candidates, wanted);
-      if (pick) { el = enabled[pick.best.index]; frameVisible = el.__frameVisible !== false; }
-      if (!el && disabledPool.length) {
-        // Nothing enabled matched — report a disabled hit distinctly, so "it is
-        // disabled" is not indistinguishable from "it is not on the page".
-        const disabledHit = pickClickCandidate(
-          disabledPool.map(node => ({ labels: collectElementLabels(node), visible: true, area: areaOf(node) })),
-          wanted
-        );
-        if (disabledHit) {
-          return { found: false, disabled: true, query: ${JSON.stringify(text || "")}, candidateCount: disabledHit.candidateCount };
-        }
-      }
+      if (pick) { el = pool[pick.best.index]; frameVisible = el.__frameVisible !== false; }
       for (const node of pool) { try { delete node.__frameVisible; } catch (err) { /* frozen */ } }
+      if (el && isDisabled(el)) {
+        return { found: false, disabled: true, query: ${JSON.stringify(text || "")}, candidateCount: pick ? pick.candidateCount : 1 };
+      }
     }
     if (!el) {
       return { found: false, query: selector || ${JSON.stringify(text || "")}, candidateCount: 0 };

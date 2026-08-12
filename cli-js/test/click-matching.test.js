@@ -206,7 +206,7 @@ test("pickClickCandidate prefers an exact match over an earlier substring match"
   assert.equal(picked.candidateCount, 2);
 });
 
-test("pickClickCandidate prefers a visible match over a hidden duplicate", () => {
+test("pickClickCandidate prefers a visible match at the SAME score", () => {
   const picked = pickClickCandidate(
     [
       { labels: ["directions"], visible: false, area: 0 },
@@ -216,6 +216,22 @@ test("pickClickCandidate prefers a visible match over a hidden duplicate", () =>
   );
   assert.equal(picked.best.index, 1);
   assert.equal(picked.best.visible, true);
+});
+
+test("score outranks visibility, so a visible partial cannot beat a hidden exact", () => {
+  // "Delete" against a hidden exact and a visible prefix match. Picking the
+  // visible one dispatches a broader, destructive action the caller did not ask
+  // for; wrong-action is worse than no-action.
+  const picked = pickClickCandidate(
+    [
+      { labels: ["delete all archived items"], visible: true, area: 100 },
+      { labels: ["delete"], visible: false, area: 100 },
+    ],
+    "delete"
+  );
+  assert.equal(picked.best.index, 1);
+  assert.equal(picked.best.score, 3);
+  assert.equal(picked.best.visible, false);
 });
 
 test("pickClickCandidate breaks ties on smallest area, then DOM order", () => {
