@@ -2088,13 +2088,32 @@ function buildClickExpression({ selector, text }) {
       // disabled candidates out first let a disabled exact match be discarded so
       // an enabled prefix match won instead — "Delete" dispatching "Delete all
       // archived items".
+      // Two phases, to keep the aria-hidden read off the hot path. Scoring uses
+      // plain innerText and touches nothing; only the ranked winner is re-read
+      // with aria-hidden hidden, and if that correction kills its match we move
+      // to the next candidate. Mutating every candidate on every scan would let
+      // a page's MutationObserver — or a custom element's synchronous
+      // attributeChangedCallback — react to a click that has not happened yet.
+      const plainText = node => (typeof node.innerText === 'string' ? node.innerText : '');
       const candidates = pool.map(node => ({
-        labels: collectElementLabels(node),
+        labels: collectElementLabels(node, plainText),
         visible: visibleIn(node, node.__frameVisible !== false),
         area: areaOf(node),
       }));
       pick = pickClickCandidate(candidates, wanted);
-      if (pick) { el = pool[pick.best.index]; frameVisible = el.__frameVisible !== false; }
+      if (pick) {
+        const ordered = [pick.best].concat(pick.runnersUp);
+        for (let i = 0; i < ordered.length && i < 8; i += 1) {
+          const node = pool[ordered[i].index];
+          // defaultVisibleText: the aria-hidden-corrected read.
+          if (scoreLabelMatch(collectElementLabels(node), wanted) > 0) {
+            el = node;
+            pick = { best: ordered[i], candidateCount: pick.candidateCount, runnersUp: pick.runnersUp };
+            break;
+          }
+        }
+      }
+      if (el) { frameVisible = el.__frameVisible !== false; }
       for (const node of pool) { try { delete node.__frameVisible; } catch (err) { /* frozen */ } }
       if (el && isDisabled(el)) {
         return { found: false, disabled: true, query: ${JSON.stringify(text || "")}, candidateCount: pick ? pick.candidateCount : 1 };
@@ -2139,7 +2158,31 @@ function buildClickExpression({ selector, text }) {
     let interrupted = null;
     for (const step of sequence) {
       if (el.isConnected === false) { interrupted = step[1]; break; }
+      // A handler can disable the control mid-sequence. A native interaction
+      // stops activating it at that point; dispatchEvent would not.
+      if (step[1] === 'click' && isDisabled(el)) { interrupted = 'click (control became disabled)'; break; }
       fire(step[0], step[1], step[2]);
+    }
+    if (interrupted) {
+      // pointerdown already bubbled to the document and may have left pressed or
+      // drag state behind. Abandoning the sequence leaves that state stuck, so
+      // send the cancellation on a target that is still connected.
+      const fallback = el.isConnected === false
+        ? (el.ownerDocument && el.ownerDocument.body) || document.body
+        : el;
+      if (fallback) {
+        for (const [Ctor, type, extra] of [
+          [Pointer, 'pointercancel', Object.assign({ buttons: 0 }, pointerProps)],
+          [MouseEvent, 'mouseup', { buttons: 0, detail: 0 }],
+        ]) {
+          try {
+            fallback.dispatchEvent(new Ctor(type, Object.assign({
+              bubbles: true, cancelable: true, composed: true, view,
+              button: 0, clientX: cx, clientY: cy,
+            }, extra)));
+          } catch (err) { /* best effort */ }
+        }
+      }
     }
 
     return {
