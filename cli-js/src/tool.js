@@ -49,19 +49,6 @@ const MAX_STDOUT_BYTES = 32 * 1024;
 const MAX_STDERR_BYTES = 4 * 1024;
 const MAX_CURRENT_TEXT_CHARS = 8000;
 // How long to let the page react to a click before probing for a state change.
-// Clamped: a malformed value yields NaN, which setTimeout coerces to 0 and
-// silently removes the settle period entirely.
-const CLICK_SETTLE_MS = (() => {
-  const parsed = Number(process.env.BROWSER_HAND_CLICK_SETTLE_MS);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, 5000) : 200;
-})();
-// Per-invocation key suffix so two concurrent clicks cannot clobber each other's
-// stashed target, or delete one the other still needs.
-let clickTokenSeq = 0;
-function nextClickToken() {
-  clickTokenSeq += 1;
-  return `${process.pid}_${clickTokenSeq}`;
-}
 const CURRENT_RELAY_HOST = process.env.DEV_BROWSER_RELAY_HOST || process.env.HOST || "127.0.0.1";
 const CURRENT_RELAY_PORT = Number(process.env.DEV_BROWSER_RELAY_PORT || process.env.PORT || 9333);
 const CURRENT_RELAY_URL = `http://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}`;
@@ -1315,14 +1302,12 @@ async function runCurrentOperation(input, timeoutMs) {
 
     if (operation === "click") {
       const query = input.selector || input.text || input.value || "";
-      const clickToken = nextClickToken();
-      const resolved = await evalValue(
+      const result = await evalValue(
         cdp,
         sessionId,
-        buildClickResolveExpression({
+        buildClickExpression({
           selector: input.selector,
           text: input.text || input.value,
-          clickToken,
         })
       );
       const base = {
@@ -1331,126 +1316,34 @@ async function runCurrentOperation(input, timeoutMs) {
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
       };
-      if (!resolved || !resolved.found) {
+      if (!result || !result.found) {
         return {
           success: false,
           ...base,
           error: `No clickable element matched ${JSON.stringify(query)}`,
-          result: resolved || null,
+          result: result || null,
         };
       }
-
-      // Trusted CDP input whenever the box center is addressable in the top
-      // document. Coordinates from a subframe are relative to that frame, and
-      // an occluded or off-viewport center would land on the wrong element.
-      const useCdp =
-        resolved.isTopDocument &&
-        resolved.inViewport &&
-        !resolved.occluded &&
-        !resolved.documentHidden &&
-        Number.isFinite(resolved.x) &&
-        Number.isFinite(resolved.y);
-      let dispatched = "synthetic";
-      // Coordinates went stale between resolve and dispatch on a reflowing page?
-      // Refresh them, or drop to the synthetic path rather than clicking blind.
-      let revalidated = null;
-      if (useCdp) {
-        revalidated = await evalValue(
-          cdp,
-          sessionId,
-          buildRevalidateTargetExpression(clickToken)
-        ).catch(() => null);
-      }
-      if (useCdp && revalidated && revalidated.ok !== true && revalidated.fatal) {
-        // The resolution is stale, not just the coordinates. Falling back to the
-        // synthetic path here would dispatch at a detached node, where a direct
-        // listener can still fire an obsolete action while a delegated one
-        // silently does nothing and we report success.
-        return {
-          success: false,
-          ...base,
-          error: `Target was resolved but went stale before dispatch (${revalidated.reason}). Re-run the click to resolve against the current page.`,
-          result: {
-            clicked: query,
-            matched: resolved.matched,
-            revalidation: revalidated.reason,
-          },
-        };
-      }
-      if (useCdp && revalidated && revalidated.ok === true) {
-        const point = { x: revalidated.x, y: revalidated.y };
-        // No mouseMoved: it exists only to prime hover state, which a click does
-        // not need, and a hover handler that moves the control or opens an
-        // overlay would invalidate the point between here and mousePressed.
-        await cdp.send(
-          "Input.dispatchMouseEvent",
-          {
-            type: "mousePressed",
-            ...point,
-            button: "left",
-            buttons: 1,
-            clickCount: 1,
-          },
-          sessionId
-        );
-        await cdp.send(
-          "Input.dispatchMouseEvent",
-          {
-            type: "mouseReleased",
-            ...point,
-            button: "left",
-            buttons: 0,
-            clickCount: 1,
-          },
-          sessionId
-        );
-        dispatched = "cdp";
-      } else {
-        await evalValue(cdp, sessionId, buildSyntheticClickExpression(clickToken));
-      }
-
-      // Let the page react before probing for a state change.
-      await new Promise((resolve) => {
-        setTimeout(resolve, CLICK_SETTLE_MS);
-      });
-      const after = await evalValue(
-        cdp,
-        sessionId,
-        buildPostClickExpression(resolved.signature, clickToken)
-      ).catch(() => null);
-
-      // The tool never foregrounds the tab on its own — that is the caller's
-      // call to make.
-      const changed = after ? after.changed : null;
-      const outcome = classifyClickOutcome({
-        documentHidden: Boolean(resolved.documentHidden),
-        changed,
-      });
-
       return {
-        success: outcome.success,
+        success: true,
         ...base,
-        // `warning`, not `error` — the operation ran. An `error` beside
-        // success:true reads as a contradiction and invites a retry.
-        ...(outcome.reason ? { warning: outcome.reason } : {}),
+        // A caveat about the tab, not a claim about the outcome. Verifying what
+        // a click did is the caller's job — they have snapshot and evaluate.
+        ...(result.documentHidden
+          ? {
+              warning:
+                'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
+            }
+          : {}),
         result: {
-          proven: outcome.proven,
           clicked: query,
-          matched: resolved.matched,
-          score: resolved.score,
-          candidateCount: resolved.candidateCount,
-          ...(resolved.runnersUp && resolved.runnersUp.length
-            ? { runnersUp: resolved.runnersUp }
-            : {}),
-          visible: resolved.visible,
-          occluded: resolved.occluded,
-          documentHidden: Boolean(resolved.documentHidden),
-          dispatched,
-          ...(useCdp && revalidated && revalidated.ok !== true
-            ? { revalidation: revalidated.reason }
-            : {}),
-          url: after ? after.url : resolved.signature.split("|")[0],
-          changed,
+          matched: result.matched,
+          score: result.score,
+          candidateCount: result.candidateCount,
+          ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
+          visible: result.visible,
+          documentHidden: result.documentHidden,
+          url: result.url,
         },
       };
     }
@@ -1866,19 +1759,32 @@ function buildFillFieldsExpression(fields) {
 
 // --- Click targeting -------------------------------------------------------
 //
-// These four helpers are the matching algorithm. They are exported so they can
-// be unit-tested in Node, and serialized into the in-page expression via
-// toString() so the tested code is the code that runs in Chrome. Keep them
-// self-contained — a closure over module scope will not survive serialization.
+// Resolve and dispatch happen in ONE in-page expression, deliberately.
+//
+// An earlier revision split them so clicks could be dispatched as trusted CDP
+// Input events. Testing that assumption on the real surface showed it bought
+// nothing: with the tab visible, an untrusted pointer sequence opens Google
+// Maps' Directions panel (reproduced twice). The original "clicks do not
+// register" report was the label matcher below plus a backgrounded tab, not
+// untrusted events. Splitting the two, meanwhile, introduced coordinate
+// staleness, hover races, target stashing and cleanup, and cross-shadow
+// hit-testing — a new defect per review round. One expression has none of them:
+// the element is dispatched on by reference and cannot go stale mid-click.
+//
+// The matching helpers are exported for unit tests and serialized into the page
+// via toString(). Every function referenced by another must be listed in
+// CLICK_HELPER_SOURCE, including default-parameter values — a name resolved from
+// module scope in Node is simply undefined once the source reaches the page.
 
 /**
  * Normalize a label for comparison.
  *
- * Icon fonts (Material Symbols, google-symbols, Font Awesome) render via a
- * ligature glyph in the Private Use Area. That glyph is a truthy string, so a
- * naive `innerText || value || aria-label` chain short-circuits on it and never
- * reaches the real accessible name — which is why every icon-only control on
- * Google Maps was unclickable. Strip PUA and zero-width runs before comparing.
+ * Icon fonts (Material Symbols, google-symbols, Font Awesome) render through a
+ * ligature glyph in the Private Use Area, and it lands in innerText. That glyph
+ * is a truthy string, so the original `innerText || value || aria-label` chain
+ * short-circuited on it and never reached the accessible name — which is why
+ * every icon-only control on Google Maps was unmatchable. Strip PUA and
+ * zero-width runs before comparing.
  */
 export function normalizeLabelText(raw) {
   return String(raw === null || raw === undefined ? "" : raw)
@@ -1890,26 +1796,42 @@ export function normalizeLabelText(raw) {
 }
 
 /**
- * Visible text as the browser renders it.
+ * Rendered text, minus aria-hidden subtrees.
  *
- * Deliberately `innerText` rather than a childNodes walk. Hand-deriving it meant
+ * innerText rather than a childNodes walk: hand-deriving it meant
  * re-implementing block boundaries, <br>, display:none, <td>/<li>, white-space
- * and text-transform — each one a separate bug found one counterexample at a
- * time. innerText already excludes non-rendered subtrees and inserts the right
- * breaks, and it cannot drift from the browser.
+ * and text-transform, each of which surfaced as its own bug. The browser
+ * already gets all of them right.
+ *
+ * aria-hidden content is then subtracted, because it is not part of the
+ * accessible name and including it dispatches the wrong action: for
+ * `<button aria-label="Edit"><span aria-hidden="true">delete</span></button>`
+ * a click for "delete" would otherwise match — and click — Edit.
  */
-function defaultVisibleText(el) {
-  return typeof el.innerText === "string" ? el.innerText : "";
+export function defaultVisibleText(el) {
+  let text = typeof el.innerText === "string" ? el.innerText : "";
+  if (!text || typeof el.querySelectorAll !== "function") {
+    return text;
+  }
+  let hidden = [];
+  try {
+    hidden = Array.from(el.querySelectorAll('[aria-hidden="true"]'));
+  } catch {
+    return text;
+  }
+  for (const node of hidden) {
+    const part = typeof node.innerText === "string" ? node.innerText : "";
+    if (part && part.trim() && text.includes(part)) {
+      text = text.split(part).join(" ");
+    }
+  }
+  return text;
 }
 
 /**
  * Collect every normalized label an element could reasonably be addressed by.
  *
- * Returns an array rather than short-circuiting on the first non-empty source,
- * so an icon glyph in the rendered text can never mask the aria-label. That,
- * plus PUA stripping in normalizeLabelText, is what makes icon-only controls
- * addressable — `innerText || value || aria-label` short-circuited on the
- * invisible Private Use Area glyph and never reached the accessible name.
+ * An array rather than a `||` chain, so no single source can mask another.
  */
 export function collectElementLabels(el, getVisibleText = defaultVisibleText) {
   const labels = [];
@@ -1953,9 +1875,8 @@ export function scoreLabelMatch(labels, wanted) {
 }
 
 /**
- * Pick the best candidate. Visible always beats hidden (a hidden duplicate must
- * never win), then higher score, then smaller box (the most specific control
- * rather than a wrapper), then DOM order.
+ * Pick the best candidate: visible beats hidden, then higher score, then the
+ * smaller box (the control rather than a wrapper), then DOM order.
  */
 export function pickClickCandidate(candidates, wanted) {
   const scored = [];
@@ -1990,82 +1911,6 @@ export function pickClickCandidate(candidates, wanted) {
   };
 }
 
-/**
- * Decide what a click result means.
- *
- * A hidden tab cannot receive trusted input, so a click there that produced no
- * observable change is unproven rather than successful. It is still reported as
- * success:false per the tool contract — but only `proven` is a statement about
- * evidence, so callers can tell "we watched it fail" from "we could not watch".
- */
-export function classifyClickOutcome({ documentHidden, changed }) {
-  if (changed === true) {
-    return { success: true, proven: true, reason: null };
-  }
-  if (!documentHidden) {
-    // Visible tab, trusted input delivered. Plenty of legitimate clicks produce
-    // no signature change (analytics, no-op toggles), so this is not a failure.
-    return {
-      success: true,
-      proven: changed === false ? false : null,
-      reason: null,
-    };
-  }
-  // Hidden tab, nothing observable changed. The dispatch itself did not fail —
-  // only our ability to confirm the outcome did. Reporting failure here is the
-  // more dangerous error: a caller that retries can fire a non-idempotent action
-  // twice, silently. A caller that over-trusts a click gets a visible, single
-  // wrong answer instead. Say it ran, say it is unproven, and explain why.
-  return {
-    success: true,
-    proven: false,
-    reason:
-      'Click dispatched, but the tab is backgrounded (document.visibilityState is "hidden") and no page change was observed, so it could not be confirmed. Chrome drops synthesized input to hidden tabs and many sites ignore untrusted events. Do not assume this failed — check before retrying, since a retry can repeat a non-idempotent action. Bring the tab to the foreground for a confirmable click.',
-  };
-}
-
-// Serialized into both the resolve and post-click expressions so they fingerprint
-// page state identically. Deliberately wider than URL+title: a checkbox toggle,
-// a dropdown opening, a tab switch or a modal all have to register, or a click
-// that worked gets reported as one that did not.
-const CLICK_STATE_SIGNATURE_FN = `function clickStateSignature(el) {
-    const parts = [];
-    // The target can live in a same-origin iframe (the resolver adds those as
-    // roots), where an update touches nothing in the top document. Fingerprint
-    // both: the top level for navigation, the owner document for local effects.
-    const doc = (el && el.ownerDocument) || document;
-    try { parts.push(location.href, document.title); } catch (err) { /* detached */ }
-    try { parts.push('nodes:' + document.querySelectorAll('*').length); } catch (err) { /* noop */ }
-    if (doc !== document) {
-      try { parts.push('docurl:' + doc.location.href, 'docnodes:' + doc.querySelectorAll('*').length); } catch (err) { /* noop */ }
-    }
-    // Catches handlers that rewrite sibling text without touching attributes or
-    // node count. textContent rather than innerText: no forced layout, and a
-    // hash rather than a length so a same-length edit ("idle" -> "done") counts.
-    try {
-      const body = doc.body ? doc.body.textContent || '' : '';
-      let hash = 5381;
-      for (let i = 0; i < body.length; i += 1) hash = ((hash * 33) ^ body.charCodeAt(i)) >>> 0;
-      parts.push('body:' + body.length + ':' + hash);
-    } catch (err) { /* noop */ }
-    try {
-      const active = document.activeElement;
-      parts.push('active:' + (active ? (active.tagName || '') + '#' + (active.id || '') : ''));
-    } catch (err) { /* noop */ }
-    if (el && typeof el.getAttribute === 'function') {
-      for (const attr of ['aria-expanded', 'aria-checked', 'aria-pressed', 'aria-selected', 'aria-current', 'open', 'disabled', 'class']) {
-        try { parts.push(attr + '=' + String(el.getAttribute(attr))); } catch (err) { /* noop */ }
-      }
-      try { parts.push('checked:' + String(el.checked)); } catch (err) { /* noop */ }
-      try { parts.push('value:' + String(el.value || '').slice(0, 80)); } catch (err) { /* noop */ }
-      try { parts.push('text:' + String(el.innerText || '').length); } catch (err) { /* noop */ }
-    }
-    return parts.join('|');
-  }`;
-
-// Every function referenced by another one in here must be listed, including
-// default-parameter values — a name resolved from module scope in Node is simply
-// undefined once the source is serialized into the page.
 export const CLICK_HELPER_SOURCE = [
   normalizeLabelText,
   defaultVisibleText,
@@ -2076,34 +1921,31 @@ export const CLICK_HELPER_SOURCE = [
   .map((fn) => fn.toString())
   .join("\n");
 
-/**
- * Resolve the click target and report where to click it. Does not click — the
- * caller dispatches trusted input via CDP. Stashes the element on
- * a per-invocation window key for the synthetic fallback.
- */
-function buildClickResolveExpression({ selector, text, clickToken }) {
+/** Resolve and click in a single page expression. */
+function buildClickExpression({ selector, text }) {
   return `(() => {
     ${CLICK_HELPER_SOURCE}
-    ${CLICK_STATE_SIGNATURE_FN}
     const selector = ${JSON.stringify(selector || "")};
     const wanted = normalizeLabelText(${JSON.stringify(text || "")});
     const CLICK_SEL = 'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [role="link"], [role="switch"], input[type="button"], input[type="submit"], input[type="reset"], summary';
-    const visible = el => {
+
+    // frameVisible: an element can be perfectly visible inside its own document
+    // while the iframe embedding that document is hidden.
+    const visibleIn = (el, frameVisible) => {
       try {
-        // opacity and pointer-events are NOT inherited, so a control inside a
-        // stale menu whose ANCESTOR has opacity:0 still computes opacity 1 with a
-        // nonzero rect. checkVisibility accounts for ancestor opacity; walk the
-        // composed chain for pointer-events, which it does not cover.
+        if (!frameVisible) return false;
+        const win = el.ownerDocument.defaultView || window;
         if (typeof el.checkVisibility === 'function') {
           if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
         }
-        const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
-        if (!(style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0.01 && rect.width > 0 && rect.height > 0)) return false;
+        if (!(rect.width > 0 && rect.height > 0)) return false;
+        // opacity and pointer-events are not inherited, so a control inside a
+        // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
         for (let node = el, depth = 0; node && depth < 12; depth += 1) {
-          const s = window.getComputedStyle(node);
-          if (!s) break;
-          if (s.pointerEvents === 'none' || Number(s.opacity) <= 0.01 || s.visibility === 'hidden' || s.display === 'none') return false;
+          const style = win.getComputedStyle(node);
+          if (!style) break;
+          if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) <= 0.01) return false;
           const parent = node.parentElement;
           const root = !parent && node.getRootNode ? node.getRootNode() : null;
           node = parent || (root && root.host ? root.host : null);
@@ -2114,12 +1956,7 @@ function buildClickResolveExpression({ selector, text, clickToken }) {
       }
     };
     const areaOf = el => {
-      try {
-        const rect = el.getBoundingClientRect();
-        return rect.width * rect.height;
-      } catch (err) {
-        return Infinity;
-      }
+      try { const r = el.getBoundingClientRect(); return r.width * r.height; } catch (err) { return Infinity; }
     };
     const collect = (root, out, depth) => {
       if (!root || depth > 6 || out.length > 4000) return;
@@ -2128,77 +1965,75 @@ function buildClickResolveExpression({ selector, text, clickToken }) {
       for (const node of nodes) if (out.indexOf(node) === -1) out.push(node);
       let all = [];
       try { all = Array.from(root.querySelectorAll('*')); } catch (err) { all = []; }
-      for (const host of all) {
-        if (host.shadowRoot) collect(host.shadowRoot, out, depth + 1);
-      }
+      for (const host of all) if (host.shadowRoot) collect(host.shadowRoot, out, depth + 1);
     };
-    const roots = [document];
+
+    const roots = [{ root: document, frameVisible: true }];
     for (const frame of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
-      try { if (frame.contentDocument) roots.push(frame.contentDocument); } catch (err) { /* cross-origin */ }
+      try {
+        if (frame.contentDocument) {
+          roots.push({ root: frame.contentDocument, frameVisible: visibleIn(frame, true) });
+        }
+      } catch (err) { /* cross-origin */ }
     }
 
     let el = null;
     let pick = null;
+    let frameVisible = true;
     if (selector) {
-      for (const root of roots) {
+      for (const entry of roots) {
         try {
-          const hit = root.querySelector(selector);
-          if (hit) { el = hit; break; }
+          const hit = entry.root.querySelector(selector);
+          if (hit) { el = hit; frameVisible = entry.frameVisible; break; }
         } catch (err) { /* invalid selector for this root */ }
       }
     }
     if (!el && wanted) {
       const pool = [];
-      for (const root of roots) collect(root, pool, 0);
+      for (const entry of roots) {
+        const before = pool.length;
+        collect(entry.root, pool, 0);
+        for (let i = before; i < pool.length; i += 1) pool[i].__frameVisible = entry.frameVisible;
+      }
       const candidates = pool.map(node => ({
         labels: collectElementLabels(node),
-        visible: visible(node),
+        visible: visibleIn(node, node.__frameVisible !== false),
         area: areaOf(node),
       }));
       pick = pickClickCandidate(candidates, wanted);
-      if (pick) el = pool[pick.best.index];
+      if (pick) { el = pool[pick.best.index]; frameVisible = el.__frameVisible !== false; }
+      for (const node of pool) { try { delete node.__frameVisible; } catch (err) { /* frozen */ } }
     }
     if (!el) {
       return { found: false, query: selector || ${JSON.stringify(text || "")}, candidateCount: 0 };
     }
 
-    // 'instant': smooth scrolling is async, so reading the rect right after a
-    // default scrollIntoView can classify a below-fold control as out of
-    // viewport and drop it to the untrusted synthetic path.
+    // 'instant': smooth scrolling is async and would leave the control still in
+    // flight. Harmless here (we dispatch by reference) but keeps it on screen.
     try { el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); }
     catch (err) { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (err2) { /* detached */ } }
-    // Re-read after scrolling — getBoundingClientRect is viewport-relative.
+
     const rect = el.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const inViewport = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight && rect.width > 0 && rect.height > 0;
-    let occluded = false;
-    if (inViewport) {
-      try {
-        // elementFromPoint stops at a shadow HOST, and Node.contains does not
-        // cross shadow boundaries — so a button inside an open shadow root would
-        // look occluded and lose trusted dispatch. Descend shadow roots at the
-        // point, and compare against the target's composed host chain.
-        let hit = el.ownerDocument.elementFromPoint(x, y);
-        for (let depth = 0; depth < 8; depth += 1) {
-          if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
-          const deeper = hit.shadowRoot.elementFromPoint(x, y);
-          if (!deeper || deeper === hit) break;
-          hit = deeper;
-        }
-        const hostChain = [];
-        for (let node = el, depth = 0; node && depth < 8; depth += 1) {
-          hostChain.push(node);
-          const root = node.getRootNode ? node.getRootNode() : null;
-          node = root && root.host ? root.host : null;
-        }
-        occluded = !(hit && hostChain.some(node => hit === node || node.contains(hit) || hit.contains(node)));
-      } catch (err) { occluded = false; }
-    }
-    // Scoped per invocation: a shared window property lets two overlapping
-    // clicks clobber each other's target, or delete one the other still needs.
-    window[${JSON.stringify(`__browserHandClickTarget_${clickToken}`)}] = el;
-    const isTopDocument = el.ownerDocument === document;
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const view = el.ownerDocument.defaultView || window;
+    const fire = (Ctor, type, extra) => {
+      el.dispatchEvent(new Ctor(type, Object.assign({
+        bubbles: true, cancelable: true, composed: true, view,
+        button: 0, clientX: cx, clientY: cy,
+      }, extra)));
+    };
+    // Full pointer sequence: a bare el.click() fires one untrusted click event
+    // and is ignored by handlers bound to pointerdown/mousedown, which is most
+    // of Google Maps' jsaction layer.
+    const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    const pointerProps = Pointer === MouseEvent ? {} : { pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    fire(Pointer, 'pointerdown', Object.assign({ buttons: 1 }, pointerProps));
+    fire(MouseEvent, 'mousedown', { buttons: 1, detail: 1 });
+    fire(Pointer, 'pointerup', Object.assign({ buttons: 0 }, pointerProps));
+    fire(MouseEvent, 'mouseup', { buttons: 0, detail: 1 });
+    fire(MouseEvent, 'click', { buttons: 0, detail: 1 });
+
     return {
       found: true,
       query: selector || ${JSON.stringify(text || "")},
@@ -2210,101 +2045,15 @@ function buildClickResolveExpression({ selector, text, clickToken }) {
       score: pick ? pick.best.score : null,
       candidateCount: pick ? pick.candidateCount : 1,
       runnersUp: pick ? pick.runnersUp.map(item => ({ label: item.labels[0] || '', score: item.score, visible: item.visible })) : [],
-      visible: visible(el),
-      occluded,
-      inViewport,
-      isTopDocument,
-      // Chrome drops synthesized input to a hidden (backgrounded, minimized, or
-      // off-Space) tab, and many sites ignore untrusted events. Report it so a
-      // click that cannot land is not mistaken for one that did.
+      visible: visibleIn(el, frameVisible),
+      // Chrome throttles a backgrounded tab and many sites ignore input there,
+      // so a click on one may not take effect. Reported as an observed fact
+      // about the tab, not inferred from whether the page appeared to change —
+      // a global change-detector produced false negatives on quiet pages and
+      // false positives on ones with a ticking clock.
       documentHidden: document.visibilityState === 'hidden',
-      x,
-      y,
-      signature: clickStateSignature(el),
+      url: location.href,
     };
-  })()`;
-}
-
-/** Synthetic fallback for targets CDP coordinates cannot reach (no layout box,
- *  outside the viewport, or inside a subframe). Full pointer sequence — a bare
- *  el.click() is ignored by handlers bound to pointerdown/mousedown. */
-function buildSyntheticClickExpression(clickToken) {
-  return `(() => {
-    const el = window[${JSON.stringify(`__browserHandClickTarget_${clickToken}`)}];
-    if (!el) throw new Error('Click target went away before dispatch');
-    const rect = el.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    const fire = (Ctor, type, extra) => {
-      el.dispatchEvent(new Ctor(type, Object.assign({
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        view: el.ownerDocument.defaultView || window,
-        button: 0,
-        clientX: cx,
-        clientY: cy,
-      }, extra)));
-    };
-    const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-    const pointerProps = Pointer === MouseEvent ? {} : { pointerId: 1, pointerType: 'mouse', isPrimary: true };
-    fire(Pointer, 'pointerdown', Object.assign({ buttons: 1 }, pointerProps));
-    fire(MouseEvent, 'mousedown', { buttons: 1, detail: 1 });
-    fire(Pointer, 'pointerup', Object.assign({ buttons: 0 }, pointerProps));
-    fire(MouseEvent, 'mouseup', { buttons: 0, detail: 1 });
-    fire(MouseEvent, 'click', { buttons: 0, detail: 1 });
-    return true;
-  })()`;
-}
-
-/**
- * Re-hit-test the stashed target right before dispatching at cached coordinates.
- *
- * Resolve and dispatch are separate round trips now that input is trusted CDP,
- * so a reflow between them can leave the cached point over a different control.
- * el.click() never had this gap. Returns refreshed coordinates, or ok:false so
- * the caller falls back to the in-page synthetic path, which dispatches on the
- * element reference and cannot hit the wrong node.
- */
-function buildRevalidateTargetExpression(clickToken) {
-  return `(() => {
-    const el = window[${JSON.stringify(`__browserHandClickTarget_${clickToken}`)}];
-    if (!el || !el.isConnected) return { ok: false, fatal: true, reason: 'target detached' };
-    const rect = el.getBoundingClientRect();
-    if (!(rect.width > 0 && rect.height > 0)) return { ok: false, fatal: false, reason: 'target has no box' };
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    if (!(x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight)) {
-      return { ok: false, fatal: false, reason: 'target left the viewport' };
-    }
-    let hit = el.ownerDocument.elementFromPoint(x, y);
-    for (let depth = 0; depth < 8; depth += 1) {
-      if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
-      const deeper = hit.shadowRoot.elementFromPoint(x, y);
-      if (!deeper || deeper === hit) break;
-      hit = deeper;
-    }
-    const chain = [];
-    for (let node = el, depth = 0; node && depth < 8; depth += 1) {
-      chain.push(node);
-      const root = node.getRootNode ? node.getRootNode() : null;
-      node = root && root.host ? root.host : null;
-    }
-    const stillOurs = Boolean(hit) && chain.some(node => hit === node || node.contains(hit) || hit.contains(node));
-    if (!stillOurs) return { ok: false, fatal: true, reason: 'another element now occupies the point' };
-    return { ok: true, x, y };
-  })()`;
-}
-
-/** Cheap post-click state probe so a no-op click is visible in the result. */
-function buildPostClickExpression(signature, clickToken) {
-  return `(() => {
-    ${CLICK_STATE_SIGNATURE_FN}
-    const before = ${JSON.stringify(signature || "")};
-    const key = ${JSON.stringify(`__browserHandClickTarget_${clickToken}`)};
-    const after = clickStateSignature(window[key]);
-    try { delete window[key]; } catch (err) { window[key] = null; }
-    return { url: location.href, changed: before !== after };
   })()`;
 }
 

@@ -18,7 +18,7 @@ import vm from "node:vm";
 
 import {
   CLICK_HELPER_SOURCE,
-  classifyClickOutcome,
+  defaultVisibleText,
   collectElementLabels,
   normalizeLabelText,
   pickClickCandidate,
@@ -84,6 +84,43 @@ test("normalizeLabelText strips Private Use Area icon glyphs", () => {
   assert.equal(normalizeLabelText("  Get   Directions "), "get directions");
   assert.equal(normalizeLabelText(null), "");
   assert.equal(normalizeLabelText(undefined), "");
+});
+
+test("defaultVisibleText subtracts aria-hidden content from rendered text", () => {
+  // <button aria-label="Edit"><span aria-hidden="true">delete</span></button>
+  // Including the aria-hidden text would let a click for "delete" dispatch Edit.
+  const icon = { innerText: "delete" };
+  const button = {
+    innerText: "delete",
+    querySelectorAll: () => [icon],
+  };
+  assert.equal(defaultVisibleText(button).trim(), "");
+
+  // Real visible text alongside a decorative icon keeps the real text.
+  const icon2 = { innerText: "chevron" };
+  const withText = {
+    innerText: "chevron Next",
+    querySelectorAll: () => [icon2],
+  };
+  assert.equal(defaultVisibleText(withText).trim(), "Next");
+
+  // No aria-hidden children: innerText passes through untouched, so block
+  // boundaries, <br>, <li> and text-transform stay the browser's business.
+  const plain = { innerText: "Save\nChanges", querySelectorAll: () => [] };
+  assert.equal(defaultVisibleText(plain), "Save\nChanges");
+});
+
+test("collectElementLabels keeps aria-label when aria-hidden text is removed", () => {
+  const icon = { innerText: "delete" };
+  const button = {
+    nodeType: 1,
+    getAttribute: (name) => (name === "aria-label" ? "Edit" : null),
+    innerText: "delete",
+    querySelectorAll: () => [icon],
+  };
+  const labels = collectElementLabels(button);
+  assert.deepEqual(labels, ["edit"]);
+  assert.ok(!labels.includes("delete"));
 });
 
 test("collectElementLabels uses the browser-rendered text verbatim", () => {
@@ -189,54 +226,6 @@ test("pickClickCandidate reports no match and surfaces runners-up", () => {
     picked.runnersUp.map((item) => item.labels[0]),
     ["search this area", "search nearby"]
   );
-});
-
-test("classifyClickOutcome only fails a click it could not observe", () => {
-  // Observed change is always a success, hidden or not.
-  assert.deepEqual(classifyClickOutcome({ documentHidden: true, changed: true }), {
-    success: true,
-    proven: true,
-    reason: null,
-  });
-
-  // Visible tab got trusted input. Plenty of real clicks change nothing
-  // observable (analytics, no-op toggles) — that must not be reported a failure.
-  const visibleNoChange = classifyClickOutcome({
-    documentHidden: false,
-    changed: false,
-  });
-  assert.equal(visibleNoChange.success, true);
-  assert.equal(visibleNoChange.proven, false);
-  assert.equal(visibleNoChange.reason, null);
-
-  // Hidden tab with nothing observed: the dispatch ran, only confirmation
-  // failed. Reporting failure here is the more dangerous error — a caller that
-  // retries can repeat a non-idempotent action silently. Report it as run but
-  // unproven, and carry the reason.
-  const hiddenNoChange = classifyClickOutcome({
-    documentHidden: true,
-    changed: false,
-  });
-  assert.equal(hiddenNoChange.success, true);
-  assert.equal(hiddenNoChange.proven, false);
-  assert.match(hiddenNoChange.reason, /could not be confirmed/);
-  assert.match(hiddenNoChange.reason, /retry/i);
-
-  // Nothing reports failure from this function — only a resolve or dispatch
-  // error does, and those never reach here.
-  for (const documentHidden of [true, false]) {
-    for (const changed of [true, false, null]) {
-      assert.equal(
-        classifyClickOutcome({ documentHidden, changed }).success,
-        true,
-        `hidden=${documentHidden} changed=${changed} must not report failure`
-      );
-    }
-  }
-
-  // `proven` still discriminates, which is what a caller should branch on.
-  assert.equal(classifyClickOutcome({ documentHidden: true, changed: true }).proven, true);
-  assert.equal(classifyClickOutcome({ documentHidden: true, changed: null }).proven, false);
 });
 
 test("icon-only control still loses to an exact text match", () => {
