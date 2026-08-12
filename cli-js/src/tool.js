@@ -49,7 +49,12 @@ const MAX_STDOUT_BYTES = 32 * 1024;
 const MAX_STDERR_BYTES = 4 * 1024;
 const MAX_CURRENT_TEXT_CHARS = 8000;
 // How long to let the page react to a click before probing for a state change.
-const CLICK_SETTLE_MS = Number(process.env.BROWSER_HAND_CLICK_SETTLE_MS || 200);
+// Clamped: a malformed value yields NaN, which setTimeout coerces to 0 and
+// silently removes the settle period entirely.
+const CLICK_SETTLE_MS = (() => {
+  const parsed = Number(process.env.BROWSER_HAND_CLICK_SETTLE_MS);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.min(parsed, 5000) : 200;
+})();
 // Per-invocation key suffix so two concurrent clicks cannot clobber each other's
 // stashed target, or delete one the other still needs.
 let clickTokenSeq = 0;
@@ -1356,13 +1361,27 @@ async function runCurrentOperation(input, timeoutMs) {
           buildRevalidateTargetExpression(clickToken)
         ).catch(() => null);
       }
+      if (useCdp && revalidated && revalidated.ok !== true && revalidated.fatal) {
+        // The resolution is stale, not just the coordinates. Falling back to the
+        // synthetic path here would dispatch at a detached node, where a direct
+        // listener can still fire an obsolete action while a delegated one
+        // silently does nothing and we report success.
+        return {
+          success: false,
+          ...base,
+          error: `Target was resolved but went stale before dispatch (${revalidated.reason}). Re-run the click to resolve against the current page.`,
+          result: {
+            clicked: query,
+            matched: resolved.matched,
+            revalidation: revalidated.reason,
+          },
+        };
+      }
       if (useCdp && revalidated && revalidated.ok === true) {
         const point = { x: revalidated.x, y: revalidated.y };
-        await cdp.send(
-          "Input.dispatchMouseEvent",
-          { type: "mouseMoved", ...point, button: "none", buttons: 0 },
-          sessionId
-        );
+        // No mouseMoved: it exists only to prime hover state, which a click does
+        // not need, and a hover handler that moves the control or opens an
+        // overlay would invalidate the point between here and mousePressed.
         await cdp.send(
           "Input.dispatchMouseEvent",
           {
@@ -2250,13 +2269,13 @@ function buildSyntheticClickExpression(clickToken) {
 function buildRevalidateTargetExpression(clickToken) {
   return `(() => {
     const el = window[${JSON.stringify(`__browserHandClickTarget_${clickToken}`)}];
-    if (!el || !el.isConnected) return { ok: false, reason: 'target detached' };
+    if (!el || !el.isConnected) return { ok: false, fatal: true, reason: 'target detached' };
     const rect = el.getBoundingClientRect();
-    if (!(rect.width > 0 && rect.height > 0)) return { ok: false, reason: 'target has no box' };
+    if (!(rect.width > 0 && rect.height > 0)) return { ok: false, fatal: false, reason: 'target has no box' };
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     if (!(x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight)) {
-      return { ok: false, reason: 'target left the viewport' };
+      return { ok: false, fatal: false, reason: 'target left the viewport' };
     }
     let hit = el.ownerDocument.elementFromPoint(x, y);
     for (let depth = 0; depth < 8; depth += 1) {
@@ -2272,7 +2291,7 @@ function buildRevalidateTargetExpression(clickToken) {
       node = root && root.host ? root.host : null;
     }
     const stillOurs = Boolean(hit) && chain.some(node => hit === node || node.contains(hit) || hit.contains(node));
-    if (!stillOurs) return { ok: false, reason: 'another element now occupies the point' };
+    if (!stillOurs) return { ok: false, fatal: true, reason: 'another element now occupies the point' };
     return { ok: true, x, y };
   })()`;
 }
