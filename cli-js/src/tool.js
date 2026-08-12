@@ -1331,7 +1331,12 @@ async function runCurrentOperation(input, timeoutMs) {
         ...base,
         // A caveat about the tab, not a claim about the outcome. Verifying what
         // a click did is the caller's job — they have snapshot and evaluate.
-        ...(result.documentHidden
+        ...(result.interrupted
+          ? {
+              warning: `The control was removed from the page during the click, before the ${result.interrupted} event. Part of the sequence was not delivered, so the action may or may not have run — re-check the page rather than assuming either way.`,
+            }
+          : {}),
+        ...(result.documentHidden && !result.interrupted
           ? {
               warning:
                 'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
@@ -1344,6 +1349,7 @@ async function runCurrentOperation(input, timeoutMs) {
           candidateCount: result.candidateCount,
           ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
           visible: result.visible,
+          ...(result.interrupted ? { interrupted: result.interrupted } : {}),
           documentHidden: result.documentHidden,
           url: result.url,
         },
@@ -1805,44 +1811,61 @@ export function normalizeLabelText(raw) {
  * and text-transform, each of which surfaced as its own bug. The browser
  * already gets all of them right.
  *
- * aria-hidden content is then subtracted, because it is not part of the
- * accessible name and including it dispatches the wrong action: for
- * `<button aria-label="Edit"><span aria-hidden="true">delete</span></button>`
- * a click for "delete" would otherwise match — and click — Edit.
+ * aria-hidden content is excluded because it is not part of the accessible name
+ * and including it dispatches the wrong action — a click for "delete" matching
+ * `<button aria-label="Edit"><span aria-hidden="true">delete</span></button>`.
+ *
+ * The exclusion works by hiding those nodes and re-reading, not by subtracting
+ * their text from the string. Subtraction was wrong twice: removing every
+ * occurrence stripped the visible copy of repeated text, and removing the first
+ * occurrence stripped the wrong copy when the hidden node came last. A string
+ * simply does not record which occurrence came from which node. The cost is a
+ * synchronous style write and a forced reflow during a read; both are restored
+ * before returning.
  */
 export function defaultVisibleText(el) {
-  let text = typeof el.innerText === "string" ? el.innerText : "";
-  if (!text || typeof el.querySelectorAll !== "function") {
-    return text;
+  if (typeof el.innerText !== "string") {
+    return "";
+  }
+  if (typeof el.querySelectorAll !== "function") {
+    return el.innerText;
   }
   let hidden = [];
   try {
     hidden = Array.from(el.querySelectorAll('[aria-hidden="true"]'));
   } catch {
-    return text;
+    return el.innerText;
   }
-  // Nested aria-hidden nodes would otherwise have their text subtracted twice.
+  if (!hidden.length) {
+    return el.innerText;
+  }
+  // Hiding an outer node hides everything under it, so nested ones are already
+  // covered and touching them would only add style writes to restore.
   const outermost = hidden.filter(
     (node) =>
       !hidden.some(
         (other) => other !== node && typeof other.contains === "function" && other.contains(node)
       )
   );
-  for (const node of outermost) {
-    const part = typeof node.innerText === "string" ? node.innerText : "";
-    if (!part || !part.trim()) {
-      continue;
+  const restore = [];
+  try {
+    for (const node of outermost) {
+      if (!node.style) {
+        continue;
+      }
+      restore.push([node, node.style.display]);
+      node.style.display = "none";
     }
-    // One occurrence, not all of them: for
-    // <button><span aria-hidden="true">Save</span>Save</button> innerText is
-    // "Save Save", and a global replace would strip the visible copy too,
-    // leaving the control unaddressable by its own label.
-    const at = text.indexOf(part);
-    if (at !== -1) {
-      text = `${text.slice(0, at)} ${text.slice(at + part.length)}`;
+    return el.innerText;
+  } finally {
+    for (const entry of restore) {
+      try {
+        entry[0].style.display = entry[1];
+      } catch {
+        /* detached mid-read */
+      }
     }
   }
-  return text;
 }
 
 /**
@@ -2101,11 +2124,23 @@ function buildClickExpression({ selector, text }) {
     // of Google Maps' jsaction layer.
     const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
     const pointerProps = Pointer === MouseEvent ? {} : { pointerId: 1, pointerType: 'mouse', isPrimary: true };
-    fire(Pointer, 'pointerdown', Object.assign({ buttons: 1 }, pointerProps));
-    fire(MouseEvent, 'mousedown', { buttons: 1, detail: 1 });
-    fire(Pointer, 'pointerup', Object.assign({ buttons: 0 }, pointerProps));
-    fire(MouseEvent, 'mouseup', { buttons: 0, detail: 1 });
-    fire(MouseEvent, 'click', { buttons: 0, detail: 1 });
+    const sequence = [
+      [Pointer, 'pointerdown', Object.assign({ buttons: 1 }, pointerProps)],
+      [MouseEvent, 'mousedown', { buttons: 1, detail: 1 }],
+      [Pointer, 'pointerup', Object.assign({ buttons: 0 }, pointerProps)],
+      [MouseEvent, 'mouseup', { buttons: 0, detail: 1 }],
+      [MouseEvent, 'click', { buttons: 0, detail: 1 }],
+    ];
+    // A pointerdown/mousedown handler can synchronously remove or replace the
+    // control. Continuing would dispatch the rest at a detached node: stale
+    // direct listeners fire, delegated listeners on the replacement get nothing,
+    // and we would report a clean click. Stop instead, and say so. Re-resolving
+    // here would be guessing which replacement the caller meant.
+    let interrupted = null;
+    for (const step of sequence) {
+      if (el.isConnected === false) { interrupted = step[1]; break; }
+      fire(step[0], step[1], step[2]);
+    }
 
     return {
       found: true,
@@ -2119,6 +2154,7 @@ function buildClickExpression({ selector, text }) {
       candidateCount: pick ? pick.candidateCount : 1,
       runnersUp: pick ? pick.runnersUp.map(item => ({ label: item.labels[0] || '', score: item.score, visible: item.visible })) : [],
       visible: visibleIn(el, frameVisible),
+      ...(interrupted ? { interrupted } : {}),
       // Chrome throttles a backgrounded tab and many sites ignore input there,
       // so a click on one may not take effect. Reported as an observed fact
       // about the tab, not inferred from whether the page appeared to change —

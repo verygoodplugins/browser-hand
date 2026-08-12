@@ -86,68 +86,64 @@ test("normalizeLabelText strips Private Use Area icon glyphs", () => {
   assert.equal(normalizeLabelText(undefined), "");
 });
 
-test("defaultVisibleText subtracts aria-hidden content from rendered text", () => {
-  // <button aria-label="Edit"><span aria-hidden="true">delete</span></button>
-  // Including the aria-hidden text would let a click for "delete" dispatch Edit.
-  const icon = { innerText: "delete" };
-  const button = {
-    innerText: "delete",
-    querySelectorAll: () => [icon],
+// Models the real mechanism: innerText reflects which aria-hidden children are
+// currently display:none, so hiding them and re-reading is what excludes them.
+function buttonWithHidden({ parts }) {
+  const nodes = parts.map((part) => ({
+    text: part.text,
+    hidden: Boolean(part.hidden),
+    contains: () => false,
+    style: { display: "" },
+  }));
+  return {
+    nodeType: 1,
+    getAttribute: () => null,
+    querySelectorAll: () => nodes.filter((node) => node.hidden),
+    get innerText() {
+      return nodes
+        .filter((node) => node.style.display !== "none")
+        .map((node) => node.text)
+        .join(" ");
+    },
+    __nodes: nodes,
   };
+}
+
+test("defaultVisibleText excludes aria-hidden content by hiding and re-reading", () => {
+  const button = buttonWithHidden({ parts: [{ text: "delete", hidden: true }] });
   assert.equal(defaultVisibleText(button).trim(), "");
-
-  // Real visible text alongside a decorative icon keeps the real text.
-  const icon2 = { innerText: "chevron" };
-  const withText = {
-    innerText: "chevron Next",
-    querySelectorAll: () => [icon2],
-  };
-  assert.equal(defaultVisibleText(withText).trim(), "Next");
-
-  // No aria-hidden children: innerText passes through untouched, so block
-  // boundaries, <br>, <li> and text-transform stay the browser's business.
-  const plain = { innerText: "Save\nChanges", querySelectorAll: () => [] };
-  assert.equal(defaultVisibleText(plain), "Save\nChanges");
-});
-
-test("defaultVisibleText removes only the hidden copy of repeated text", () => {
-  // <button><span aria-hidden="true">Save</span>Save</button>
-  // innerText is "Save Save"; a global replace strips the visible copy too and
-  // leaves the control unaddressable by its own label.
-  const icon = { innerText: "Save" };
-  const button = { innerText: "Save Save", querySelectorAll: () => [icon] };
-  assert.equal(defaultVisibleText(button).trim(), "Save");
-  assert.ok(
-    collectElementLabels({
-      nodeType: 1,
-      getAttribute: () => null,
-      innerText: "Save Save",
-      querySelectorAll: () => [icon],
-    }).includes("save")
+  // Inline styles are restored, so the read leaves no trace.
+  assert.deepEqual(
+    button.__nodes.map((node) => node.style.display),
+    [""]
   );
 });
 
-test("defaultVisibleText does not subtract nested aria-hidden text twice", () => {
-  const inner = { innerText: "x" };
-  const outer = {
-    innerText: "x",
-    contains: (node) => node === inner,
-  };
-  const button = {
-    innerText: "x Keep",
-    querySelectorAll: () => [outer, inner],
-  };
-  assert.equal(defaultVisibleText(button).trim(), "Keep");
+test("defaultVisibleText keeps the visible copy regardless of DOM order", () => {
+  // Hidden duplicate AFTER the visible text — the ordering that defeated
+  // first-occurrence subtraction ("Delete item Delete" became "item Delete").
+  const after = buttonWithHidden({
+    parts: [{ text: "Delete item" }, { text: "Delete", hidden: true }],
+  });
+  assert.equal(defaultVisibleText(after).trim(), "Delete item");
+
+  // And BEFORE it — the ordering that defeated global replacement.
+  const before = buttonWithHidden({
+    parts: [{ text: "Save", hidden: true }, { text: "Save" }],
+  });
+  assert.equal(defaultVisibleText(before).trim(), "Save");
+});
+
+test("defaultVisibleText leaves elements without aria-hidden children untouched", () => {
+  const plain = { innerText: "Save\nChanges", querySelectorAll: () => [] };
+  assert.equal(defaultVisibleText(plain), "Save\nChanges");
+  assert.equal(defaultVisibleText({ innerText: "x" }), "x");
+  assert.equal(defaultVisibleText({}), "");
 });
 
 test("collectElementLabels keeps aria-label when aria-hidden text is removed", () => {
-  const icon = { innerText: "delete" };
-  const button = {
-    nodeType: 1,
-    getAttribute: (name) => (name === "aria-label" ? "Edit" : null),
-    innerText: "delete",
-    querySelectorAll: () => [icon],
-  };
+  const button = buttonWithHidden({ parts: [{ text: "delete", hidden: true }] });
+  button.getAttribute = (name) => (name === "aria-label" ? "Edit" : null);
   const labels = collectElementLabels(button);
   assert.deepEqual(labels, ["edit"]);
   assert.ok(!labels.includes("delete"));
