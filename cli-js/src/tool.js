@@ -1951,7 +1951,11 @@ export function pickClickCandidate(candidates, wanted) {
   return {
     best: scored[0],
     candidateCount: scored.length,
+    // runnersUp is a reporting slice. `ranked` is the whole ordered set, because
+    // the aria-hidden correction pass has to be able to walk past however many
+    // leading candidates matched only on hidden text.
     runnersUp: scored.slice(1, 4),
+    ranked: scored,
   };
 }
 
@@ -2102,8 +2106,8 @@ function buildClickExpression({ selector, text }) {
       }));
       pick = pickClickCandidate(candidates, wanted);
       if (pick) {
-        const ordered = [pick.best].concat(pick.runnersUp);
-        for (let i = 0; i < ordered.length && i < 8; i += 1) {
+        const ordered = pick.ranked;
+        for (let i = 0; i < ordered.length; i += 1) {
           const node = pool[ordered[i].index];
           // defaultVisibleText: the aria-hidden-corrected read.
           if (scoreLabelMatch(collectElementLabels(node), wanted) > 0) {
@@ -2156,12 +2160,14 @@ function buildClickExpression({ selector, text }) {
     // and we would report a clean click. Stop instead, and say so. Re-resolving
     // here would be guessing which replacement the caller meant.
     let interrupted = null;
+    const sent = {};
     for (const step of sequence) {
       if (el.isConnected === false) { interrupted = step[1]; break; }
       // A handler can disable the control mid-sequence. A native interaction
       // stops activating it at that point; dispatchEvent would not.
       if (step[1] === 'click' && isDisabled(el)) { interrupted = 'click (control became disabled)'; break; }
       fire(step[0], step[1], step[2]);
+      sent[step[1]] = true;
     }
     if (interrupted) {
       // pointerdown already bubbled to the document and may have left pressed or
@@ -2171,10 +2177,14 @@ function buildClickExpression({ selector, text }) {
         ? (el.ownerDocument && el.ownerDocument.body) || document.body
         : el;
       if (fallback) {
-        for (const [Ctor, type, extra] of [
-          [Pointer, 'pointercancel', Object.assign({ buttons: 0 }, pointerProps)],
-          [MouseEvent, 'mouseup', { buttons: 0, detail: 0 }],
-        ]) {
+        // Only releases the loop did NOT already deliver. Interrupting at the
+        // click step means mouseup has been sent; emitting it again would run
+        // document-level release handlers twice and could commit the action
+        // twice for one requested click.
+        const cleanup = [];
+        if (!sent.pointerup) cleanup.push([Pointer, 'pointercancel', Object.assign({ buttons: 0 }, pointerProps)]);
+        if (!sent.mouseup) cleanup.push([MouseEvent, 'mouseup', { buttons: 0, detail: 0 }]);
+        for (const [Ctor, type, extra] of cleanup) {
           try {
             fallback.dispatchEvent(new Ctor(type, Object.assign({
               bubbles: true, cancelable: true, composed: true, view,

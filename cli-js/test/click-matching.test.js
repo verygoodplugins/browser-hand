@@ -110,7 +110,9 @@ function buttonWithHidden({ parts }) {
 }
 
 test("defaultVisibleText excludes aria-hidden content by hiding and re-reading", () => {
-  const button = buttonWithHidden({ parts: [{ text: "delete", hidden: true }] });
+  const button = buttonWithHidden({
+    parts: [{ text: "delete", hidden: true }],
+  });
   assert.equal(defaultVisibleText(button).trim(), "");
   // Inline styles are restored, so the read leaves no trace.
   assert.deepEqual(
@@ -142,7 +144,9 @@ test("defaultVisibleText leaves elements without aria-hidden children untouched"
 });
 
 test("collectElementLabels keeps aria-label when aria-hidden text is removed", () => {
-  const button = buttonWithHidden({ parts: [{ text: "delete", hidden: true }] });
+  const button = buttonWithHidden({
+    parts: [{ text: "delete", hidden: true }],
+  });
   button.getAttribute = (name) => (name === "aria-label" ? "Edit" : null);
   const labels = collectElementLabels(button);
   assert.deepEqual(labels, ["edit"]);
@@ -248,6 +252,25 @@ test("pickClickCandidate breaks ties on smallest area, then DOM order", () => {
     "submit"
   );
   assert.equal(tie.best.index, 0);
+});
+
+test("pickClickCandidate exposes the full ranked set, not just three runners-up", () => {
+  // The aria-hidden correction pass walks this list, so truncating it at four
+  // made a genuine candidate unreachable behind decoys that matched only on
+  // hidden text.
+  const many = Array.from({ length: 9 }, () => ({
+    labels: ["confirm"],
+    visible: true,
+    area: 100,
+  }));
+  const picked = pickClickCandidate(many, "confirm");
+  assert.equal(picked.candidateCount, 9);
+  assert.equal(picked.ranked.length, 9);
+  assert.equal(picked.runnersUp.length, 3, "runnersUp stays a reporting slice");
+  assert.deepEqual(
+    picked.ranked.map((item) => item.index),
+    [0, 1, 2, 3, 4, 5, 6, 7, 8]
+  );
 });
 
 test("pickClickCandidate reports no match and surfaces runners-up", () => {
