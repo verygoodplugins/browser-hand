@@ -2048,14 +2048,28 @@ function buildClickExpression({ selector, text }) {
     const areaOf = el => {
       try { const r = el.getBoundingClientRect(); return r.width * r.height; } catch (err) { return Infinity; }
     };
+    const MAX_CANDIDATES = 4000;
+    const seen = new Set();
     const collect = (root, out, depth) => {
-      if (!root || depth > 6 || out.length > 4000) return;
+      if (!root || depth > 6 || out.length >= MAX_CANDIDATES) return;
       let nodes = [];
       try { nodes = Array.from(root.querySelectorAll(CLICK_SEL)); } catch (err) { return; }
-      for (const node of nodes) if (out.indexOf(node) === -1) out.push(node);
+      // Check the cap per node, not just on entry: one root holding more than
+      // MAX_CANDIDATES matches used to append all of them, and the scoring pass
+      // then ran innerText, computed style, geometry and a hit-test over the
+      // whole unbounded set — enough to freeze a large dashboard and time the
+      // click out. Set membership rather than indexOf keeps dedupe O(1); at the
+      // cap, the linear scan was the other half of the cost.
+      for (const node of nodes) {
+        if (out.length >= MAX_CANDIDATES) return;
+        if (!seen.has(node)) { seen.add(node); out.push(node); }
+      }
       let all = [];
       try { all = Array.from(root.querySelectorAll('*')); } catch (err) { all = []; }
-      for (const host of all) if (host.shadowRoot) collect(host.shadowRoot, out, depth + 1);
+      for (const host of all) {
+        if (out.length >= MAX_CANDIDATES) return;
+        if (host.shadowRoot) collect(host.shadowRoot, out, depth + 1);
+      }
     };
 
     const roots = [{ root: document, frameVisible: true }];
@@ -2106,15 +2120,31 @@ function buildClickExpression({ selector, text }) {
       }));
       pick = pickClickCandidate(candidates, wanted);
       if (pick) {
-        const ordered = pick.ranked;
-        for (let i = 0; i < ordered.length; i += 1) {
-          const node = pool[ordered[i].index];
-          // defaultVisibleText: the aria-hidden-corrected read.
-          if (scoreLabelMatch(collectElementLabels(node), wanted) > 0) {
-            el = node;
-            pick = { best: ordered[i], candidateCount: pick.candidateCount, runnersUp: pick.runnersUp };
-            break;
-          }
+        // Correct only the candidates that actually matched, then rank the
+        // corrected set from scratch. Taking the first one with any positive
+        // corrected score let an early prefix match win over a candidate that
+        // BECOMES exact once its aria-hidden text is removed — "Delete all"
+        // beating a real "Delete". Correcting the matched set rather than every
+        // candidate is what keeps the write off the hot path.
+        const correctedNodes = [];
+        const corrected = [];
+        for (const item of pick.ranked) {
+          const node = pool[item.index];
+          correctedNodes.push(node);
+          corrected.push({
+            labels: collectElementLabels(node),
+            visible: item.visible,
+            area: item.area,
+          });
+        }
+        const repick = pickClickCandidate(corrected, wanted);
+        if (repick) {
+          el = correctedNodes[repick.best.index];
+          pick = {
+            best: repick.best,
+            candidateCount: repick.candidateCount,
+            runnersUp: repick.runnersUp,
+          };
         }
       }
       if (el) { frameVisible = el.__frameVisible !== false; }
