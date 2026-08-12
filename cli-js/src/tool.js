@@ -10,35 +10,31 @@
  * unauthenticated automation.
  */
 
-/* global WebSocket */
+/* global WebSocket, getComputedStyle */
 
-import { spawn, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from "child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 
-import { ContextLogger } from './logger.js';
-import { substitutePlaceholders } from './autofill.js';
-import { buildAutofillProfilePlan } from './autofill-profile.js';
-import {
-  loadAutofillFile,
-  readKeychainSecret,
-  readProfileSecret,
-} from './autofill-io.js';
+import { ContextLogger } from "./logger.js";
+import { substitutePlaceholders } from "./autofill.js";
+import { buildAutofillProfilePlan } from "./autofill-profile.js";
+import { loadAutofillFile, readKeychainSecret, readProfileSecret } from "./autofill-io.js";
 
-const cl = new ContextLogger('browser-hand');
+const cl = new ContextLogger("browser-hand");
 
 const AUTOFILL_PATH =
   process.env.BROWSER_HAND_AUTOFILL_PATH ||
   process.env.AUTOHUB_AUTOFILL_PATH ||
-  path.join(homedir(), '.browser-hand', 'autofill.json');
+  path.join(homedir(), ".browser-hand", "autofill.json");
 // Fall back to AutoHub autofill file if Browser Hand path is empty/missing.
 const autofillData = (() => {
   const primary = loadAutofillFile(AUTOFILL_PATH);
   if (primary && Object.keys(primary).length) return primary;
-  const legacy = path.join(homedir(), '.autohub', 'autofill.json');
+  const legacy = path.join(homedir(), ".autohub", "autofill.json");
   if (legacy !== AUTOFILL_PATH) return loadAutofillFile(legacy);
   return primary;
 })();
@@ -52,23 +48,20 @@ const MAX_SCRIPT_BYTES = 64 * 1024;
 const MAX_STDOUT_BYTES = 32 * 1024;
 const MAX_STDERR_BYTES = 4 * 1024;
 const MAX_CURRENT_TEXT_CHARS = 8000;
-const CURRENT_RELAY_HOST =
-  process.env.DEV_BROWSER_RELAY_HOST || process.env.HOST || '127.0.0.1';
-const CURRENT_RELAY_PORT = Number(
-  process.env.DEV_BROWSER_RELAY_PORT || process.env.PORT || 9333
-);
+// How long to let the page react to a click before probing for a state change.
+const CURRENT_RELAY_HOST = process.env.DEV_BROWSER_RELAY_HOST || process.env.HOST || "127.0.0.1";
+const CURRENT_RELAY_PORT = Number(process.env.DEV_BROWSER_RELAY_PORT || process.env.PORT || 9333);
 const CURRENT_RELAY_URL = `http://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}`;
-const DEFAULT_PAGE_NAME =
-  process.env.DEV_BROWSER_PAGE_NAME || 'browser-hand-current';
+const DEFAULT_PAGE_NAME = process.env.DEV_BROWSER_PAGE_NAME || "browser-hand-current";
 const SCREENSHOT_DIR =
   process.env.BROWSER_HAND_SCREENSHOT_DIR ||
   process.env.AUTOHUB_BROWSER_SCREENSHOT_DIR ||
-  path.join(homedir(), '.browser-hand', 'screenshots');
+  path.join(homedir(), ".browser-hand", "screenshots");
 const RELAY_LOG_PATHS = [
-  path.join(homedir(), '.browser-hand', `relay-${CURRENT_RELAY_PORT}.err`),
-  path.join(homedir(), '.browser-hand', `relay-${CURRENT_RELAY_PORT}.out`),
-  path.join(homedir(), '.dev-browser', `relay-${CURRENT_RELAY_PORT}.err`),
-  path.join(homedir(), '.dev-browser', `relay-${CURRENT_RELAY_PORT}.out`),
+  path.join(homedir(), ".browser-hand", `relay-${CURRENT_RELAY_PORT}.err`),
+  path.join(homedir(), ".browser-hand", `relay-${CURRENT_RELAY_PORT}.out`),
+  path.join(homedir(), ".dev-browser", `relay-${CURRENT_RELAY_PORT}.err`),
+  path.join(homedir(), ".dev-browser", `relay-${CURRENT_RELAY_PORT}.out`),
 ];
 
 let cachedBin = null;
@@ -77,91 +70,83 @@ let relayProcess = null;
 let relayStartAttempted = false;
 
 export function normalizeDevBrowserMode(mode) {
-  if (mode === 'headless') {
-    return 'headless';
+  if (mode === "headless") {
+    return "headless";
   }
-  return 'current';
+  return "current";
 }
 
 export function redactSensitiveText(text, redactions = []) {
-  if (typeof text !== 'string' || redactions.length === 0) {
+  if (typeof text !== "string" || redactions.length === 0) {
     return text;
   }
   let out = text;
   const unique = [...new Set(redactions)]
-    .filter(value => typeof value === 'string' && value.length > 0)
+    .filter((value) => typeof value === "string" && value.length > 0)
     .sort((a, b) => b.length - a.length);
   for (const value of unique) {
-    out = out.split(value).join('[REDACTED]');
+    out = out.split(value).join("[REDACTED]");
   }
   return out;
 }
 
 function redactSensitiveObject(value, redactions = []) {
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     return redactSensitiveText(value, redactions);
   }
   if (Array.isArray(value)) {
-    return value.map(item => redactSensitiveObject(item, redactions));
+    return value.map((item) => redactSensitiveObject(item, redactions));
   }
-  if (value && typeof value === 'object') {
+  if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, val]) => [
-        key,
-        redactSensitiveObject(val, redactions),
-      ])
+      Object.entries(value).map(([key, val]) => [key, redactSensitiveObject(val, redactions)])
     );
   }
   return value;
 }
 
 export async function selectCurrentTarget(targets = [], opts = {}) {
-  const target =
-    opts.target && typeof opts.target === 'object' ? opts.target : {};
+  const target = opts.target && typeof opts.target === "object" ? opts.target : {};
   const evaluateFocus =
-    typeof opts.evaluateFocus === 'function'
-      ? opts.evaluateFocus
-      : async () => false;
+    typeof opts.evaluateFocus === "function" ? opts.evaluateFocus : async () => false;
 
-  const pages = targets.filter(item => {
-    if (!item || item.type !== 'page') {
+  const pages = targets.filter((item) => {
+    if (!item || item.type !== "page") {
       return false;
     }
-    return /^https?:\/\//i.test(String(item.url || ''));
+    return /^https?:\/\//i.test(String(item.url || ""));
   });
 
   if (pages.length === 0) {
-    throw new Error('No http(s) Chrome tabs are available through Browser Hand');
+    throw new Error("No http(s) Chrome tabs are available through Browser Hand");
   }
 
-  const explicit = Boolean(
-    target.id || target.url || target.title || target.name
-  );
+  const explicit = Boolean(target.id || target.url || target.title || target.name);
   let candidates = pages;
 
   if (target.id) {
-    candidates = candidates.filter(item => item.targetId === target.id);
+    candidates = candidates.filter((item) => item.targetId === target.id);
   }
   if (target.url) {
     const needle = String(target.url).toLowerCase();
-    candidates = candidates.filter(item =>
-      String(item.url || '')
+    candidates = candidates.filter((item) =>
+      String(item.url || "")
         .toLowerCase()
         .includes(needle)
     );
   }
   if (target.title) {
     const needle = String(target.title).toLowerCase();
-    candidates = candidates.filter(item =>
-      String(item.title || '')
+    candidates = candidates.filter((item) =>
+      String(item.title || "")
         .toLowerCase()
         .includes(needle)
     );
   }
   if (target.name) {
     const needle = String(target.name).toLowerCase();
-    candidates = candidates.filter(item => {
-      const haystack = `${item.title || ''} ${item.url || ''}`.toLowerCase();
+    candidates = candidates.filter((item) => {
+      const haystack = `${item.title || ""} ${item.url || ""}`.toLowerCase();
       return haystack.includes(needle);
     });
   }
@@ -178,18 +163,18 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
     );
   }
 
-  if (target.strategy === 'first') {
+  if (target.strategy === "first") {
     return pages[0];
   }
 
-  const active = pages.filter(page => page.active === true);
+  const active = pages.filter((page) => page.active === true);
   if (active.length === 1) {
     return active[0];
   }
 
   const focused = (
     await Promise.all(
-      pages.map(async page => {
+      pages.map(async (page) => {
         try {
           return (await evaluateFocus(page)) ? page : null;
         } catch {
@@ -214,10 +199,8 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
 function formatTargetCandidates(targets) {
   return targets
     .slice(0, 6)
-    .map(item =>
-      `${item.targetId || 'unknown'} ${item.title || ''} ${item.url || ''}`.trim()
-    )
-    .join(' | ');
+    .map((item) => `${item.targetId || "unknown"} ${item.title || ""} ${item.url || ""}`.trim())
+    .join(" | ");
 }
 
 function resolveBin() {
@@ -229,11 +212,11 @@ function resolveBin() {
     cachedBin = explicit;
     return cachedBin;
   }
-  const which = spawnSync('which', ['dev-browser'], { encoding: 'utf8' });
+  const which = spawnSync("which", ["dev-browser"], { encoding: "utf8" });
   if (which.status === 0 && which.stdout) {
-    cachedBin = which.stdout.trim() || 'dev-browser';
+    cachedBin = which.stdout.trim() || "dev-browser";
   } else {
-    cachedBin = 'dev-browser';
+    cachedBin = "dev-browser";
   }
   return cachedBin;
 }
@@ -242,9 +225,7 @@ function resolveRelayBin() {
   if (cachedRelayBin !== null) {
     return cachedRelayBin;
   }
-  const explicit =
-    process.env.BROWSER_HAND_RELAY_BIN ||
-    process.env.DEV_BROWSER_MCP_BIN;
+  const explicit = process.env.BROWSER_HAND_RELAY_BIN || process.env.DEV_BROWSER_MCP_BIN;
   if (explicit) {
     cachedRelayBin = explicit;
     return cachedRelayBin;
@@ -255,11 +236,11 @@ function resolveRelayBin() {
     const here = fileURLToPath(import.meta.url);
     const monorepoRelay = path.resolve(
       path.dirname(here),
-      '..',
-      '..',
-      'relay',
-      'dist',
-      'standalone.js'
+      "..",
+      "..",
+      "relay",
+      "dist",
+      "standalone.js"
     );
     if (existsSync(monorepoRelay)) {
       cachedRelayBin = monorepoRelay;
@@ -269,8 +250,8 @@ function resolveRelayBin() {
     // ignore
   }
 
-  for (const name of ['browser-hand-relay', 'dev-browser-mcp']) {
-    const which = spawnSync('which', [name], { encoding: 'utf8' });
+  for (const name of ["browser-hand-relay", "dev-browser-mcp"]) {
+    const which = spawnSync("which", [name], { encoding: "utf8" });
     if (which.status === 0 && which.stdout.trim()) {
       cachedRelayBin = which.stdout.trim();
       return cachedRelayBin;
@@ -292,13 +273,13 @@ function truncate(buf, cap) {
 }
 
 function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const args = [];
-    if (mode === 'headless') {
-      args.push('--headless');
+    if (mode === "headless") {
+      args.push("--headless");
     }
     if (browserName) {
-      args.push('--browser', browserName);
+      args.push("--browser", browserName);
     }
 
     const bin = resolveBin();
@@ -306,7 +287,7 @@ function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
 
     let child;
     try {
-      child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
     } catch (err) {
       resolve({
         success: false,
@@ -317,39 +298,39 @@ function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
       return;
     }
 
-    let stdout = '';
-    let stderr = '';
+    let stdout = "";
+    let stderr = "";
     let timedOut = false;
     let spawnFailed = false;
 
     const timer = setTimeout(() => {
       timedOut = true;
       try {
-        child.kill('SIGTERM');
+        child.kill("SIGTERM");
       } catch {
         // already dead
       }
       setTimeout(() => {
         try {
-          child.kill('SIGKILL');
+          child.kill("SIGKILL");
         } catch {
           // already dead
         }
       }, 2000);
     }, timeoutMs);
 
-    child.stdout.on('data', chunk => {
+    child.stdout.on("data", (chunk) => {
       if (stdout.length < MAX_STDOUT_BYTES * 2) {
-        stdout += chunk.toString('utf8');
+        stdout += chunk.toString("utf8");
       }
     });
-    child.stderr.on('data', chunk => {
+    child.stderr.on("data", (chunk) => {
       if (stderr.length < MAX_STDERR_BYTES * 2) {
-        stderr += chunk.toString('utf8');
+        stderr += chunk.toString("utf8");
       }
     });
 
-    child.on('error', err => {
+    child.on("error", (err) => {
       clearTimeout(timer);
       spawnFailed = true;
       resolve({
@@ -360,7 +341,7 @@ function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
       });
     });
 
-    child.on('close', code => {
+    child.on("close", (code) => {
       if (spawnFailed) {
         return;
       }
@@ -389,9 +370,7 @@ function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
         stdout: out.text,
         stderr: err.text,
         truncated: { stdout: out.truncated, stderr: err.truncated },
-        ...(code !== 0
-          ? { error: `dev-browser exited with code ${code}` }
-          : {}),
+        ...(code !== 0 ? { error: `dev-browser exited with code ${code}` } : {}),
         durationMs,
       });
     });
@@ -400,7 +379,7 @@ function runDevBrowser({ payload, mode, browserName, timeoutMs }) {
       child.stdin.write(payload);
       child.stdin.end();
     } catch (err) {
-      cl.warn('stdin write failed', { error: err.message });
+      cl.warn("stdin write failed", { error: err.message });
     }
   });
 }
@@ -411,10 +390,8 @@ async function fetchJson(url, { timeoutMs = 800, ...init } = {}) {
   try {
     const response = await fetch(url, { ...init, signal: controller.signal });
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(
-        `HTTP ${response.status} ${response.statusText}: ${body}`
-      );
+      const body = await response.text().catch(() => "");
+      throw new Error(`HTTP ${response.status} ${response.statusText}: ${body}`);
     }
     return await response.json();
   } finally {
@@ -431,28 +408,28 @@ async function probeRelay(timeoutMs = 800) {
 }
 
 function relayPageEndpoint(name) {
-  return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ''}`;
+  return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ""}`;
 }
 
 async function openNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
-  if (!pageName || typeof pageName !== 'string') {
-    throw new Error('pageName is required for named-page bootstrap');
+  if (!pageName || typeof pageName !== "string") {
+    throw new Error("pageName is required for named-page bootstrap");
   }
   return await fetchJson(relayPageEndpoint(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: pageName }),
     timeoutMs,
   });
 }
 
 async function deleteNamedRelayPage(pageName, { timeoutMs = 1000 } = {}) {
-  if (!pageName || typeof pageName !== 'string') {
+  if (!pageName || typeof pageName !== "string") {
     return null;
   }
   try {
     return await fetchJson(relayPageEndpoint(pageName), {
-      method: 'DELETE',
+      method: "DELETE",
       timeoutMs,
     });
   } catch {
@@ -470,10 +447,7 @@ async function listNamedRelayPages(timeoutMs = 1000) {
 
 function hasHttpTargets(targets = []) {
   return targets.some(
-    item =>
-      item &&
-      item.type === 'page' &&
-      /^https?:\/\//i.test(String(item.url || ''))
+    (item) => item && item.type === "page" && /^https?:\/\//i.test(String(item.url || ""))
   );
 }
 
@@ -481,20 +455,20 @@ function hasHttpTargets(targets = []) {
 // named relay tab for the full agent write path — not only read ops.
 // Without an explicit pageName, fill/click/type still use existing_target
 // selection so we do not silently mint tabs.
-const PAGE_NAME_OPERATIONS = new Set([
-  'open',
-  'goto',
-  'snapshot',
-  'screenshot',
-  'evaluate',
-  'fill_fields',
-  'click',
-  'type',
-  'autofill_profile',
-  'focus',
+const PAGE_NAME_OPERATIONS = new Set(["open", "goto", "snapshot", "screenshot", "evaluate"]);
+
+// Acting operations attach to an existing named tab but must never create one.
+// Creating a blank tab to click in is meaningless — a typo'd pageName used to
+// mint an empty tab and then report "No clickable element matched" from it.
+const PAGE_NAME_ATTACH_ONLY_OPERATIONS = new Set([
+  "fill_fields",
+  "click",
+  "type",
+  "autofill_profile",
+  "focus",
 ]);
 
-const FOCUS_POLICIES = new Set(['background', 'tab', 'window']);
+const FOCUS_POLICIES = new Set(["background", "tab", "window"]);
 
 /**
  * One-shot human-in-the-loop focus. Sets extension override then activateTarget.
@@ -502,35 +476,31 @@ const FOCUS_POLICIES = new Set(['background', 'tab', 'window']);
  */
 export async function applyAgentFocus(cdp, sessionId, selected, input = {}) {
   const raw = input.focusPolicy || input.focus;
-  if (raw === undefined || raw === null || raw === false || raw === '') {
+  if (raw === undefined || raw === null || raw === false || raw === "") {
     return null;
   }
-  const policy = raw === true ? 'window' : String(raw);
+  const policy = raw === true ? "window" : String(raw);
   if (!FOCUS_POLICIES.has(policy)) {
-    throw new Error(
-      `Invalid focusPolicy "${policy}". Use background|tab|window.`
-    );
+    throw new Error(`Invalid focusPolicy "${policy}". Use background|tab|window.`);
   }
-  if (policy === 'background') {
-    await cdp
-      .send('DevBrowser.clearFocusOverride', {}, sessionId)
-      .catch(() => null);
-    return { policy: 'background', applied: false };
+  if (policy === "background") {
+    await cdp.send("DevBrowser.clearFocusOverride", {}, sessionId).catch(() => null);
+    return { policy: "background", applied: false };
   }
 
   const reason =
-    typeof input.focusReason === 'string'
+    typeof input.focusReason === "string"
       ? input.focusReason
-      : typeof input.reason === 'string'
+      : typeof input.reason === "string"
         ? input.reason
-        : '';
+        : "";
   const ttlMs =
-    typeof input.focusTtlMs === 'number' && Number.isFinite(input.focusTtlMs)
+    typeof input.focusTtlMs === "number" && Number.isFinite(input.focusTtlMs)
       ? input.focusTtlMs
       : 120_000;
 
   await cdp.send(
-    'DevBrowser.setFocusOverride',
+    "DevBrowser.setFocusOverride",
     {
       policy,
       reason: reason || undefined,
@@ -539,11 +509,7 @@ export async function applyAgentFocus(cdp, sessionId, selected, input = {}) {
     },
     sessionId
   );
-  await cdp.send(
-    'Target.activateTarget',
-    { targetId: selected.targetId },
-    sessionId
-  );
+  await cdp.send("Target.activateTarget", { targetId: selected.targetId }, sessionId);
   return {
     policy,
     reason: reason || undefined,
@@ -554,21 +520,24 @@ export async function applyAgentFocus(cdp, sessionId, selected, input = {}) {
 
 export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   const pageNameEligible = PAGE_NAME_OPERATIONS.has(operation);
-  if (operation === 'open' || (pageName && pageNameEligible)) {
+  if (operation === "open" || (pageName && pageNameEligible)) {
     return {
-      source: 'named_page',
+      source: "named_page",
       pageName: pageName || DEFAULT_PAGE_NAME,
       createsTab: true,
     };
   }
-  if (operation === 'goto' && !hasHttpTargets(targets)) {
+  if (operation === "goto" && !hasHttpTargets(targets)) {
     return {
-      source: 'named_page',
+      source: "named_page",
       pageName: DEFAULT_PAGE_NAME,
       createsTab: true,
     };
   }
-  return { source: 'existing_target', createsTab: false };
+  if (pageName && PAGE_NAME_ATTACH_ONLY_OPERATIONS.has(operation)) {
+    return { source: "named_page", pageName, createsTab: false };
+  }
+  return { source: "existing_target", createsTab: false };
 }
 
 export function classifyDevBrowserDoctor({
@@ -579,48 +548,47 @@ export function classifyDevBrowserDoctor({
 } = {}) {
   if (!relayInfo) {
     return {
-      status: 'relay_down',
+      status: "relay_down",
       action: `Start the Browser Hand relay: npm run relay  (or browser-hand relay) on ${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}.`,
     };
   }
   if (relayInfo.extensionConnected !== true) {
     if (recentExtensionDisconnected) {
       return {
-        status: 'extension_asleep',
+        status: "extension_asleep",
         action:
-          'Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.',
+          "Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.",
       };
     }
     return {
-      status: 'extension_disconnected',
+      status: "extension_disconnected",
       action: `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
     };
   }
   if (smoke?.success === true) {
     return {
-      status: 'tab_bootstrap_works',
-      action:
-        'Browser Hand is healthy. Run authenticated work through the extension relay.',
+      status: "tab_bootstrap_works",
+      action: "Browser Hand is healthy. Run authenticated work through the extension relay.",
     };
   }
-  if (/Extension connection replaced/i.test(String(smoke?.error || ''))) {
+  if (/Extension connection replaced/i.test(String(smoke?.error || ""))) {
     return {
-      status: 'extension_unstable',
+      status: "extension_unstable",
       action:
-        'Reload the Browser Hand extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.',
+        "Reload the Browser Hand extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.",
     };
   }
   if (targetCount === 0) {
     return {
-      status: 'target_registry_empty',
+      status: "target_registry_empty",
       action:
-        'Reload the Browser Hand extension in the same Chrome profile and verify site/access permissions; target creation is not reaching the relay registry.',
+        "Reload the Browser Hand extension in the same Chrome profile and verify site/access permissions; target creation is not reaching the relay registry.",
     };
   }
   return {
-    status: 'path_b_required',
+    status: "path_b_required",
     action:
-      'Browser Hand can see existing tabs but cannot create a named tab. Use an already-open tab for read-only work, or a separately logged-in non-default debug profile (upstream headless / --connect) for workflows requiring tab bootstrap.',
+      "Browser Hand can see existing tabs but cannot create a named tab. Use an already-open tab for read-only work, or a separately logged-in non-default debug profile (upstream headless / --connect) for workflows requiring tab bootstrap.",
   };
 }
 
@@ -629,13 +597,13 @@ async function readRecentRelayLogs() {
   for (const logPath of RELAY_LOG_PATHS) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      const text = await readFile(logPath, 'utf8');
+      const text = await readFile(logPath, "utf8");
       chunks.push(text.slice(-4000));
     } catch {
       // Missing logs should not fail doctor.
     }
   }
-  return chunks.join('\n');
+  return chunks.join("\n");
 }
 
 function startRelayProcess() {
@@ -649,36 +617,36 @@ function startRelayProcess() {
   const bin = resolveRelayBin();
   if (!bin) {
     throw new Error(
-      'Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
+      "Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN."
     );
   }
 
   relayStartAttempted = true;
-  const args = bin.endsWith('.js') || bin.endsWith('.mjs') ? [bin] : [];
+  const args = bin.endsWith(".js") || bin.endsWith(".mjs") ? [bin] : [];
   const command = args.length > 0 ? process.execPath : bin;
   const env = {
     ...process.env,
     HOST: CURRENT_RELAY_HOST,
     PORT: String(CURRENT_RELAY_PORT),
-    RELAY_MODE: process.env.DEV_BROWSER_RELAY_MODE || 'auto',
+    RELAY_MODE: process.env.DEV_BROWSER_RELAY_MODE || "auto",
   };
 
   relayProcess = spawn(command, args, {
     env,
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ["ignore", "ignore", "pipe"],
   });
-  relayProcess.stderr.on('data', chunk => {
-    const text = chunk.toString('utf8').trim();
+  relayProcess.stderr.on("data", (chunk) => {
+    const text = chunk.toString("utf8").trim();
     if (text) {
-      cl.info('dev-browser relay', { message: text.slice(0, 500) });
+      cl.info("dev-browser relay", { message: text.slice(0, 500) });
     }
   });
-  relayProcess.on('error', err => {
-    cl.warn('dev-browser relay failed to start', { error: err.message });
+  relayProcess.on("error", (err) => {
+    cl.warn("dev-browser relay failed to start", { error: err.message });
   });
-  relayProcess.on('close', code => {
+  relayProcess.on("close", (code) => {
     if (relayProcess) {
-      cl.warn('dev-browser relay exited', { code });
+      cl.warn("dev-browser relay exited", { code });
     }
     relayProcess = null;
     relayStartAttempted = false;
@@ -705,37 +673,37 @@ export async function startPersistentRelay() {
   const bin = resolveRelayBin();
   if (!bin) {
     throw new Error(
-      'Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN.'
+      "Browser Hand relay is not installed. Build the monorepo relay (`npm run build:relay` or `cd relay && npm run build`) or set BROWSER_HAND_RELAY_BIN."
     );
   }
 
-  const args = bin.endsWith('.js') || bin.endsWith('.mjs') ? [bin] : [];
+  const args = bin.endsWith(".js") || bin.endsWith(".mjs") ? [bin] : [];
   const command = args.length > 0 ? process.execPath : bin;
   const env = {
     ...process.env,
     HOST: CURRENT_RELAY_HOST,
     PORT: String(CURRENT_RELAY_PORT),
-    RELAY_MODE: process.env.DEV_BROWSER_RELAY_MODE || 'auto',
+    RELAY_MODE: process.env.DEV_BROWSER_RELAY_MODE || "auto",
   };
 
   const child = spawn(command, args, {
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ["ignore", "inherit", "inherit"],
     env,
   });
 
-  const forward = sig => {
+  const forward = (sig) => {
     try {
       child.kill(sig);
     } catch {
       // already dead
     }
   };
-  process.on('SIGINT', () => forward('SIGINT'));
-  process.on('SIGTERM', () => forward('SIGTERM'));
+  process.on("SIGINT", () => forward("SIGINT"));
+  process.on("SIGTERM", () => forward("SIGTERM"));
 
   return await new Promise((resolve, reject) => {
-    child.on('error', reject);
-    child.on('close', code =>
+    child.on("error", reject);
+    child.on("close", (code) =>
       resolve({ started: true, exitCode: code ?? 0, url: CURRENT_RELAY_URL })
     );
   });
@@ -771,7 +739,7 @@ async function ensureRelayConnected(timeoutMs) {
 }
 
 function delay(ms) {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
 }
@@ -798,16 +766,14 @@ class CdpClient {
       this.ws = ws;
 
       const onOpen = () => {
-        ws.removeEventListener('open', onOpen);
-        ws.removeEventListener('error', onError);
+        ws.removeEventListener("open", onOpen);
+        ws.removeEventListener("error", onError);
         resolve();
       };
-      const onError = event => {
-        ws.removeEventListener('open', onOpen);
-        ws.removeEventListener('error', onError);
-        const err = new Error(
-          `CDP WebSocket error connecting to ${this.wsUrl}: ${String(event)}`
-        );
+      const onError = (event) => {
+        ws.removeEventListener("open", onOpen);
+        ws.removeEventListener("error", onError);
+        const err = new Error(`CDP WebSocket error connecting to ${this.wsUrl}: ${String(event)}`);
         this.failAll(err);
         this.ws = null;
         reject(err);
@@ -817,18 +783,18 @@ class CdpClient {
         this.failAll(err);
         this.ws = null;
       };
-      const onMessage = event => {
+      const onMessage = (event) => {
         try {
           this.handleMessage(JSON.parse(String(event.data)));
         } catch (err) {
-          cl.warn('CDP parse error', { error: err.message });
+          cl.warn("CDP parse error", { error: err.message });
         }
       };
 
-      ws.addEventListener('open', onOpen);
-      ws.addEventListener('error', onError);
-      ws.addEventListener('close', onClose);
-      ws.addEventListener('message', onMessage);
+      ws.addEventListener("open", onOpen);
+      ws.addEventListener("error", onError);
+      ws.addEventListener("close", onClose);
+      ws.addEventListener("message", onMessage);
     }).finally(() => {
       this.connectPromise = null;
     });
@@ -861,7 +827,7 @@ class CdpClient {
         unsubscribe();
         reject(new Error(`Timed out waiting for ${method}`));
       }, timeoutMs);
-      const handler = event => {
+      const handler = (event) => {
         if (event.method !== method) {
           return;
         }
@@ -902,7 +868,7 @@ class CdpClient {
   }
 
   handleMessage(msg) {
-    if (typeof msg.id === 'number') {
+    if (typeof msg.id === "number") {
       const pending = this.pending.get(msg.id);
       if (!pending) {
         return;
@@ -915,11 +881,10 @@ class CdpClient {
       pending.resolve(msg.result);
       return;
     }
-    if (typeof msg.method === 'string') {
+    if (typeof msg.method === "string") {
       const event = {
         method: msg.method,
-        sessionId:
-          typeof msg.sessionId === 'string' ? msg.sessionId : undefined,
+        sessionId: typeof msg.sessionId === "string" ? msg.sessionId : undefined,
         params: msg.params,
       };
       for (const handler of this.eventHandlers) {
@@ -931,7 +896,7 @@ class CdpClient {
 
 async function attachTarget(cdp, targetId) {
   const tryOnce = async () => {
-    const attach = await cdp.send('Target.attachToTarget', {
+    const attach = await cdp.send("Target.attachToTarget", {
       targetId,
       flatten: true,
     });
@@ -939,9 +904,9 @@ async function attachTarget(cdp, targetId) {
     if (!sessionId) {
       throw new Error(`Failed to attach to Chrome tab ${targetId}`);
     }
-    await cdp.send('Runtime.enable', undefined, sessionId);
-    await cdp.send('Page.enable', undefined, sessionId);
-    await cdp.send('DOM.enable', undefined, sessionId);
+    await cdp.send("Runtime.enable", undefined, sessionId);
+    await cdp.send("Page.enable", undefined, sessionId);
+    await cdp.send("DOM.enable", undefined, sessionId);
     return sessionId;
   };
 
@@ -951,11 +916,8 @@ async function attachTarget(cdp, targetId) {
     const message = err instanceof Error ? err.message : String(err);
     // After username autofill soft-detach, first Runtime.enable can fail with
     // chrome-extension:// cross-extension errors. Brief wait + retry.
-    if (
-      /chrome-extension:\/\//i.test(message) ||
-      /not found in connected/i.test(message)
-    ) {
-      await new Promise(resolve => {
+    if (/chrome-extension:\/\//i.test(message) || /not found in connected/i.test(message)) {
+      await new Promise((resolve) => {
         setTimeout(resolve, 400);
       });
       return await tryOnce();
@@ -966,7 +928,7 @@ async function attachTarget(cdp, targetId) {
 
 async function runtimeEvaluate(cdp, sessionId, expression) {
   const result = await cdp.send(
-    'Runtime.evaluate',
+    "Runtime.evaluate",
     {
       expression,
       awaitPromise: true,
@@ -979,7 +941,7 @@ async function runtimeEvaluate(cdp, sessionId, expression) {
     const err =
       result.exceptionDetails.exception?.description ||
       result.exceptionDetails.text ||
-      'Runtime.evaluate exception';
+      "Runtime.evaluate exception";
     throw new Error(err);
   }
   return result;
@@ -987,10 +949,10 @@ async function runtimeEvaluate(cdp, sessionId, expression) {
 
 async function evalValue(cdp, sessionId, expression) {
   const result = await runtimeEvaluate(cdp, sessionId, expression);
-  if (Object.prototype.hasOwnProperty.call(result?.result || {}, 'value')) {
+  if (Object.prototype.hasOwnProperty.call(result?.result || {}, "value")) {
     return result.result.value;
   }
-  if (typeof result?.result?.description === 'string') {
+  if (typeof result?.result?.description === "string") {
     return result.result.description;
   }
   return result?.result ?? null;
@@ -999,20 +961,20 @@ async function evalValue(cdp, sessionId, expression) {
 /** pageName → last known real http(s) target (survives relay about:blank churn).
  *  Persisted under ~/.autohub so each CLI process (one shot) can reuse it. */
 const NAMED_PAGE_CACHE_PATH = path.join(
-  process.env.HOME || process.env.USERPROFILE || '',
-  '.autohub',
-  'named-page-targets.json'
+  process.env.HOME || process.env.USERPROFILE || "",
+  ".autohub",
+  "named-page-targets.json"
 );
 
 function isBlankUrl(url) {
-  return !url || url === 'about:blank' || url === 'about:newtab';
+  return !url || url === "about:blank" || url === "about:newtab";
 }
 
 function loadNamedPageTargetCache() {
   try {
-    const raw = readFileSync(NAMED_PAGE_CACHE_PATH, 'utf8');
+    const raw = readFileSync(NAMED_PAGE_CACHE_PATH, "utf8");
     const data = JSON.parse(raw);
-    return data && typeof data === 'object' ? data : {};
+    return data && typeof data === "object" ? data : {};
   } catch {
     return {};
   }
@@ -1047,12 +1009,34 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     pageName: input.pageName,
     targets,
   });
-  if (plan.source === 'named_page') {
+  if (plan.source === "named_page") {
+    // Attach-only operations resolve an existing named tab; they must not
+    // conjure a blank one to act on. Checking the page list first would be
+    // check-then-create — the tab can close in the gap — so instead let the
+    // single create/get call report which it did, and undo a creation.
     const pageInfo = await openNamedRelayPage(plan.pageName);
+    if (!plan.createsTab) {
+      const created =
+        pageInfo?.created === undefined
+          ? // Older relay with no `created` flag: a freshly minted tab reports
+            // an empty or about:blank URL, which is the best signal available.
+            ["", "about:blank"].includes(String(pageInfo?.url || "").trim())
+          : pageInfo.created === true;
+      if (created) {
+        await deleteNamedRelayPage(plan.pageName);
+        const known = await listNamedRelayPages();
+        const names = Array.isArray(known?.pages) ? known.pages : [];
+        throw new Error(
+          `No named page "${plan.pageName}" is open. Known pages: ${
+            names.length ? names.join(", ") : "none"
+          }. Use operation "open" with this pageName first.`
+        );
+      }
+    }
     let selected = {
       targetId: pageInfo.targetId,
-      title: pageInfo.title || '',
-      url: pageInfo.url || '',
+      title: pageInfo.title || "",
+      url: pageInfo.url || "",
       pageName: plan.pageName,
     };
 
@@ -1068,12 +1052,10 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       cached.targetId !== selected.targetId
     ) {
       preferCached = true;
-      const live = (targets || []).find(
-        t => t && t.targetId === cached.targetId
-      );
+      const live = (targets || []).find((t) => t && t.targetId === cached.targetId);
       selected = {
         targetId: cached.targetId,
-        title: (live && live.title) || cached.title || '',
+        title: (live && live.title) || cached.title || "",
         url: (live && live.url) || cached.url,
         pageName: plan.pageName,
       };
@@ -1096,14 +1078,14 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       if (preferCached && cached && !isBlankUrl(cached.url)) {
         selected = {
           targetId: pageInfo.targetId,
-          title: pageInfo.title || '',
-          url: pageInfo.url || '',
+          title: pageInfo.title || "",
+          url: pageInfo.url || "",
           pageName: plan.pageName,
         };
         sessionId = await attachTarget(cdp, selected.targetId);
-        await cdp.send('Page.navigate', { url: cached.url }, sessionId);
+        await cdp.send("Page.navigate", { url: cached.url }, sessionId);
         await cdp
-          .waitForEvent('Page.loadEventFired', {
+          .waitForEvent("Page.loadEventFired", {
             sessionId,
             timeoutMs: 15000,
           })
@@ -1112,7 +1094,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
         setCachedNamedPage(plan.pageName, {
           targetId: selected.targetId,
           url: cached.url,
-          title: selected.title || cached.title || '',
+          title: selected.title || cached.title || "",
         });
       } else {
         throw attachErr;
@@ -1128,11 +1110,9 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
 
   const selected = await selectCurrentTarget(targets, {
     target: input.target,
-    evaluateFocus: async target => {
+    evaluateFocus: async (target) => {
       const sessionId = await attachTarget(cdp, target.targetId);
-      return Boolean(
-        await evalValue(cdp, sessionId, '(() => document.hasFocus())()')
-      );
+      return Boolean(await evalValue(cdp, sessionId, "(() => document.hasFocus())()"));
     },
   });
   return {
@@ -1149,8 +1129,8 @@ async function runCurrentDoctor(timeoutMs) {
   const pages = relayInfo ? await listNamedRelayPages(1000) : null;
   const result = {
     success: false,
-    mode: 'current',
-    operation: 'doctor',
+    mode: "current",
+    operation: "doctor",
     relay: {
       url: CURRENT_RELAY_URL,
       reachable: Boolean(relayInfo),
@@ -1168,7 +1148,7 @@ async function runCurrentDoctor(timeoutMs) {
     const cdp = new CdpClient(relayInfo.wsEndpoint);
     const smokeName = `autohub-doctor-${Date.now()}`;
     try {
-      const targetResult = await cdp.send('Target.getTargets');
+      const targetResult = await cdp.send("Target.getTargets");
       const targets = targetResult?.targetInfos || [];
       result.targetCount = targets.length;
       result.targets = targets.slice(0, 10).map(compactTarget);
@@ -1182,13 +1162,11 @@ async function runCurrentDoctor(timeoutMs) {
           pageName: smokeName,
           target: compactTarget({
             targetId: pageInfo.targetId,
-            title: pageInfo.title || '',
-            url: pageInfo.url || '',
+            title: pageInfo.title || "",
+            url: pageInfo.url || "",
           }),
         };
-        await cdp
-          .send('Target.closeTarget', { targetId: pageInfo.targetId })
-          .catch(() => null);
+        await cdp.send("Target.closeTarget", { targetId: pageInfo.targetId }).catch(() => null);
       } catch (err) {
         result.smoke = {
           success: false,
@@ -1218,24 +1196,24 @@ async function runCurrentDoctor(timeoutMs) {
   });
   result.status = classification.status;
   result.action = classification.action;
-  result.success = classification.status === 'tab_bootstrap_works';
-  if (classification.status !== 'tab_bootstrap_works') {
+  result.success = classification.status === "tab_bootstrap_works";
+  if (classification.status !== "tab_bootstrap_works") {
     result.pathBNote =
-      'Tab bootstrap failed. For disposable/debug profiles use upstream headless or --connect on a non-default user-data-dir — not your everyday Chrome profile.';
+      "Tab bootstrap failed. For disposable/debug profiles use upstream headless or --connect on a non-default user-data-dir — not your everyday Chrome profile.";
   }
   return result;
 }
 
 async function runCurrentOperation(input, timeoutMs) {
   const operation = input.operation;
-  if (operation === 'doctor') {
+  if (operation === "doctor") {
     return await runCurrentDoctor(timeoutMs);
   }
 
   const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
   const cdp = new CdpClient(info.wsEndpoint);
   try {
-    const targetResult = await cdp.send('Target.getTargets');
+    const targetResult = await cdp.send("Target.getTargets");
     const targets = targetResult?.targetInfos || [];
     const {
       plan: targetPlan,
@@ -1248,73 +1226,54 @@ async function runCurrentOperation(input, timeoutMs) {
       targets,
     });
 
-    if (operation === 'snapshot') {
+    if (operation === "snapshot") {
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
-        snapshot: await evalValue(
-          cdp,
-          sessionId,
-          buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS)
-        ),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+        snapshot: await evalValue(cdp, sessionId, buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS)),
       };
     }
 
-    if (operation === 'fill_fields') {
+    if (operation === "fill_fields") {
       if (Array.isArray(input.fields)) {
         return {
           success: false,
-          mode: 'current',
+          mode: "current",
           operation,
           error:
             'fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not an array. Array input is a silent no-op trap for agents.',
         };
       }
-      const fields =
-        input.fields && typeof input.fields === 'object' ? input.fields : {};
+      const fields = input.fields && typeof input.fields === "object" ? input.fields : {};
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
-        result: await evalValue(
-          cdp,
-          sessionId,
-          buildFillFieldsExpression(fields)
-        ),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+        result: await evalValue(cdp, sessionId, buildFillFieldsExpression(fields)),
       };
     }
 
-    if (operation === 'autofill_profile') {
-      const inspection = await evalValue(
-        cdp,
-        sessionId,
-        buildAutofillProfileControlsExpression()
-      );
+    if (operation === "autofill_profile") {
+      const inspection = await evalValue(cdp, sessionId, buildAutofillProfileControlsExpression());
       const plan = buildAutofillProfilePlan({
-        controls: Array.isArray(inspection?.controls)
-          ? inspection.controls
-          : [],
+        controls: Array.isArray(inspection?.controls) ? inspection.controls : [],
         page: {
-          title: inspection?.title || selected.title || '',
-          url: inspection?.url || selected.url || '',
+          title: inspection?.title || selected.title || "",
+          url: inspection?.url || selected.url || "",
         },
         autofill: autofillData,
-        profile: input.profile || 'default',
-        contextHint: input.contextHint || '',
+        profile: input.profile || "default",
+        contextHint: input.contextHint || "",
       });
       const sub = await substituteAutofillProfileFields(plan.fields);
       if (sub.errors.length > 0) {
         return {
-          ...placeholderFailure(sub, 'current'),
+          ...placeholderFailure(sub, "current"),
           operation,
           profile: plan.profile,
           context: plan.context,
@@ -1322,20 +1281,14 @@ async function runCurrentOperation(input, timeoutMs) {
           skipped: plan.skipped,
         };
       }
-      const result = await evalValue(
-        cdp,
-        sessionId,
-        buildFillFieldsExpression(sub.vars || {})
-      );
+      const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
       return redactSensitiveObject(
         {
           success: true,
-          mode: 'current',
+          mode: "current",
           operation,
           target: compactTarget(selected),
-          ...(targetPlan.source === 'named_page'
-            ? { pageName: targetPlan.pageName }
-            : {}),
+          ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
           profile: plan.profile,
           context: plan.context,
           planned: plan.matched,
@@ -1347,119 +1300,135 @@ async function runCurrentOperation(input, timeoutMs) {
       );
     }
 
-    if (operation === 'click') {
-      return {
-        success: true,
-        mode: 'current',
+    if (operation === "click") {
+      const query = input.selector || input.text || input.value || "";
+      const result = await evalValue(
+        cdp,
+        sessionId,
+        buildClickExpression({
+          selector: input.selector,
+          text: input.text || input.value,
+        })
+      );
+      const base = {
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      };
+      if (!result || !result.found) {
+        return {
+          success: false,
+          ...base,
+          error: result?.disabled
+            ? `Matched ${JSON.stringify(query)}, but that control is disabled. A real click would do nothing, so this was not dispatched.`
+            : `No clickable element matched ${JSON.stringify(query)}`,
+          result: result || null,
+        };
+      }
+      return {
+        success: true,
+        ...base,
+        // A caveat about the tab, not a claim about the outcome. Verifying what
+        // a click did is the caller's job — they have snapshot and evaluate.
+        ...(result.interrupted
+          ? {
+              warning: `The control was removed from the page during the click, before the ${result.interrupted} event. Part of the sequence was not delivered, so the action may or may not have run — re-check the page rather than assuming either way.`,
+            }
           : {}),
-        result: await evalValue(
-          cdp,
-          sessionId,
-          buildClickExpression({
-            selector: input.selector,
-            text: input.text || input.value,
-          })
-        ),
+        ...(result.documentHidden && !result.interrupted
+          ? {
+              warning:
+                'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
+            }
+          : {}),
+        result: {
+          clicked: query,
+          matched: result.matched,
+          score: result.score,
+          candidateCount: result.candidateCount,
+          ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
+          visible: result.visible,
+          ...(result.interrupted ? { interrupted: result.interrupted } : {}),
+          documentHidden: result.documentHidden,
+          url: result.url,
+        },
       };
     }
 
-    if (operation === 'type') {
+    if (operation === "type") {
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         result: await evalValue(
           cdp,
           sessionId,
           buildTypeExpression({
             selector: input.selector,
             label: input.label,
-            text: input.text || input.value || '',
+            text: input.text || input.value || "",
           })
         ),
       };
     }
 
-    if (operation === 'evaluate') {
+    if (operation === "evaluate") {
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
-        result: await evaluateUserCode(
-          cdp,
-          sessionId,
-          input.code || input.script
-        ),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+        result: await evaluateUserCode(cdp, sessionId, input.code || input.script),
       };
     }
 
-    if (operation === 'focus') {
+    if (operation === "focus") {
       const focus = await applyAgentFocus(cdp, sessionId, selected, {
-        focusPolicy: input.focusPolicy || input.focus || 'window',
+        focusPolicy: input.focusPolicy || input.focus || "window",
         focusReason: input.focusReason || input.reason,
         focusTtlMs: input.focusTtlMs,
       });
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         focus,
       };
     }
 
-    if (operation === 'open' || operation === 'goto') {
+    if (operation === "open" || operation === "goto") {
       if (!input.url) {
         return { success: false, error: `url is required for ${operation}` };
       }
-      const navResult = await cdp.send(
-        'Page.navigate',
-        { url: input.url },
-        sessionId
-      );
-      await cdp
-        .waitForEvent('Page.loadEventFired', { sessionId, timeoutMs })
-        .catch(() => null);
+      const navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
+      await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
       selected.url = input.url;
       if (input.pageName && !isBlankUrl(input.url)) {
         setCachedNamedPage(input.pageName, {
           targetId: selected.targetId,
           url: input.url,
-          title: selected.title || '',
+          title: selected.title || "",
         });
       }
       const navError = navResult?.errorText || null;
       const httpStatusCode =
-        typeof navResult?.httpStatusCode === 'number'
-          ? navResult.httpStatusCode
-          : null;
+        typeof navResult?.httpStatusCode === "number" ? navResult.httpStatusCode : null;
       let focus = null;
       if (navError === null && (input.focusPolicy || input.focus)) {
         focus = await applyAgentFocus(cdp, sessionId, selected, input);
       }
       return {
         success: navError === null,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         url: input.url,
         ...(httpStatusCode !== null ? { httpStatusCode } : {}),
         ...(navError ? { error: navError } : {}),
@@ -1467,13 +1436,13 @@ async function runCurrentOperation(input, timeoutMs) {
       };
     }
 
-    if (operation === 'screenshot') {
+    if (operation === "screenshot") {
       // Prefer a fast CDP capture. Extension races a short timeout then falls
       // back to chrome.tabs.captureVisibleTab (no OS focus steal).
       const result = await cdp.send(
-        'Page.captureScreenshot',
+        "Page.captureScreenshot",
         {
-          format: 'png',
+          format: "png",
           fromSurface: true,
           captureBeyondViewport: input.fullPage === true,
         },
@@ -1482,19 +1451,17 @@ async function runCurrentOperation(input, timeoutMs) {
       const filePath = await saveCurrentScreenshot(result?.data, selected);
       return {
         success: true,
-        mode: 'current',
+        mode: "current",
         operation,
         target: compactTarget(selected),
-        ...(targetPlan.source === 'named_page'
-          ? { pageName: targetPlan.pageName }
-          : {}),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         filePath,
       };
     }
 
     return {
       success: false,
-      mode: 'current',
+      mode: "current",
       error: `Unsupported current-mode operation: ${operation}`,
     };
   } finally {
@@ -1505,8 +1472,8 @@ async function runCurrentOperation(input, timeoutMs) {
 function compactTarget(target) {
   return {
     id: target.targetId,
-    title: target.title || '',
-    url: target.url || '',
+    title: target.title || "",
+    url: target.url || "",
   };
 }
 
@@ -1798,109 +1765,495 @@ function buildFillFieldsExpression(fields) {
   })()`;
 }
 
+// --- Click targeting -------------------------------------------------------
+//
+// Resolve and dispatch happen in ONE in-page expression, deliberately.
+//
+// An earlier revision split them so clicks could be dispatched as trusted CDP
+// Input events. Testing that assumption on the real surface showed it bought
+// nothing: with the tab visible, an untrusted pointer sequence opens Google
+// Maps' Directions panel (reproduced twice). The original "clicks do not
+// register" report was the label matcher below plus a backgrounded tab, not
+// untrusted events. Splitting the two, meanwhile, introduced coordinate
+// staleness, hover races, target stashing and cleanup, and cross-shadow
+// hit-testing — a new defect per review round. One expression has none of them:
+// the element is dispatched on by reference and cannot go stale mid-click.
+//
+// The matching helpers are exported for unit tests and serialized into the page
+// via toString(). Every function referenced by another must be listed in
+// CLICK_HELPER_SOURCE, including default-parameter values — a name resolved from
+// module scope in Node is simply undefined once the source reaches the page.
+
+/**
+ * Normalize a label for comparison.
+ *
+ * Icon fonts (Material Symbols, google-symbols, Font Awesome) render through a
+ * ligature glyph in the Private Use Area, and it lands in innerText. That glyph
+ * is a truthy string, so the original `innerText || value || aria-label` chain
+ * short-circuited on it and never reached the accessible name — which is why
+ * every icon-only control on Google Maps was unmatchable. Strip PUA and
+ * zero-width runs before comparing.
+ */
+export function normalizeLabelText(raw) {
+  return String(raw === null || raw === undefined ? "" : raw)
+    .replace(/[\uE000-\uF8FF]/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, " ")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Rendered text, minus aria-hidden subtrees.
+ *
+ * innerText rather than a childNodes walk: hand-deriving it meant
+ * re-implementing block boundaries, <br>, display:none, <td>/<li>, white-space
+ * and text-transform, each of which surfaced as its own bug. The browser
+ * already gets all of them right.
+ *
+ * aria-hidden content is excluded because it is not part of the accessible name
+ * and including it dispatches the wrong action — a click for "delete" matching
+ * `<button aria-label="Edit"><span aria-hidden="true">delete</span></button>`.
+ *
+ * The exclusion works by hiding those nodes and re-reading, not by subtracting
+ * their text from the string. Subtraction was wrong twice: removing every
+ * occurrence stripped the visible copy of repeated text, and removing the first
+ * occurrence stripped the wrong copy when the hidden node came last. A string
+ * simply does not record which occurrence came from which node. The cost is a
+ * synchronous style write and a forced reflow during a read; both are restored
+ * before returning.
+ */
+export function defaultVisibleText(el) {
+  if (typeof el.innerText !== "string") {
+    return "";
+  }
+  if (typeof el.querySelectorAll !== "function") {
+    return el.innerText;
+  }
+  let hidden = [];
+  try {
+    hidden = Array.from(el.querySelectorAll('[aria-hidden="true"]'));
+  } catch {
+    return el.innerText;
+  }
+  if (!hidden.length) {
+    return el.innerText;
+  }
+  // Hiding an outer node hides everything under it, so nested ones are already
+  // covered and touching them would only add style writes to restore.
+  const outermost = hidden.filter(
+    (node) =>
+      !hidden.some(
+        (other) => other !== node && typeof other.contains === "function" && other.contains(node)
+      )
+  );
+  const restore = [];
+  try {
+    for (const node of outermost) {
+      if (!node.style) {
+        continue;
+      }
+      restore.push([node, node.style.display]);
+      node.style.display = "none";
+    }
+    return el.innerText;
+  } finally {
+    for (const entry of restore) {
+      try {
+        entry[0].style.display = entry[1];
+      } catch {
+        /* detached mid-read */
+      }
+    }
+  }
+}
+
+/**
+ * Collect every normalized label an element could reasonably be addressed by.
+ *
+ * An array rather than a `||` chain, so no single source can mask another.
+ */
+export function collectElementLabels(el, getVisibleText = defaultVisibleText) {
+  const labels = [];
+  const push = (raw) => {
+    const value = normalizeLabelText(raw);
+    if (value && !labels.includes(value)) {
+      labels.push(value);
+    }
+  };
+  if (typeof el.getAttribute === "function") {
+    push(el.getAttribute("aria-label"));
+    push(el.getAttribute("title"));
+    push(el.getAttribute("alt"));
+    push(el.getAttribute("placeholder"));
+  }
+  push(getVisibleText(el));
+  if (el.value) {
+    push(el.value);
+  }
+  return labels;
+}
+
+/** Tier a match: 3 exact, 2 prefix, 1 substring, 0 none. */
+export function scoreLabelMatch(labels, wanted) {
+  let best = 0;
+  for (let i = 0; i < labels.length; i += 1) {
+    const label = labels[i];
+    if (!label) {
+      continue;
+    }
+    if (label === wanted) {
+      return 3;
+    }
+    if (label.indexOf(wanted) === 0) {
+      best = Math.max(best, 2);
+    } else if (label.indexOf(wanted) !== -1) {
+      best = Math.max(best, 1);
+    }
+  }
+  return best;
+}
+
+/**
+ * Pick the best candidate: visible beats hidden, then higher score, then the
+ * smaller box (the control rather than a wrapper), then DOM order.
+ */
+export function pickClickCandidate(candidates, wanted) {
+  const scored = [];
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i];
+    const score = scoreLabelMatch(candidate.labels || [], wanted);
+    if (score > 0) {
+      scored.push({ ...candidate, score, index: i });
+    }
+  }
+  if (!scored.length) {
+    return null;
+  }
+  scored.sort((a, b) => {
+    // Score first, visibility only as a tie-break. The reverse let a visible
+    // partial match outrank a hidden exact one — "Delete" picking "Delete all
+    // archived items" — and dispatching the wrong destructive action is worse
+    // than dispatching nothing.
+    if (a.score !== b.score) {
+      return b.score - a.score;
+    }
+    if (a.visible !== b.visible) {
+      return a.visible ? -1 : 1;
+    }
+    const areaA = Number.isFinite(a.area) ? a.area : Infinity;
+    const areaB = Number.isFinite(b.area) ? b.area : Infinity;
+    if (areaA !== areaB) {
+      return areaA - areaB;
+    }
+    return a.index - b.index;
+  });
+  return {
+    best: scored[0],
+    candidateCount: scored.length,
+    // runnersUp is a reporting slice. `ranked` is the whole ordered set, because
+    // the aria-hidden correction pass has to be able to walk past however many
+    // leading candidates matched only on hidden text.
+    runnersUp: scored.slice(1, 4),
+    ranked: scored,
+  };
+}
+
+export const CLICK_HELPER_SOURCE = [
+  normalizeLabelText,
+  defaultVisibleText,
+  collectElementLabels,
+  scoreLabelMatch,
+  pickClickCandidate,
+]
+  .map((fn) => fn.toString())
+  .join("\n");
+
+/** Resolve and click in a single page expression. */
 function buildClickExpression({ selector, text }) {
   return `(() => {
-    const selector = ${JSON.stringify(selector || '')};
-    const text = ${JSON.stringify(text || '')};
-    const norm = value => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
-    const visible = el => {
+    ${CLICK_HELPER_SOURCE}
+    const selector = ${JSON.stringify(selector || "")};
+    const wanted = normalizeLabelText(${JSON.stringify(text || "")});
+    const CLICK_SEL = 'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [role="link"], [role="switch"], input[type="button"], input[type="submit"], input[type="reset"], summary';
+
+    // frameVisible: an element can be perfectly visible inside its own document
+    // while the iframe embedding that document is hidden.
+    const visibleIn = (el, frameVisible) => {
       try {
-        const style = window.getComputedStyle(el);
+        if (!frameVisible) return false;
+        const win = el.ownerDocument.defaultView || window;
+        if (typeof el.checkVisibility === 'function') {
+          if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
+        }
         const rect = el.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-      } catch {
+        if (!(rect.width > 0 && rect.height > 0)) return false;
+        // opacity and pointer-events are not inherited, so a control inside a
+        // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
+        for (let node = el, depth = 0; node && depth < 12; depth += 1) {
+          const style = win.getComputedStyle(node);
+          if (!style) break;
+          if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) <= 0.01) return false;
+          const parent = node.parentElement;
+          const root = !parent && node.getRootNode ? node.getRootNode() : null;
+          node = parent || (root && root.host ? root.host : null);
+        }
+        // Hit-test: checkVisibility does not do it, so a control under an
+        // overlay still looks visible — and because dispatch is by reference it
+        // would fire straight through the overlay. Ranking only; a target
+        // outside the viewport simply cannot be hit-tested, so it is not
+        // penalised for that.
+        const doc = el.ownerDocument;
+        const r = el.getBoundingClientRect();
+        const px = r.left + r.width / 2;
+        const py = r.top + r.height / 2;
+        if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
+          let hit = doc.elementFromPoint(px, py);
+          for (let d = 0; d < 8; d += 1) {
+            if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
+            const deeper = hit.shadowRoot.elementFromPoint(px, py);
+            if (!deeper || deeper === hit) break;
+            hit = deeper;
+          }
+          if (hit) {
+            const chain = [];
+            for (let node = el, d = 0; node && d < 8; d += 1) {
+              chain.push(node);
+              const root = node.getRootNode ? node.getRootNode() : null;
+              node = root && root.host ? root.host : null;
+            }
+            if (!chain.some(node => hit === node || node.contains(hit) || hit.contains(node))) return false;
+          }
+        }
+        return true;
+      } catch (err) {
         return false;
       }
     };
-    // Include ARIA interactive roles used by custom widgets (listbox options,
-    // menus, tabs). Bare buttons/links alone miss role=option (ch-16).
-    const CLICK_SEL =
-      'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], input[type="button"], input[type="submit"]';
-    const collectClickables = (root, out, depth = 0) => {
-      if (!root || depth > 6) return;
-      let nodes = [];
-      try { nodes = Array.from(root.querySelectorAll(CLICK_SEL)); } catch { return; }
-      for (const el of nodes) out.push(el);
-      let all = [];
-      try { all = Array.from(root.querySelectorAll('*')); } catch { all = []; }
-      for (const host of all) {
-        if (host.shadowRoot) collectClickables(host.shadowRoot, out, depth + 1);
-      }
-    };
-    let candidates = [];
-    if (selector) {
+    // A real user click and el.click() both suppress activation on a disabled
+    // control; dispatchEvent does not. Without this, automation could fire a
+    // disabled destructive action that the UI does not offer.
+    const isDisabled = el => {
       try {
-        const direct = document.querySelector(selector);
-        if (direct) candidates.push(direct);
-      } catch {}
-      // Also search open shadows / same-origin frames for the selector
-      const walk = (root, depth = 0) => {
-        if (!root || depth > 6) return;
-        try {
-          const hit = root.querySelector(selector);
-          if (hit) candidates.push(hit);
-        } catch {}
-        let all = [];
-        try { all = Array.from(root.querySelectorAll('*')); } catch { all = []; }
-        for (const host of all) {
-          if (host.shadowRoot) walk(host.shadowRoot, depth + 1);
-        }
-      };
-      walk(document, 0);
-      for (const iframe of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
-        try {
-          if (iframe.contentDocument) {
-            const hit = iframe.contentDocument.querySelector(selector);
-            if (hit) candidates.push(hit);
-          }
-        } catch {}
-      }
-    }
-    if (!candidates.length && text) {
-      const pool = [];
-      collectClickables(document, pool, 0);
-      for (const iframe of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
-        try {
-          if (iframe.contentDocument) collectClickables(iframe.contentDocument, pool, 0);
-        } catch {}
-      }
-      const wanted = norm(text);
-      candidates = pool.filter(item =>
-        norm(item.innerText || item.value || item.getAttribute('aria-label')).includes(wanted)
-      );
-    }
-    // Prefer visible matches so hidden wizard steps / duplicate labels don't win
-    const el =
-      candidates.find(visible) ||
-      candidates[0] ||
-      null;
-    if (!el) throw new Error('No clickable element matched');
-    try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-    // Full pointer sequence — bare el.click() is ignored by many React/role=button handlers
-    const fire = (type) => {
-      el.dispatchEvent(new MouseEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        view: window,
-        button: 0,
-        buttons: type === 'mouseup' || type === 'click' ? 0 : 1,
-      }));
+        if (typeof el.getAttribute === 'function' && el.getAttribute('aria-disabled') === 'true') return true;
+        // :disabled encodes the platform rules, including that fieldset
+        // disabling does not reach links, ARIA buttons, or controls in the
+        // fieldset's first legend. An ancestor scan for fieldset[disabled]
+        // rejected all of those, refusing clicks a real user can perform.
+        if (typeof el.matches === 'function') return el.matches(':disabled');
+        return el.disabled === true;
+      } catch (err) { /* detached or unsupported selector */ }
+      return false;
     };
-    fire('pointerdown');
-    fire('mousedown');
-    fire('pointerup');
-    fire('mouseup');
-    fire('click');
-    return { clicked: selector || text, url: location.href, visible: visible(el) };
+    const areaOf = el => {
+      try { const r = el.getBoundingClientRect(); return r.width * r.height; } catch (err) { return Infinity; }
+    };
+    const MAX_CANDIDATES = 4000;
+    const seen = new Set();
+    const collect = (root, out, depth) => {
+      if (!root || depth > 6 || out.length >= MAX_CANDIDATES) return;
+      let nodes = [];
+      try { nodes = Array.from(root.querySelectorAll(CLICK_SEL)); } catch (err) { return; }
+      // Check the cap per node, not just on entry: one root holding more than
+      // MAX_CANDIDATES matches used to append all of them, and the scoring pass
+      // then ran innerText, computed style, geometry and a hit-test over the
+      // whole unbounded set — enough to freeze a large dashboard and time the
+      // click out. Set membership rather than indexOf keeps dedupe O(1); at the
+      // cap, the linear scan was the other half of the cost.
+      for (const node of nodes) {
+        if (out.length >= MAX_CANDIDATES) return;
+        if (!seen.has(node)) { seen.add(node); out.push(node); }
+      }
+      let all = [];
+      try { all = Array.from(root.querySelectorAll('*')); } catch (err) { all = []; }
+      for (const host of all) {
+        if (out.length >= MAX_CANDIDATES) return;
+        if (host.shadowRoot) collect(host.shadowRoot, out, depth + 1);
+      }
+    };
+
+    const roots = [{ root: document, frameVisible: true }];
+    for (const frame of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
+      try {
+        if (frame.contentDocument) {
+          roots.push({ root: frame.contentDocument, frameVisible: visibleIn(frame, true) });
+        }
+      } catch (err) { /* cross-origin */ }
+    }
+
+    let el = null;
+    let pick = null;
+    let frameVisible = true;
+    if (selector) {
+      for (const entry of roots) {
+        try {
+          const hit = entry.root.querySelector(selector);
+          if (hit) { el = hit; frameVisible = entry.frameVisible; break; }
+        } catch (err) { /* invalid selector for this root */ }
+      }
+      if (el && isDisabled(el)) {
+        return { found: false, disabled: true, query: selector, candidateCount: 0 };
+      }
+    }
+    if (!el && wanted) {
+      const pool = [];
+      for (const entry of roots) {
+        const before = pool.length;
+        collect(entry.root, pool, 0);
+        for (let i = before; i < pool.length; i += 1) pool[i].__frameVisible = entry.frameVisible;
+      }
+      // Score the WHOLE pool, disabled included, then check the winner. Filtering
+      // disabled candidates out first let a disabled exact match be discarded so
+      // an enabled prefix match won instead — "Delete" dispatching "Delete all
+      // archived items".
+      // Two phases, to keep the aria-hidden read off the hot path. Scoring uses
+      // plain innerText and touches nothing; only the ranked winner is re-read
+      // with aria-hidden hidden, and if that correction kills its match we move
+      // to the next candidate. Mutating every candidate on every scan would let
+      // a page's MutationObserver — or a custom element's synchronous
+      // attributeChangedCallback — react to a click that has not happened yet.
+      const plainText = node => (typeof node.innerText === 'string' ? node.innerText : '');
+      const candidates = pool.map(node => ({
+        labels: collectElementLabels(node, plainText),
+        visible: visibleIn(node, node.__frameVisible !== false),
+        area: areaOf(node),
+      }));
+      pick = pickClickCandidate(candidates, wanted);
+      if (pick) {
+        // Correct only the candidates that actually matched, then rank the
+        // corrected set from scratch. Taking the first one with any positive
+        // corrected score let an early prefix match win over a candidate that
+        // BECOMES exact once its aria-hidden text is removed — "Delete all"
+        // beating a real "Delete". Correcting the matched set rather than every
+        // candidate is what keeps the write off the hot path.
+        const correctedNodes = [];
+        const corrected = [];
+        for (const item of pick.ranked) {
+          const node = pool[item.index];
+          correctedNodes.push(node);
+          corrected.push({
+            labels: collectElementLabels(node),
+            visible: item.visible,
+            area: item.area,
+          });
+        }
+        const repick = pickClickCandidate(corrected, wanted);
+        if (repick) {
+          el = correctedNodes[repick.best.index];
+          pick = {
+            best: repick.best,
+            candidateCount: repick.candidateCount,
+            runnersUp: repick.runnersUp,
+          };
+        }
+      }
+      if (el) { frameVisible = el.__frameVisible !== false; }
+      for (const node of pool) { try { delete node.__frameVisible; } catch (err) { /* frozen */ } }
+      if (el && isDisabled(el)) {
+        return { found: false, disabled: true, query: ${JSON.stringify(text || "")}, candidateCount: pick ? pick.candidateCount : 1 };
+      }
+    }
+    if (!el) {
+      return { found: false, query: selector || ${JSON.stringify(text || "")}, candidateCount: 0 };
+    }
+
+    // 'instant': smooth scrolling is async and would leave the control still in
+    // flight. Harmless here (we dispatch by reference) but keeps it on screen.
+    try { el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); }
+    catch (err) { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (err2) { /* detached */ } }
+
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const view = el.ownerDocument.defaultView || window;
+    const fire = (Ctor, type, extra) => {
+      el.dispatchEvent(new Ctor(type, Object.assign({
+        bubbles: true, cancelable: true, composed: true, view,
+        button: 0, clientX: cx, clientY: cy,
+      }, extra)));
+    };
+    // Full pointer sequence: a bare el.click() fires one untrusted click event
+    // and is ignored by handlers bound to pointerdown/mousedown, which is most
+    // of Google Maps' jsaction layer.
+    const Pointer = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+    const pointerProps = Pointer === MouseEvent ? {} : { pointerId: 1, pointerType: 'mouse', isPrimary: true };
+    const sequence = [
+      [Pointer, 'pointerdown', Object.assign({ buttons: 1 }, pointerProps)],
+      [MouseEvent, 'mousedown', { buttons: 1, detail: 1 }],
+      [Pointer, 'pointerup', Object.assign({ buttons: 0 }, pointerProps)],
+      [MouseEvent, 'mouseup', { buttons: 0, detail: 1 }],
+      [MouseEvent, 'click', { buttons: 0, detail: 1 }],
+    ];
+    // A pointerdown/mousedown handler can synchronously remove or replace the
+    // control. Continuing would dispatch the rest at a detached node: stale
+    // direct listeners fire, delegated listeners on the replacement get nothing,
+    // and we would report a clean click. Stop instead, and say so. Re-resolving
+    // here would be guessing which replacement the caller meant.
+    let interrupted = null;
+    const sent = {};
+    for (const step of sequence) {
+      if (el.isConnected === false) { interrupted = step[1]; break; }
+      // A handler can disable the control mid-sequence. A native interaction
+      // stops activating it at that point; dispatchEvent would not.
+      if (step[1] === 'click' && isDisabled(el)) { interrupted = 'click (control became disabled)'; break; }
+      fire(step[0], step[1], step[2]);
+      sent[step[1]] = true;
+    }
+    if (interrupted) {
+      // pointerdown already bubbled to the document and may have left pressed or
+      // drag state behind. Abandoning the sequence leaves that state stuck, so
+      // send the cancellation on a target that is still connected.
+      const fallback = el.isConnected === false
+        ? (el.ownerDocument && el.ownerDocument.body) || document.body
+        : el;
+      if (fallback) {
+        // Only releases the loop did NOT already deliver. Interrupting at the
+        // click step means mouseup has been sent; emitting it again would run
+        // document-level release handlers twice and could commit the action
+        // twice for one requested click.
+        const cleanup = [];
+        if (!sent.pointerup) cleanup.push([Pointer, 'pointercancel', Object.assign({ buttons: 0 }, pointerProps)]);
+        if (!sent.mouseup) cleanup.push([MouseEvent, 'mouseup', { buttons: 0, detail: 0 }]);
+        for (const [Ctor, type, extra] of cleanup) {
+          try {
+            fallback.dispatchEvent(new Ctor(type, Object.assign({
+              bubbles: true, cancelable: true, composed: true, view,
+              button: 0, clientX: cx, clientY: cy,
+            }, extra)));
+          } catch (err) { /* best effort */ }
+        }
+      }
+    }
+
+    return {
+      found: true,
+      query: selector || ${JSON.stringify(text || "")},
+      matched: {
+        tag: el.tagName ? el.tagName.toLowerCase() : '',
+        role: el.getAttribute ? (el.getAttribute('role') || '') : '',
+        labels: collectElementLabels(el).slice(0, 4),
+      },
+      score: pick ? pick.best.score : null,
+      candidateCount: pick ? pick.candidateCount : 1,
+      runnersUp: pick ? pick.runnersUp.map(item => ({ label: item.labels[0] || '', score: item.score, visible: item.visible })) : [],
+      visible: visibleIn(el, frameVisible),
+      ...(interrupted ? { interrupted } : {}),
+      // Chrome throttles a backgrounded tab and many sites ignore input there,
+      // so a click on one may not take effect. Reported as an observed fact
+      // about the tab, not inferred from whether the page appeared to change —
+      // a global change-detector produced false negatives on quiet pages and
+      // false positives on ones with a ticking clock.
+      documentHidden: document.visibilityState === 'hidden',
+      url: location.href,
+    };
   })()`;
 }
 
 function buildTypeExpression({ selector, label, text }) {
   return `(() => {
-    const selector = ${JSON.stringify(selector || '')};
-    const label = ${JSON.stringify(label || '')};
-    const text = ${JSON.stringify(text || '')};
+    const selector = ${JSON.stringify(selector || "")};
+    const label = ${JSON.stringify(label || "")};
+    const text = ${JSON.stringify(text || "")};
     const norm = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const visible = el => {
       try {
@@ -2006,8 +2359,8 @@ function buildTypeExpression({ selector, label, text }) {
 }
 
 async function evaluateUserCode(cdp, sessionId, code) {
-  if (!code || typeof code !== 'string') {
-    throw new Error('code is required for evaluate');
+  if (!code || typeof code !== "string") {
+    throw new Error("code is required for evaluate");
   }
   const asExpression = `(() => (${code}))()`;
   const asStatements = `(() => {\n${code}\n})()`;
@@ -2020,20 +2373,17 @@ async function evaluateUserCode(cdp, sessionId, code) {
 
 async function saveCurrentScreenshot(base64Png, target) {
   if (!base64Png) {
-    throw new Error('Screenshot failed: missing PNG data');
+    throw new Error("Screenshot failed: missing PNG data");
   }
   await mkdir(SCREENSHOT_DIR, { recursive: true });
-  const safeTitle = String(target.title || 'chrome-tab')
+  const safeTitle = String(target.title || "chrome-tab")
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '')
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
     .slice(0, 48);
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const filePath = path.join(
-    SCREENSHOT_DIR,
-    `${safeTitle || 'chrome-tab'}-${timestamp}.png`
-  );
-  await writeFile(filePath, Buffer.from(base64Png, 'base64'));
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const filePath = path.join(SCREENSHOT_DIR, `${safeTitle || "chrome-tab"}-${timestamp}.png`);
+  await writeFile(filePath, Buffer.from(base64Png, "base64"));
   return filePath;
 }
 
@@ -2041,18 +2391,17 @@ function normalizeOperation({ mode, operation, fields }) {
   if (operation) {
     return operation;
   }
-  if (mode === 'headless') {
-    return 'run_script';
+  if (mode === "headless") {
+    return "run_script";
   }
-  if (fields && typeof fields === 'object' && Object.keys(fields).length > 0) {
-    return 'fill_fields';
+  if (fields && typeof fields === "object" && Object.keys(fields).length > 0) {
+    return "fill_fields";
   }
-  return 'snapshot';
+  return "snapshot";
 }
 
 async function substituteForHeadless(vars) {
-  const safeVars =
-    vars && typeof vars === 'object' && !Array.isArray(vars) ? vars : {};
+  const safeVars = vars && typeof vars === "object" && !Array.isArray(vars) ? vars : {};
   return await substitutePlaceholders(safeVars, {
     autofill: autofillData,
     getSecret: readKeychainSecret,
@@ -2064,13 +2413,9 @@ async function substituteForHeadless(vars) {
 
 async function substituteForCurrent(args) {
   const safeVars =
-    args.vars && typeof args.vars === 'object' && !Array.isArray(args.vars)
-      ? args.vars
-      : {};
+    args.vars && typeof args.vars === "object" && !Array.isArray(args.vars) ? args.vars : {};
   const safeFields =
-    args.fields &&
-    typeof args.fields === 'object' &&
-    !Array.isArray(args.fields)
+    args.fields && typeof args.fields === "object" && !Array.isArray(args.fields)
       ? args.fields
       : {};
   return await substitutePlaceholders(
@@ -2078,11 +2423,11 @@ async function substituteForCurrent(args) {
       vars: safeVars,
       fields: safeFields,
       target: args.target || {},
-      selector: args.selector || '',
-      label: args.label || '',
-      text: args.text || '',
-      value: args.value || '',
-      url: args.url || '',
+      selector: args.selector || "",
+      label: args.label || "",
+      text: args.text || "",
+      value: args.value || "",
+      url: args.url || "",
     },
     {
       autofill: autofillData,
@@ -2095,10 +2440,7 @@ async function substituteForCurrent(args) {
 }
 
 async function substituteAutofillProfileFields(fields) {
-  const safeFields =
-    fields && typeof fields === 'object' && !Array.isArray(fields)
-      ? fields
-      : {};
+  const safeFields = fields && typeof fields === "object" && !Array.isArray(fields) ? fields : {};
   return await substitutePlaceholders(safeFields, {
     autofill: autofillData,
     getSecret: readKeychainSecret,
@@ -2109,35 +2451,35 @@ async function substituteAutofillProfileFields(fields) {
 }
 
 function placeholderFailure(sub, mode) {
-  cl.warn('placeholder substitution failed', {
+  cl.warn("placeholder substitution failed", {
     errors: sub.errors,
     substituted: sub.substituted,
   });
   return {
     success: false,
     mode,
-    error: sub.errors.join('; '),
+    error: sub.errors.join("; "),
     placeholderError: true,
   };
 }
 
 const operations = [
-  'snapshot',
-  'open',
-  'fill_fields',
-  'autofill_profile',
-  'click',
-  'type',
-  'screenshot',
-  'evaluate',
-  'goto',
-  'focus',
-  'doctor',
-  'run_script',
+  "snapshot",
+  "open",
+  "fill_fields",
+  "autofill_profile",
+  "click",
+  "type",
+  "screenshot",
+  "evaluate",
+  "goto",
+  "focus",
+  "doctor",
+  "run_script",
 ];
 
 const devBrowserTool = {
-  name: 'dev_browser',
+  name: "dev_browser",
   description: `Drive Chrome through one AutoHub browser tool.
 
 Modes:
@@ -2172,119 +2514,118 @@ Profile autofill:
 - operation:"autofill_profile" uses ~/.autohub/autofill.json for context preferences and macOS keychain profile placeholders for sensitive values. It does not use memory or Evernote.
 Resolved placeholder values are redacted from tool output.`,
   inputSchema: {
-    type: 'object',
+    type: "object",
     properties: {
       mode: {
-        type: 'string',
-        enum: ['current', 'headless', 'connect'],
+        type: "string",
+        enum: ["current", "headless", "connect"],
         description:
-          'current: active user Chrome via extension relay. headless: fresh Chromium via dev-browser CLI. connect is a legacy alias for current. Default: current.',
+          "current: active user Chrome via extension relay. headless: fresh Chromium via dev-browser CLI. connect is a legacy alias for current. Default: current.",
       },
       operation: {
-        type: 'string',
+        type: "string",
         enum: operations,
         description:
-          'Current-mode operation, or run_script for headless. Defaults to snapshot in current mode and run_script in headless mode.',
+          "Current-mode operation, or run_script for headless. Defaults to snapshot in current mode and run_script in headless mode.",
       },
       pageName: {
-        type: 'string',
+        type: "string",
         description:
-          'Named extension-relay tab. Explicit pageName may create an about:blank tab before the operation; goto/open default to autohub-current when no http tab is visible.',
+          "Named extension-relay tab. Explicit pageName may create an about:blank tab before the operation; goto/open default to autohub-current when no http tab is visible.",
       },
       target: {
-        type: 'object',
+        type: "object",
         description:
           'Current-mode tab target. Defaults to { strategy: "active" }. Optional: id, url, title, name, strategy.',
         additionalProperties: true,
       },
       fields: {
-        type: 'object',
+        type: "object",
         description:
-          'Label/value map for fill_fields. Values may use {me:KEY}, {secure:KEY}, or {secret:KEY}.',
+          "Label/value map for fill_fields. Values may use {me:KEY}, {secure:KEY}, or {secret:KEY}.",
         additionalProperties: true,
       },
       profile: {
-        type: 'string',
-        description:
-          'Autofill profile name for operation:"autofill_profile". Default: default.',
+        type: "string",
+        description: 'Autofill profile name for operation:"autofill_profile". Default: default.',
       },
       contextHint: {
-        type: 'string',
+        type: "string",
         description:
           'Optional context hint for operation:"autofill_profile", such as travel, banking, work, or personal.',
       },
       selector: {
-        type: 'string',
-        description: 'CSS selector for click/type/evaluate helpers.',
+        type: "string",
+        description: "CSS selector for click/type/evaluate helpers.",
       },
       label: {
-        type: 'string',
-        description: 'Human field label for type.',
+        type: "string",
+        description: "Human field label for type.",
       },
       text: {
-        type: 'string',
-        description: 'Text for click matching or type input.',
+        type: "string",
+        description: "Text for click matching or type input.",
       },
       value: {
-        type: 'string',
-        description: 'Alias for text in click/type operations.',
+        type: "string",
+        description: "Alias for text in click/type operations.",
       },
       url: {
-        type: 'string',
-        description: 'URL for goto.',
+        type: "string",
+        description: "URL for goto.",
       },
       code: {
-        type: 'string',
-        description: 'JavaScript code for current-mode evaluate.',
+        type: "string",
+        description: "JavaScript code for current-mode evaluate.",
       },
       script: {
-        type: 'string',
+        type: "string",
         description:
-          'Sandboxed JS for headless run_script only. Top-level await available. `args` is populated from vars.',
+          "Sandboxed JS for headless run_script only. Top-level await available. `args` is populated from vars.",
       },
       vars: {
-        type: 'object',
+        type: "object",
         description:
-          'Values injected as `const args = {...}` in headless run_script. Values may use placeholders.',
+          "Values injected as `const args = {...}` in headless run_script. Values may use placeholders.",
         additionalProperties: true,
       },
       browser: {
-        type: 'string',
+        type: "string",
         description:
-          'Optional named browser instance for headless mode, passed as --browser <name>.',
+          "Optional named browser instance for headless mode, passed as --browser <name>.",
       },
       timeoutMs: {
-        type: 'number',
-        description: 'Hard timeout in ms. Range: 1000-120000. Default: 30000.',
+        type: "number",
+        description: "Hard timeout in ms. Range: 1000-120000. Default: 30000.",
       },
       focusPolicy: {
-        type: 'string',
-        enum: ['background', 'tab', 'window'],
+        type: "string",
+        enum: ["background", "tab", "window"],
         description:
-          'Per-call focus override for focus/open/goto. Default popup policy is background (no steal). Use window when a human must see/interact with the tab (2FA, confirm). tab activates without focusing the OS window. Alias: focus.',
+          "Per-call focus override for focus/open/goto. Default popup policy is background (no steal). Use window when a human must see/interact with the tab (2FA, confirm). tab activates without focusing the OS window. Alias: focus.",
       },
       focus: {
-        type: 'string',
-        enum: ['background', 'tab', 'window'],
-        description: 'Alias for focusPolicy.',
+        type: "string",
+        enum: ["background", "tab", "window"],
+        description: "Alias for focusPolicy.",
       },
       focusReason: {
-        type: 'string',
+        type: "string",
         description:
-          'Why focus is requested (e.g. 2fa, confirm-publish). Required by skill when focusing; stored on the override for audit.',
+          "Why focus is requested (e.g. 2fa, confirm-publish). Required by skill when focusing; stored on the override for audit.",
       },
       reason: {
-        type: 'string',
-        description: 'Alias for focusReason.',
+        type: "string",
+        description: "Alias for focusReason.",
       },
       focusTtlMs: {
-        type: 'number',
+        type: "number",
         description:
-          'How long the focus override stays valid if unused (default 120000). Cleared after one successful focus apply when consumeOnUse is true.',
+          "How long the focus override stays valid if unused (default 120000). Cleared after one successful focus apply when consumeOnUse is true.",
       },
       fullPage: {
-        type: 'boolean',
-        description: 'Current screenshot: capture beyond viewport when true.',
+        type: "boolean",
+        description: "Current screenshot: capture beyond viewport when true.",
       },
     },
     required: [],
@@ -2292,7 +2633,7 @@ Resolved placeholder values are redacted from tool output.`,
   handler: async (args = {}) => {
     const mode = normalizeDevBrowserMode(args.mode);
     const timeoutMs =
-      typeof args.timeoutMs === 'number' && !Number.isNaN(args.timeoutMs)
+      typeof args.timeoutMs === "number" && !Number.isNaN(args.timeoutMs)
         ? Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, args.timeoutMs))
         : DEFAULT_TIMEOUT_MS;
     const operation = normalizeOperation({
@@ -2310,7 +2651,7 @@ Resolved placeholder values are redacted from tool output.`,
     }
 
     // Reject array fields before substituteForCurrent strips them to {} (silent no-op).
-    if (operation === 'fill_fields' && Array.isArray(args.fields)) {
+    if (operation === "fill_fields" && Array.isArray(args.fields)) {
       return {
         success: false,
         mode,
@@ -2320,8 +2661,8 @@ Resolved placeholder values are redacted from tool output.`,
       };
     }
 
-    if (mode === 'headless') {
-      if (operation !== 'run_script') {
+    if (mode === "headless") {
+      if (operation !== "run_script") {
         return {
           success: false,
           mode,
@@ -2329,19 +2670,15 @@ Resolved placeholder values are redacted from tool output.`,
           error: 'Headless mode currently supports operation:"run_script" only',
         };
       }
-      if (
-        !args.script ||
-        typeof args.script !== 'string' ||
-        !args.script.trim()
-      ) {
+      if (!args.script || typeof args.script !== "string" || !args.script.trim()) {
         return {
           success: false,
           mode,
           operation,
-          error: 'script is required for headless run_script',
+          error: "script is required for headless run_script",
         };
       }
-      if (Buffer.byteLength(args.script, 'utf8') > MAX_SCRIPT_BYTES) {
+      if (Buffer.byteLength(args.script, "utf8") > MAX_SCRIPT_BYTES) {
         return {
           success: false,
           mode,
@@ -2356,11 +2693,11 @@ Resolved placeholder values are redacted from tool output.`,
       }
       const varsLiteral = JSON.stringify(sub.vars || {});
       const payload = `const args = ${varsLiteral};\n${args.script}`;
-      cl.info('running dev-browser headless', {
+      cl.info("running dev-browser headless", {
         mode,
         operation,
         timeoutMs,
-        scriptBytes: Buffer.byteLength(args.script, 'utf8'),
+        scriptBytes: Buffer.byteLength(args.script, "utf8"),
         varKeys: Object.keys(sub.vars || {}),
         substituted: sub.substituted,
       });
@@ -2368,9 +2705,7 @@ Resolved placeholder values are redacted from tool output.`,
         payload,
         mode,
         browserName:
-          typeof args.browser === 'string' && args.browser.trim()
-            ? args.browser.trim()
-            : null,
+          typeof args.browser === "string" && args.browser.trim() ? args.browser.trim() : null,
         timeoutMs,
       });
       return redactSensitiveObject(
@@ -2384,13 +2719,13 @@ Resolved placeholder values are redacted from tool output.`,
       );
     }
 
-    if (operation === 'run_script') {
+    if (operation === "run_script") {
       return {
         success: false,
         mode,
         operation,
         error:
-          'run_script is headless-only. Use current-mode operations such as open, snapshot, fill_fields, autofill_profile, click, type, screenshot, evaluate, goto, or doctor.',
+          "run_script is headless-only. Use current-mode operations such as open, snapshot, fill_fields, autofill_profile, click, type, screenshot, evaluate, goto, or doctor.",
       };
     }
 
@@ -2404,7 +2739,7 @@ Resolved placeholder values are redacted from tool output.`,
       mode,
       operation,
     };
-    cl.info('running dev-browser current', {
+    cl.info("running dev-browser current", {
       mode,
       operation,
       timeoutMs,

@@ -74,18 +74,13 @@ interface CDPEvent {
   params?: Record<string, unknown>;
 }
 
-export async function serveRelay(
-  options: RelayOptions = {}
-): Promise<RelayServer> {
+export async function serveRelay(options: RelayOptions = {}): Promise<RelayServer> {
   const port = options.port ?? 9222;
   const host = options.host ?? "127.0.0.1";
 
   const connectedTargets = new Map<string, ConnectedTarget>();
   /** Named page → last known session + target. Prefer targetId rebind when session churns. */
-  const namedPages = new Map<
-    string,
-    { sessionId: string; targetId: string }
-  >();
+  const namedPages = new Map<string, { sessionId: string; targetId: string }>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
 
@@ -96,14 +91,11 @@ export async function serveRelay(
     return undefined;
   }
 
-  function resolveNamedPage(
-    name: string
-  ): ConnectedTarget | undefined {
+  function resolveNamedPage(name: string): ConnectedTarget | undefined {
     const entry = namedPages.get(name);
     if (!entry) return undefined;
 
-    let target =
-      (entry.sessionId && connectedTargets.get(entry.sessionId)) || undefined;
+    let target = (entry.sessionId && connectedTargets.get(entry.sessionId)) || undefined;
     if (!target && entry.targetId) {
       target = findTargetById(entry.targetId);
     }
@@ -130,10 +122,7 @@ export async function serveRelay(
     console.error("[relay]", ...args);
   }
 
-  function sendToPlaywright(
-    message: CDPResponse | CDPEvent,
-    clientId?: string
-  ) {
+  function sendToPlaywright(message: CDPResponse | CDPEvent, clientId?: string) {
     const messageStr = JSON.stringify(message);
 
     if (clientId) {
@@ -201,9 +190,7 @@ export async function serveRelay(
     return await new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
         extensionPendingRequests.delete(id);
-        reject(
-          new Error(`Extension request timeout after ${timeout}ms: ${method}`)
-        );
+        reject(new Error(`Extension request timeout after ${timeout}ms: ${method}`));
       }, timeout);
 
       extensionPendingRequests.set(id, {
@@ -360,6 +347,9 @@ export async function serveRelay(
         targetId: existing.targetId,
         url: existing.targetInfo.url,
         title: existing.targetInfo.title,
+        // Lets attach-only callers (click/type/fill) tell "attached to the tab
+        // you meant" from "minted a blank one", without a racy pre-check.
+        created: false,
       });
     }
     namedPages.delete(name);
@@ -398,6 +388,7 @@ export async function serveRelay(
             targetId: target.targetId,
             url: target.targetInfo.url,
             title: target.targetInfo.title,
+            created: true,
           });
         }
       }
@@ -419,8 +410,7 @@ export async function serveRelay(
     "/cdp/:clientId?",
     upgradeWebSocket((c) => {
       const clientId =
-        c.req.param("clientId") ||
-        `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        c.req.param("clientId") || `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
       return {
         onOpen(_event, ws) {
@@ -567,9 +557,7 @@ export async function serveRelay(
             extensionPendingRequests.delete(message.id);
 
             if ((message as ExtensionResponseMessage).error) {
-              pending.reject(
-                new Error((message as ExtensionResponseMessage).error)
-              );
+              pending.reject(new Error((message as ExtensionResponseMessage).error));
             } else {
               pending.resolve((message as ExtensionResponseMessage).result);
             }
@@ -601,23 +589,16 @@ export async function serveRelay(
 
               // Rebind any named pages that only retained targetId after churn
               for (const [name, entry] of namedPages) {
-                if (
-                  entry.targetId === target.targetId &&
-                  entry.sessionId !== target.sessionId
-                ) {
+                if (entry.targetId === target.targetId && entry.sessionId !== target.sessionId) {
                   namedPages.set(name, {
                     sessionId: target.sessionId,
                     targetId: target.targetId,
                   });
-                  log(
-                    `Named page "${name}" rebound on attach → ${target.sessionId}`
-                  );
+                  log(`Named page "${name}" rebound on attach → ${target.sessionId}`);
                 }
               }
 
-              log(
-                `Target attached: ${targetParams.targetInfo.url} (${targetParams.sessionId})`
-              );
+              log(`Target attached: ${targetParams.targetInfo.url} (${targetParams.sessionId})`);
 
               sendAttachedToTarget(target);
             } else if (method === "Target.detachedFromTarget") {
@@ -631,16 +612,13 @@ export async function serveRelay(
               for (const [name, entry] of namedPages) {
                 if (entry.sessionId !== detachParams.sessionId) continue;
                 const rebound =
-                  (detached && findTargetById(detached.targetId)) ||
-                  findTargetById(entry.targetId);
+                  (detached && findTargetById(detached.targetId)) || findTargetById(entry.targetId);
                 if (rebound) {
                   namedPages.set(name, {
                     sessionId: rebound.sessionId,
                     targetId: rebound.targetId,
                   });
-                  log(
-                    `Named page "${name}" rebound after session detach → ${rebound.sessionId}`
-                  );
+                  log(`Named page "${name}" rebound after session detach → ${rebound.sessionId}`);
                 } else {
                   // Keep targetId so a late re-attach can still resolve via
                   // resolveNamedPage before we mint a new blank tab.
