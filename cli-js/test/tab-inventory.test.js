@@ -64,12 +64,23 @@ test("compactTarget keeps id/title/url plus active, focused, and windowId", () =
   );
 });
 
-test("compactTarget clips oversized titles and URLs so 30-tab dumps stay scannable", () => {
-  const compact = compactTarget({
-    targetId: "tab-x",
-    title: `X ${"word ".repeat(80)}`,
-    url: `https://billing.stripe.com/p/session?secret=${"a".repeat(300)}`,
-  });
+test("compactTarget keeps full title and URL for snapshot/evaluate/focus", () => {
+  const title = `X ${"word ".repeat(80)}`;
+  const url = `https://billing.stripe.com/p/session?secret=${"a".repeat(300)}`;
+  const compact = compactTarget({ targetId: "tab-x", title, url });
+  assert.equal(compact.title, title);
+  assert.equal(compact.url, url);
+});
+
+test("inventory clips oversized titles and URLs so 30-tab dumps stay scannable", () => {
+  const compact = compactTarget(
+    {
+      targetId: "tab-x",
+      title: `X ${"word ".repeat(80)}`,
+      url: `https://billing.stripe.com/p/session?secret=${"a".repeat(300)}`,
+    },
+    { clip: true }
+  );
   assert.ok(compact.title.length <= 160);
   assert.ok(compact.title.endsWith("..."));
   assert.ok(compact.url.length <= 220);
@@ -123,6 +134,14 @@ test("summarizeTabInventory --query filters title or url without dropping the re
   assert.equal(summary.tabCount, 1);
   assert.equal(summary.tabs[0].url.includes("stripe.com"), true);
   assert.equal(summary.active.id, "tab-12");
+});
+
+test("filterTabTargets honors target.name with the same title-or-URL match as selectCurrentTarget", () => {
+  const targets = manyTabs(4, { titleAt: { 2: "API keys" } });
+  targets[2].url = "https://dashboard.stripe.com/test/apikeys";
+  const filtered = filterTabTargets(targets, { name: "stripe" });
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].targetId, "tab-3");
 });
 
 test("filterTabTargets honors target id so tabs --target-id is not a no-op", () => {

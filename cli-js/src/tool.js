@@ -115,11 +115,11 @@ function clipText(value, cap) {
   return `${text.slice(0, Math.max(0, cap - 3))}...`;
 }
 
-export function compactTarget(target = {}) {
+export function compactTarget(target = {}, { clip = false } = {}) {
   const compact = {
     id: target.targetId || target.id || "",
-    title: clipText(target.title || "", 160),
-    url: clipText(target.url || "", 220),
+    title: clip ? clipText(target.title || "", 160) : String(target.title || ""),
+    url: clip ? clipText(target.url || "", 220) : String(target.url || ""),
   };
   if (target.active === true) compact.active = true;
   if (target.focused === true) compact.focused = true;
@@ -140,6 +140,7 @@ export function filterTabTargets(targets = [], query = {}) {
   const urlNeedle = query.url ? String(query.url).toLowerCase() : "";
   const titleNeedle = query.title ? String(query.title).toLowerCase() : "";
   const textNeedle = query.query ? String(query.query).toLowerCase() : "";
+  const nameNeedle = query.name ? String(query.name).toLowerCase() : "";
   if (idNeedle) {
     pages = pages.filter((item) => item.targetId === idNeedle || item.id === idNeedle);
   }
@@ -155,6 +156,12 @@ export function filterTabTargets(targets = [], query = {}) {
       return haystack.includes(textNeedle);
     });
   }
+  if (nameNeedle) {
+    pages = pages.filter((item) => {
+      const haystack = `${item.title || ""} ${item.url || ""}`.toLowerCase();
+      return haystack.includes(nameNeedle);
+    });
+  }
   return rankTabTargets(pages);
 }
 
@@ -167,8 +174,8 @@ export function summarizeTabInventory(targets = [], query = {}) {
     targetCount: (targets || []).length,
     tabCount: pages.length,
     truncated: false,
-    active: current ? compactTarget(current) : null,
-    tabs: pages.map(compactTarget),
+    active: current ? compactTarget(current, { clip: true }) : null,
+    tabs: pages.map((item) => compactTarget(item, { clip: true })),
   };
 }
 
@@ -1284,6 +1291,7 @@ async function runCurrentTabs(input = {}, timeoutMs) {
       url: input.target?.url,
       title: input.target?.title,
       id: input.target?.id,
+      name: input.target?.name,
     };
     return {
       success: true,
