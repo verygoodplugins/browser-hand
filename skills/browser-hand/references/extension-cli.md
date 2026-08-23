@@ -84,9 +84,9 @@ Agents must pass `--reason`. Do **not** focus for routine automation.
 
 ## Tab targeting
 
-`browser-hand tabs` lists every `http(s)://` tab. The last-focused tab is first and marked `focused` / `active`. Prefer:
+`browser-hand tabs` lists every `http(s)://` tab. A unique-active tab is first; `focused` is first when the extension stamps the last-focused window. Prefer:
 
-- no flags — operate on the last-focused tab
+- no flags — unique-active tab, or last-focused when `focused` is present
 - `--query <text>` — title or URL substring (`tabs` and snapshot/click/etc)
 - `--page-name <name>`
 - `--target-url <substring>`
@@ -103,6 +103,6 @@ Do not use `doctor` to find a tab. Doctor is a health check; `tabs` is the inven
 ## Workflow
 
 1. `doctor` once per session (health only)  
-2. `tabs` or `snapshot` — confirm the last-focused / queried tab  
+2. `tabs` or `snapshot` — confirm the unique-active / queried tab  
 3. Write (`fill` / `click` / `type` / `goto`)  
 4. Verify (`screenshot` / re-`snapshot` / `evaluate`)

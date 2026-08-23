@@ -56,7 +56,7 @@ Operations:
   open --url <url> [--page-name <name>] Create/get a named relay tab and navigate it.
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
-  tabs [--query <text>]                 List every http(s) tab. Current/last-focused tab is first.
+  tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
   doctor                                Diagnose relay, extension, and tab bootstrap. Not a tab list.
   relay                                 Start a persistent extension relay (foreground) so the
                                         Chrome extension has a stable endpoint to connect to.

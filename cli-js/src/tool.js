@@ -136,9 +136,13 @@ export function rankTabTargets(targets = []) {
 
 export function filterTabTargets(targets = [], query = {}) {
   let pages = (targets || []).filter(isHttpPageTarget);
+  const idNeedle = query.id ? String(query.id) : "";
   const urlNeedle = query.url ? String(query.url).toLowerCase() : "";
   const titleNeedle = query.title ? String(query.title).toLowerCase() : "";
   const textNeedle = query.query ? String(query.query).toLowerCase() : "";
+  if (idNeedle) {
+    pages = pages.filter((item) => item.targetId === idNeedle || item.id === idNeedle);
+  }
   if (urlNeedle) {
     pages = pages.filter((item) => String(item.url || "").toLowerCase().includes(urlNeedle));
   }
@@ -1279,6 +1283,7 @@ async function runCurrentTabs(input = {}, timeoutMs) {
       query: input.query || input.target?.query,
       url: input.target?.url,
       title: input.target?.title,
+      id: input.target?.id,
     };
     return {
       success: true,
@@ -2628,7 +2633,7 @@ Resolved placeholder values are redacted from tool output.`,
       target: {
         type: "object",
         description:
-          'Current-mode tab target. Defaults to last-focused / unique-active tab. Optional: id, url, title, name, query, strategy.',
+          'Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.',
         additionalProperties: true,
       },
       query: {

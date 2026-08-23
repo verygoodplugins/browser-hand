@@ -34,7 +34,7 @@ npm install
 npm run setup               # one-command: relay + extension + skill (alias: install:extension)
 npm run relay               # leave the local bridge up
 npm run doctor              # healthy when status is tab_bootstrap_works
-npm run browser-hand -- tabs # full http(s) inventory; last-focused first
+npm run browser-hand -- tabs # full http(s) inventory; unique-active first
 npm run smoke:live          # real Chrome smoke
 npm run browser-hand -- --help
 # or: browser-hand --help after link/install

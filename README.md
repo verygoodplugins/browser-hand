@@ -70,7 +70,7 @@ Removes legacy skill aliases named `dev-browser` and prints how to remove an old
 
 ```bash
 browser-hand tabs
-browser-hand snapshot                  # last-focused tab
+browser-hand snapshot                  # unique-active tab (last-focused when stamped)
 browser-hand snapshot --query stripe
 browser-hand open --url https://example.com --page-name demo
 browser-hand snapshot --page-name demo

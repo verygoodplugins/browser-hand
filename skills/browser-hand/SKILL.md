@@ -101,7 +101,7 @@ Full reference: `references/extension-cli.md`.
 ## Agent rules
 
 - Prefer **named pages** (`--page-name`) for multi-step work.
-- To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. Do **not** use `doctor` as a tab list — it is a health check.
+- To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`. Do **not** use `doctor` as a tab list — it is a health check.
 - Use `tabs --query <text>` or `snapshot --query <text>` instead of grepping a dumped doctor file.
 - **Do not** request window focus for ordinary fill/click/snapshot. Only use `focus --focus window --reason "…"` when a human must act (2FA, captcha, confirm).
 - Snapshot or screenshot **before and after** writes; verify with evaluate when critical.

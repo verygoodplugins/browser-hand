@@ -125,6 +125,13 @@ test("summarizeTabInventory --query filters title or url without dropping the re
   assert.equal(summary.active.id, "tab-12");
 });
 
+test("filterTabTargets honors target id so tabs --target-id is not a no-op", () => {
+  const targets = manyTabs(5, { activeIndex: 0 });
+  const filtered = filterTabTargets(targets, { id: "tab-4" });
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0].targetId, "tab-4");
+});
+
 test("filterTabTargets ignores non-http pages", () => {
   const filtered = filterTabTargets([
     page({ id: "a", url: "https://ok.example/" }),
@@ -178,6 +185,23 @@ test("selectCurrentTarget uses a unique active tab without probing document.hasF
   });
   assert.equal(selected.targetId, "tab-18");
   assert.equal(focusCalls, 0);
+});
+
+test("selectCurrentTarget does not guess among multiple window actives without focused", async () => {
+  const targets = [
+    page({ id: "win1", title: "Gmail", url: "https://mail.google.com/", active: true, windowId: 1 }),
+    page({
+      id: "win2",
+      title: "Stripe",
+      url: "https://dashboard.stripe.com/",
+      active: true,
+      windowId: 2,
+    }),
+  ];
+  await assert.rejects(
+    () => selectCurrentTarget(targets),
+    /Ambiguous current Chrome tab/
+  );
 });
 
 test("selectCurrentTarget --query matches title or url", async () => {
