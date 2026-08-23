@@ -105,23 +105,104 @@ function redactSensitiveObject(value, redactions = []) {
   return value;
 }
 
+export function isHttpPageTarget(item) {
+  return Boolean(item && item.type === "page" && /^https?:\/\//i.test(String(item.url || "")));
+}
+
+function clipText(value, cap) {
+  const text = String(value || "");
+  if (text.length <= cap) return text;
+  return `${text.slice(0, Math.max(0, cap - 3))}...`;
+}
+
+export function compactTarget(target = {}, { clip = false } = {}) {
+  const compact = {
+    id: target.targetId || target.id || "",
+    title: clip ? clipText(target.title || "", 160) : String(target.title || ""),
+    url: clip ? clipText(target.url || "", 220) : String(target.url || ""),
+  };
+  if (target.active === true) compact.active = true;
+  if (target.focused === true) compact.focused = true;
+  if (target.windowId != null && target.windowId !== "") compact.windowId = target.windowId;
+  return compact;
+}
+
+export function rankTabTargets(targets = []) {
+  return [...targets].sort((a, b) => {
+    const score = (item) => (item?.focused === true ? 2 : 0) + (item?.active === true ? 1 : 0);
+    return score(b) - score(a);
+  });
+}
+
+export function filterTabTargets(targets = [], query = {}) {
+  let pages = (targets || []).filter(isHttpPageTarget);
+  const idNeedle = query.id ? String(query.id) : "";
+  const urlNeedle = query.url ? String(query.url).toLowerCase() : "";
+  const titleNeedle = query.title ? String(query.title).toLowerCase() : "";
+  const textNeedle = query.query ? String(query.query).toLowerCase() : "";
+  const nameNeedle = query.name ? String(query.name).toLowerCase() : "";
+  if (idNeedle) {
+    pages = pages.filter((item) => item.targetId === idNeedle || item.id === idNeedle);
+  }
+  if (urlNeedle) {
+    pages = pages.filter((item) => String(item.url || "").toLowerCase().includes(urlNeedle));
+  }
+  if (titleNeedle) {
+    pages = pages.filter((item) => String(item.title || "").toLowerCase().includes(titleNeedle));
+  }
+  if (textNeedle) {
+    pages = pages.filter((item) => {
+      const haystack = `${item.title || ""} ${item.url || ""}`.toLowerCase();
+      return haystack.includes(textNeedle);
+    });
+  }
+  if (nameNeedle) {
+    pages = pages.filter((item) => {
+      const haystack = `${item.title || ""} ${item.url || ""}`.toLowerCase();
+      return haystack.includes(nameNeedle);
+    });
+  }
+  return pages;
+}
+
+export function summarizeTabInventory(targets = [], query = {}) {
+  const pages = rankTabTargets(filterTabTargets(targets, query));
+  const focused = pages.find((item) => item.focused === true);
+  const actives = pages.filter((item) => item.active === true);
+  const current = focused || (actives.length === 1 ? actives[0] : null);
+  return {
+    targetCount: (targets || []).length,
+    tabCount: pages.length,
+    truncated: false,
+    active: current ? compactTarget(current, { clip: true }) : null,
+    tabs: pages.map((item) => compactTarget(item, { clip: true })),
+  };
+}
+
+export function formatTargetCandidates(targets = []) {
+  return (targets || [])
+    .map((item) => {
+      const flags = [
+        item?.focused === true ? "focused" : null,
+        item?.active === true ? "active" : null,
+      ].filter(Boolean);
+      const flagText = flags.length > 0 ? `[${flags.join(",")}]` : "";
+      return `${item?.targetId || item?.id || "unknown"}${flagText} ${item?.title || ""} ${item?.url || ""}`.trim();
+    })
+    .join(" | ");
+}
+
 export async function selectCurrentTarget(targets = [], opts = {}) {
   const target = opts.target && typeof opts.target === "object" ? opts.target : {};
-  const evaluateFocus =
-    typeof opts.evaluateFocus === "function" ? opts.evaluateFocus : async () => false;
-
-  const pages = targets.filter((item) => {
-    if (!item || item.type !== "page") {
-      return false;
-    }
-    return /^https?:\/\//i.test(String(item.url || ""));
-  });
+  const pages = filterTabTargets(targets);
 
   if (pages.length === 0) {
     throw new Error("No http(s) Chrome tabs are available through Browser Hand");
   }
 
-  const explicit = Boolean(target.id || target.url || target.title || target.name);
+  const explicit = Boolean(
+    target.id || target.url || target.title || target.name || target.query
+  );
   let candidates = pages;
 
   if (target.id) {
@@ -150,6 +231,13 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
       return haystack.includes(needle);
     });
   }
+  if (target.query) {
+    const needle = String(target.query).toLowerCase();
+    candidates = candidates.filter((item) => {
+      const haystack = `${item.title || ""} ${item.url || ""}`.toLowerCase();
+      return haystack.includes(needle);
+    });
+  }
 
   if (explicit) {
     if (candidates.length === 1) {
@@ -167,40 +255,22 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
     return pages[0];
   }
 
+  const focused = pages.filter((page) => page.focused === true);
+  if (focused.length === 1) {
+    return focused[0];
+  }
+
   const active = pages.filter((page) => page.active === true);
   if (active.length === 1) {
     return active[0];
-  }
-
-  const focused = (
-    await Promise.all(
-      pages.map(async (page) => {
-        try {
-          return (await evaluateFocus(page)) ? page : null;
-        } catch {
-          // Stale or restricted tabs should not block fallback selection.
-          return null;
-        }
-      })
-    )
-  ).filter(Boolean);
-  if (focused.length > 0) {
-    return focused[0];
   }
   if (pages.length === 1) {
     return pages[0];
   }
 
   throw new Error(
-    `Ambiguous current Chrome tab: no focused http(s) tab was detected. Pass target.id, target.url, or target.title. Candidates: ${formatTargetCandidates(pages)}`
+    `Ambiguous current Chrome tab: no last-focused http(s) tab was detected. Use \`browser-hand tabs\` or pass --query / --target-url / --target-id. Candidates: ${formatTargetCandidates(pages)}`
   );
-}
-
-function formatTargetCandidates(targets) {
-  return targets
-    .slice(0, 6)
-    .map((item) => `${item.targetId || "unknown"} ${item.title || ""} ${item.url || ""}`.trim())
-    .join(" | ");
 }
 
 function resolveBin() {
@@ -1150,8 +1220,14 @@ async function runCurrentDoctor(timeoutMs) {
     try {
       const targetResult = await cdp.send("Target.getTargets");
       const targets = targetResult?.targetInfos || [];
-      result.targetCount = targets.length;
-      result.targets = targets.slice(0, 10).map(compactTarget);
+      const inventory = summarizeTabInventory(targets);
+      result.targetCount = inventory.targetCount;
+      result.tabCount = inventory.tabCount;
+      result.active = inventory.active;
+      result.targets = inventory.tabs;
+      result.truncated = inventory.truncated;
+      result.hint =
+        "Doctor is a health check. For a fast full inventory use `browser-hand tabs` or `browser-hand tabs --query stripe`.";
 
       try {
         const pageInfo = await openNamedRelayPage(smokeName, {
@@ -1204,10 +1280,44 @@ async function runCurrentDoctor(timeoutMs) {
   return result;
 }
 
+async function runCurrentTabs(input = {}, timeoutMs) {
+  const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  const cdp = new CdpClient(info.wsEndpoint);
+  try {
+    const targetResult = await cdp.send("Target.getTargets");
+    const targets = targetResult?.targetInfos || [];
+    const query = {
+      query: input.query || input.target?.query,
+      url: input.target?.url,
+      title: input.target?.title,
+      id: input.target?.id,
+      name: input.target?.name,
+    };
+    return {
+      success: true,
+      mode: "current",
+      operation: "tabs",
+      ...summarizeTabInventory(targets, query),
+    };
+  } finally {
+    cdp.close();
+  }
+}
+
 async function runCurrentOperation(input, timeoutMs) {
   const operation = input.operation;
   if (operation === "doctor") {
     return await runCurrentDoctor(timeoutMs);
+  }
+  if (operation === "tabs") {
+    return await runCurrentTabs(input, timeoutMs);
+  }
+
+  if (input.query && !(input.target && input.target.query)) {
+    input = {
+      ...input,
+      target: { ...(input.target || {}), query: input.query },
+    };
   }
 
   const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
@@ -1469,13 +1579,6 @@ async function runCurrentOperation(input, timeoutMs) {
   }
 }
 
-function compactTarget(target) {
-  return {
-    id: target.targetId,
-    title: target.title || "",
-    url: target.url || "",
-  };
-}
 
 function buildSnapshotExpression(maxTextChars) {
   return `(() => {
@@ -2475,6 +2578,7 @@ const operations = [
   "goto",
   "focus",
   "doctor",
+  "tabs",
   "run_script",
 ];
 
@@ -2499,10 +2603,11 @@ Current-mode operations:
 - goto: navigate the selected tab.
 - focus: one-shot human-in-the-loop focus (tab|window) with reason; does not change the popup default (background).
 - doctor: classify relay/extension/target-bootstrap health.
+- tabs: list every http(s) tab (active/focused first). Fast inventory — do not use doctor to find a tab.
 
 Targeting:
 - target defaults to { strategy: "active" }.
-- Optional target fields: id, url, title, name, strategy:"first".
+- Optional target fields: id, url, title, name, query, strategy:"first".
 - pageName creates/uses a named relay tab for open/goto/snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus.
 - focusPolicy/focus: optional per-call override for open/goto/focus — "window" brings Chrome forward for human input; "tab" activates only; default remains background. Pass reason for audit.
 
@@ -2536,8 +2641,13 @@ Resolved placeholder values are redacted from tool output.`,
       target: {
         type: "object",
         description:
-          'Current-mode tab target. Defaults to { strategy: "active" }. Optional: id, url, title, name, strategy.',
+          'Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.',
         additionalProperties: true,
+      },
+      query: {
+        type: "string",
+        description:
+          "Substring match against tab title or URL. Used by tabs and as a target filter for snapshot/click/etc.",
       },
       fields: {
         type: "object",
@@ -2725,7 +2835,7 @@ Resolved placeholder values are redacted from tool output.`,
         mode,
         operation,
         error:
-          "run_script is headless-only. Use current-mode operations such as open, snapshot, fill_fields, autofill_profile, click, type, screenshot, evaluate, goto, or doctor.",
+          "run_script is headless-only. Use current-mode operations such as open, snapshot, fill_fields, autofill_profile, click, type, screenshot, evaluate, goto, tabs, or doctor.",
       };
     }
 

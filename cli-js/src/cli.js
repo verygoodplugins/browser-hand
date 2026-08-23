@@ -22,23 +22,23 @@
  * 2 on argument error.
  */
 
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 // Force Browser Hand logger to stderr so stdout stays pure JSON for
 // machine-readable consumption. Must be set BEFORE the tool import because
 // the logger latches the stream choice at construction time.
-process.env.AUTOHUB_LOG_STREAM = process.env.AUTOHUB_LOG_STREAM || 'stderr';
-process.env.BROWSER_HAND_LOG_STREAM = process.env.BROWSER_HAND_LOG_STREAM || 'stderr';
+process.env.AUTOHUB_LOG_STREAM = process.env.AUTOHUB_LOG_STREAM || "stderr";
+process.env.BROWSER_HAND_LOG_STREAM = process.env.BROWSER_HAND_LOG_STREAM || "stderr";
 
-const { default: devBrowserTool, startPersistentRelay } =
-  await import('./tool.js');
+const { default: devBrowserTool, startPersistentRelay } = await import("./tool.js");
 
 const OP_ALIASES = {
-  'autofill-profile': 'autofill_profile',
-  'fill-fields': 'fill_fields',
-  fill: 'fill_fields',
-  shot: 'screenshot',
+  "autofill-profile": "autofill_profile",
+  "fill-fields": "fill_fields",
+  fill: "fill_fields",
+  shot: "screenshot",
+  list: "tabs",
 };
 
 const HELP = `browser-hand — drive your real Chrome via the Browser Hand extension relay.
@@ -56,7 +56,8 @@ Operations:
   open --url <url> [--page-name <name>] Create/get a named relay tab and navigate it.
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
-  doctor                                Diagnose relay, extension, target inventory, and tab bootstrap.
+  tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
+  doctor                                Diagnose relay, extension, and tab bootstrap. Not a tab list.
   relay                                 Start a persistent extension relay (foreground) so the
                                         Chrome extension has a stable endpoint to connect to.
                                         Run once and leave it up; Ctrl-C to stop. Idempotent —
@@ -66,6 +67,7 @@ Global flags:
   --target-id <id>          Pick a specific Chrome tab by CDP target ID.
   --target-url <substring>  Pick by URL substring match.
   --target-title <s>        Pick by title substring match.
+  --query <text>            Pick by title or URL substring (tabs + snapshot/click/etc).
   --page-name <name>        Create/use a named relay tab for open/goto/snapshot/screenshot/evaluate/fill/click/type/autofill-profile/focus.
   --focus window|tab        Per-call focus override (open/goto/focus). Does not change popup default.
   --reason <text>           Why focus is needed (human-in-the-loop audit).
@@ -78,6 +80,9 @@ Examples:
   browser-hand open --url https://example.com --page-name smoke
   browser-hand focus --page-name smoke --focus window --reason "2fa"
   browser-hand open --url https://example.com --page-name smoke --focus window --reason "confirm"
+  browser-hand tabs
+  browser-hand tabs --query stripe
+  browser-hand snapshot --query stripe
   browser-hand doctor
   browser-hand fill --fields '{"Email":"a@b.c"}'
   browser-hand autofill-profile --context personal
@@ -88,16 +93,16 @@ function parseArgs(argv) {
   const args = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];
-    if (tok === '-h' || tok === '--help') {
+    if (tok === "-h" || tok === "--help") {
       args.help = true;
-    } else if (tok === '--quiet') {
+    } else if (tok === "--quiet") {
       args.quiet = true;
-    } else if (tok === '--full-page') {
+    } else if (tok === "--full-page") {
       args.fullPage = true;
-    } else if (tok.startsWith('--')) {
+    } else if (tok.startsWith("--")) {
       const key = tok.slice(2);
       const next = argv[i + 1];
-      if (next === undefined || next.startsWith('--')) {
+      if (next === undefined || next.startsWith("--")) {
         args[key] = true;
       } else {
         args[key] = next;
@@ -117,20 +122,23 @@ function fail(message, code = 2) {
 
 function buildTarget(args) {
   const target = {};
-  if (args['target-id']) {
-    target.id = args['target-id'];
+  if (args["target-id"]) {
+    target.id = args["target-id"];
   }
-  if (args['target-url']) {
-    target.url = args['target-url'];
+  if (args["target-url"]) {
+    target.url = args["target-url"];
   }
-  if (args['target-title']) {
-    target.title = args['target-title'];
+  if (args["target-title"]) {
+    target.title = args["target-title"];
+  }
+  if (typeof args.query === "string" && args.query.trim()) {
+    target.query = args.query.trim();
   }
   return Object.keys(target).length > 0 ? target : undefined;
 }
 
 function parseJsonFlag(value, flagName) {
-  if (typeof value !== 'string') {
+  if (typeof value !== "string") {
     fail(`--${flagName} requires a JSON value`);
   }
   try {
@@ -143,60 +151,68 @@ function parseJsonFlag(value, flagName) {
 
 function buildHandlerInput(operation, args) {
   const input = {
-    mode: 'current',
+    mode: "current",
     operation,
   };
-  if (typeof args['page-name'] === 'string' && args['page-name'].trim()) {
-    input.pageName = args['page-name'].trim();
+  if (typeof args["page-name"] === "string" && args["page-name"].trim()) {
+    input.pageName = args["page-name"].trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(args, "query")) {
+    if (typeof args.query !== "string" || !args.query.trim()) {
+      fail("--query requires a non-empty value");
+    }
+    input.query = args.query.trim();
   }
   const target = buildTarget(args);
   if (target) {
     input.target = target;
   }
-  if (typeof args['timeout-ms'] === 'string') {
-    const ms = Number(args['timeout-ms']);
+  if (typeof args["timeout-ms"] === "string") {
+    const ms = Number(args["timeout-ms"]);
     if (Number.isFinite(ms)) {
       input.timeoutMs = ms;
     }
   }
   // Per-call focus override (does not change extension popup default).
   if (args.focus === true) {
-    input.focusPolicy = 'window';
-  } else if (typeof args.focus === 'string' && args.focus.trim()) {
+    input.focusPolicy = "window";
+  } else if (typeof args.focus === "string" && args.focus.trim()) {
     input.focusPolicy = args.focus.trim();
   }
-  if (typeof args.reason === 'string' && args.reason.trim()) {
+  if (typeof args.reason === "string" && args.reason.trim()) {
     input.focusReason = args.reason.trim();
-  } else if (
-    typeof args['focus-reason'] === 'string' &&
-    args['focus-reason'].trim()
-  ) {
-    input.focusReason = args['focus-reason'].trim();
+  } else if (typeof args["focus-reason"] === "string" && args["focus-reason"].trim()) {
+    input.focusReason = args["focus-reason"].trim();
   }
-  if (typeof args['focus-ttl-ms'] === 'string') {
-    const ttl = Number(args['focus-ttl-ms']);
+  if (typeof args["focus-ttl-ms"] === "string") {
+    const ttl = Number(args["focus-ttl-ms"]);
     if (Number.isFinite(ttl)) {
       input.focusTtlMs = ttl;
     }
   }
 
   switch (operation) {
-    case 'open':
-      if (typeof args.url !== 'string') {
-        fail('open requires --url');
+    case "open":
+      if (typeof args.url !== "string") {
+        fail("open requires --url");
       }
       input.url = args.url;
       break;
-    case 'doctor':
+    case "doctor":
       break;
-    case 'snapshot':
+    case "tabs":
+      if (typeof args.query === "string" && args.query.trim()) {
+        input.query = args.query.trim();
+      }
       break;
-    case 'screenshot':
+    case "snapshot":
+      break;
+    case "screenshot":
       if (args.fullPage) {
         input.fullPage = true;
       }
       break;
-    case 'autofill_profile':
+    case "autofill_profile":
       if (args.profile) {
         input.profile = args.profile;
       }
@@ -204,10 +220,10 @@ function buildHandlerInput(operation, args) {
         input.contextHint = args.context;
       }
       break;
-    case 'fill_fields':
-      input.fields = parseJsonFlag(args.fields, 'fields');
+    case "fill_fields":
+      input.fields = parseJsonFlag(args.fields, "fields");
       break;
-    case 'click':
+    case "click":
       if (args.selector) {
         input.selector = args.selector;
       }
@@ -215,37 +231,37 @@ function buildHandlerInput(operation, args) {
         input.text = args.text;
       }
       if (!input.selector && !input.text) {
-        fail('click requires --selector or --text');
+        fail("click requires --selector or --text");
       }
       break;
-    case 'type':
+    case "type":
       if (args.selector) {
         input.selector = args.selector;
       }
       if (args.label) {
         input.label = args.label;
       }
-      input.text = typeof args.text === 'string' ? args.text : '';
+      input.text = typeof args.text === "string" ? args.text : "";
       if (!input.selector && !input.label) {
-        fail('type requires --selector or --label');
+        fail("type requires --selector or --label");
       }
       break;
-    case 'evaluate':
-      if (typeof args.code !== 'string') {
-        fail('evaluate requires --code');
+    case "evaluate":
+      if (typeof args.code !== "string") {
+        fail("evaluate requires --code");
       }
       input.code = args.code;
       break;
-    case 'goto':
-      if (typeof args.url !== 'string') {
-        fail('goto requires --url');
+    case "goto":
+      if (typeof args.url !== "string") {
+        fail("goto requires --url");
       }
       input.url = args.url;
       break;
-    case 'focus':
+    case "focus":
       // Defaults to window so `focus --page-name X --reason 2fa` is enough.
       if (!input.focusPolicy) {
-        input.focusPolicy = 'window';
+        input.focusPolicy = "window";
       }
       break;
     default:
@@ -267,10 +283,10 @@ async function main() {
   const operation = OP_ALIASES[raw] || raw;
 
   if (args.quiet) {
-    process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'error';
+    process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
   }
 
-  if (operation === 'relay') {
+  if (operation === "relay") {
     let res;
     try {
       // Resolves immediately if a relay is already up; otherwise blocks,
@@ -305,7 +321,7 @@ const invoked = process.argv[1]
   : false;
 
 if (invoked) {
-  main().catch(err => {
+  main().catch((err) => {
     process.stderr.write(`browser-hand: ${err.stack || err}\n`);
     process.exit(1);
   });
