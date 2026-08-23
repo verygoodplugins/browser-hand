@@ -162,11 +162,11 @@ export function filterTabTargets(targets = [], query = {}) {
       return haystack.includes(nameNeedle);
     });
   }
-  return rankTabTargets(pages);
+  return pages;
 }
 
 export function summarizeTabInventory(targets = [], query = {}) {
-  const pages = filterTabTargets(targets, query);
+  const pages = rankTabTargets(filterTabTargets(targets, query));
   const focused = pages.find((item) => item.focused === true);
   const actives = pages.filter((item) => item.active === true);
   const current = focused || (actives.length === 1 ? actives[0] : null);

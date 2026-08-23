@@ -223,6 +223,21 @@ test("selectCurrentTarget does not guess among multiple window actives without f
   );
 });
 
+test("selectCurrentTarget strategy:first keeps source order, not inventory rank", async () => {
+  const targets = [
+    page({ id: "first", title: "Gmail", url: "https://mail.google.com/" }),
+    page({
+      id: "later",
+      title: "Stripe",
+      url: "https://dashboard.stripe.com/",
+      active: true,
+      focused: true,
+    }),
+  ];
+  const selected = await selectCurrentTarget(targets, { target: { strategy: "first" } });
+  assert.equal(selected.targetId, "first");
+});
+
 test("selectCurrentTarget --query matches title or url", async () => {
   const targets = manyTabs(8, { titleAt: { 5: "API keys" } });
   targets[5].url = "https://dashboard.stripe.com/test/apikeys";
