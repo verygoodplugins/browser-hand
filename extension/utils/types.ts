@@ -84,6 +84,7 @@ export interface TargetInfo {
   title: string;
   url: string;
   active?: boolean;
+  focused?: boolean;
   windowId?: number;
   attached?: boolean;
 }

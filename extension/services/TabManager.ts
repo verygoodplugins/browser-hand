@@ -16,6 +16,7 @@ export class TabManager {
   private tabs = new Map<number, TabInfo>();
   private childSessions = new Map<string, number>(); // sessionId -> parentTabId
   private nextSessionId = 1;
+  private lastFocusedTabId: number | null = null;
   private logger: Logger;
   private sendMessage: SendMessageFn;
 
@@ -142,20 +143,60 @@ export class TabManager {
   }
 
   /**
-   * Mark Chrome's active tab and refresh target info for all tabs in that
-   * window, so clients can identify "this tab" without page focus guessing.
+   * Mark Chrome's last-focused window's active tab so clients can identify
+   * "this tab" without attaching and probing document.hasFocus().
    */
   async markActiveTab(tabId: number): Promise<void> {
     const activeTab = await chrome.tabs.get(tabId);
     if (!activeTab.id) return;
+    this.lastFocusedTabId = activeTab.id;
+    await this.emitTargetInfoForTabs(await chrome.tabs.query({}));
+  }
 
-    const windowTabs = await chrome.tabs.query({ windowId: activeTab.windowId });
+  /**
+   * Refresh last-focused + active flags from live Chrome state.
+   */
+  async refreshFocusFlags(): Promise<void> {
+    try {
+      const [focused] = await chrome.tabs.query({
+        active: true,
+        lastFocusedWindow: true,
+      });
+      if (focused?.id) {
+        this.lastFocusedTabId = focused.id;
+      }
+    } catch {
+      // No focused window (all minimized) — keep the last known tab.
+    }
+  }
+
+  /**
+   * Live inventory for Target.getTargets / `browser-hand tabs`.
+   * Re-reads chrome.tabs so active/focused are current without debugger attach.
+   */
+  async listTargets(): Promise<TargetInfo[]> {
+    await this.refreshFocusFlags();
+    const tabs = await chrome.tabs.query({});
+    const infos: TargetInfo[] = [];
+    for (const tab of tabs) {
+      const targetInfo = await this.register(tab);
+      if (targetInfo) infos.push(targetInfo);
+    }
+    return infos;
+  }
+
+  /**
+   * Register all current browser tabs so the relay can list/target them.
+   */
+  async syncExistingTabs(): Promise<void> {
+    const infos = await this.listTargets();
+    this.logger.log(`Registered ${infos.length} browser tabs`);
+  }
+
+  private async emitTargetInfoForTabs(tabs: chrome.tabs.Tab[]): Promise<void> {
     await Promise.all(
-      windowTabs.map(async (tab) => {
-        const targetInfo = await this.register({
-          ...tab,
-          active: tab.id === activeTab.id,
-        });
+      tabs.map(async (tab) => {
+        const targetInfo = await this.register(tab);
         if (targetInfo) {
           this.sendMessage({
             method: "forwardCDPEvent",
@@ -167,15 +208,6 @@ export class TabManager {
         }
       })
     );
-  }
-
-  /**
-   * Register all current browser tabs so the relay can list/target them.
-   */
-  async syncExistingTabs(): Promise<void> {
-    const tabs = await chrome.tabs.query({});
-    await Promise.all(tabs.map((tab) => this.register(tab)));
-    this.logger.log(`Registered ${tabs.length} browser tabs`);
   }
 
   /**
@@ -614,6 +646,7 @@ export class TabManager {
       title: tab.title ?? "",
       url: tab.url ?? tab.pendingUrl ?? "",
       active: tab.active === true,
+      focused: tab.id === this.lastFocusedTabId,
       windowId: tab.windowId,
       attached: true,
     };

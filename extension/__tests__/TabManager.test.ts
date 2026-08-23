@@ -3,6 +3,36 @@ import { fakeBrowser } from "wxt/testing";
 import { TabManager } from "../services/TabManager";
 import type { Logger } from "../utils/logger";
 
+const mockTabsQuery = vi.fn();
+const mockTabsGet = vi.fn();
+
+vi.stubGlobal("chrome", {
+  ...fakeBrowser,
+  tabs: {
+    ...fakeBrowser.tabs,
+    query: mockTabsQuery,
+    get: mockTabsGet,
+  },
+});
+
+function chromeTab(partial: Partial<chrome.tabs.Tab> & { id: number }): chrome.tabs.Tab {
+  return {
+    index: 0,
+    pinned: false,
+    highlighted: false,
+    windowId: 1,
+    incognito: false,
+    selected: false,
+    discarded: false,
+    autoDiscardable: true,
+    groupId: -1,
+    title: `Tab ${partial.id}`,
+    url: `https://example.com/${partial.id}`,
+    active: false,
+    ...partial,
+  } as chrome.tabs.Tab;
+}
+
 describe("TabManager", () => {
   let tabManager: TabManager;
   let mockLogger: Logger;
@@ -10,6 +40,8 @@ describe("TabManager", () => {
 
   beforeEach(() => {
     fakeBrowser.reset();
+    mockTabsQuery.mockReset();
+    mockTabsGet.mockReset();
 
     mockLogger = {
       log: vi.fn(),
@@ -165,6 +197,66 @@ describe("TabManager", () => {
 
       const ids = tabManager.getAllTabIds();
       expect(ids).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe("listTargets / focused tab", () => {
+    it("marks the last-focused window's active tab as focused", async () => {
+      const tabs = [
+        chromeTab({ id: 1, title: "Gmail", url: "https://mail.google.com/", active: true, windowId: 1 }),
+        chromeTab({
+          id: 2,
+          title: "Stripe",
+          url: "https://dashboard.stripe.com/",
+          active: true,
+          windowId: 2,
+        }),
+        chromeTab({ id: 3, title: "Docs", url: "https://docs.example/", active: false, windowId: 2 }),
+      ];
+      mockTabsQuery.mockImplementation(async (query: chrome.tabs.QueryInfo = {}) => {
+        if (query.lastFocusedWindow && query.active) {
+          return [tabs[1]];
+        }
+        return tabs;
+      });
+
+      const infos = await tabManager.listTargets();
+      expect(infos).toHaveLength(3);
+      const stripe = infos.find((info) => info.targetId === "tab-2");
+      const gmail = infos.find((info) => info.targetId === "tab-1");
+      expect(stripe).toMatchObject({
+        title: "Stripe",
+        active: true,
+        focused: true,
+        windowId: 2,
+      });
+      expect(gmail).toMatchObject({
+        title: "Gmail",
+        active: true,
+        focused: false,
+      });
+    });
+
+    it("keeps last-focused tab when Chrome has no focused window", async () => {
+      mockTabsQuery.mockImplementation(async (query: chrome.tabs.QueryInfo = {}) => {
+        if (query.lastFocusedWindow) {
+          throw new Error("No last focused window");
+        }
+        return [
+          chromeTab({ id: 9, title: "Stripe", url: "https://dashboard.stripe.com/", active: true }),
+        ];
+      });
+      mockTabsGet.mockResolvedValue(
+        chromeTab({ id: 9, title: "Stripe", url: "https://dashboard.stripe.com/", active: true })
+      );
+
+      await tabManager.markActiveTab(9);
+      const infos = await tabManager.listTargets();
+      expect(infos[0]).toMatchObject({
+        targetId: "tab-9",
+        focused: true,
+        active: true,
+      });
     });
   });
 });
