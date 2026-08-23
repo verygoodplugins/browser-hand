@@ -83,6 +83,10 @@ Details: `references/setup.md`.
 
 ```bash
 browser-hand doctor
+browser-hand tabs
+browser-hand tabs --query stripe
+browser-hand snapshot
+browser-hand snapshot --query stripe
 browser-hand open --url https://example.com --page-name work
 browser-hand snapshot --page-name work
 browser-hand fill --page-name work --fields '{"Email":"a@b.c"}'
@@ -97,6 +101,8 @@ Full reference: `references/extension-cli.md`.
 ## Agent rules
 
 - Prefer **named pages** (`--page-name`) for multi-step work.
+- To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. Do **not** use `doctor` as a tab list — it is a health check.
+- Use `tabs --query <text>` or `snapshot --query <text>` instead of grepping a dumped doctor file.
 - **Do not** request window focus for ordinary fill/click/snapshot. Only use `focus --focus window --reason "…"` when a human must act (2FA, captcha, confirm).
 - Snapshot or screenshot **before and after** writes; verify with evaluate when critical.
 - On username/password manager weirdness, soft recovery is built in — retry evaluate/fill; re-open the named page if screenshot still fails.

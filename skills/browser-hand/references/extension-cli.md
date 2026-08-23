@@ -14,6 +14,9 @@ npm run doctor   # doctor only
 
 ```bash
 browser-hand doctor
+browser-hand tabs
+browser-hand tabs --query stripe
+browser-hand snapshot
 browser-hand open --url https://example.com --page-name smoke
 ```
 
@@ -81,12 +84,16 @@ Agents must pass `--reason`. Do **not** focus for routine automation.
 
 ## Tab targeting
 
-Only `http(s)://` tabs are listed. Prefer:
+`browser-hand tabs` lists every `http(s)://` tab. The last-focused tab is first and marked `focused` / `active`. Prefer:
 
+- no flags — operate on the last-focused tab
+- `--query <text>` — title or URL substring (`tabs` and snapshot/click/etc)
 - `--page-name <name>`
 - `--target-url <substring>`
 - `--target-title <substring>`
 - `--target-id <id>`
+
+Do not use `doctor` to find a tab. Doctor is a health check; `tabs` is the inventory.
 
 ## Agent-oriented recovery
 
@@ -95,7 +102,7 @@ Only `http(s)://` tabs are listed. Prefer:
 
 ## Workflow
 
-1. `doctor` once per session  
-2. `open` or `snapshot` — confirm the right tab  
+1. `doctor` once per session (health only)  
+2. `tabs` or `snapshot` — confirm the last-focused / queried tab  
 3. Write (`fill` / `click` / `type` / `goto`)  
 4. Verify (`screenshot` / re-`snapshot` / `evaluate`)
