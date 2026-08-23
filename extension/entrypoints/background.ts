@@ -157,6 +157,19 @@ export default defineBackground(() => {
     });
   });
 
+  chrome.windows.onFocusChanged.addListener((windowId) => {
+    if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+    chrome.tabs.query({ active: true, windowId }).then((tabs) => {
+      const tabId = tabs[0]?.id;
+      if (!tabId) return;
+      tabManager.markActiveTab(tabId).catch((error) => {
+        logger.debug("Error marking focused window tab:", tabId, error);
+      });
+    }).catch((error) => {
+      logger.debug("Error querying focused window tabs:", error);
+    });
+  });
+
   // Register debugger event listeners
   chrome.debugger.onEvent.addListener(onDebuggerEvent);
   chrome.debugger.onDetach.addListener(onDebuggerDetach);

@@ -195,6 +195,11 @@ export class CDPRouter {
         return { ok: true };
       }
 
+      case "DevBrowser.listTargets": {
+        const targetInfos = await this.tabManager.listTargets();
+        return { targetInfos };
+      }
+
       case "Runtime.enable":
       case "Page.enable":
       case "DOM.enable": {

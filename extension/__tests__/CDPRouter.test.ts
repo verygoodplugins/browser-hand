@@ -71,6 +71,38 @@ describe("CDPRouter", () => {
   });
 
   describe("handleCommand", () => {
+    it("lists live targets without requiring a session", async () => {
+      const listTargets = vi.spyOn(tabManager, "listTargets").mockResolvedValue([
+        {
+          targetId: "tab-9",
+          type: "page",
+          title: "Stripe",
+          url: "https://dashboard.stripe.com/",
+          active: true,
+          focused: true,
+          windowId: 2,
+          attached: true,
+        },
+      ]);
+
+      const result = await cdpRouter.handleCommand({
+        id: 1,
+        method: "forwardCDPCommand",
+        params: { method: "DevBrowser.listTargets" },
+      });
+
+      expect(listTargets).toHaveBeenCalledOnce();
+      expect(result).toEqual({
+        targetInfos: [
+          expect.objectContaining({
+            targetId: "tab-9",
+            focused: true,
+            active: true,
+          }),
+        ],
+      });
+    });
+
     it("should return early for non-forwardCDPCommand methods", async () => {
       const msg = {
         id: 1,

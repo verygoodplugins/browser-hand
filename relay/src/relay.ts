@@ -281,13 +281,31 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         return { targetInfo: firstTarget?.targetInfo };
       }
 
-      case "Target.getTargets":
+      case "Target.getTargets": {
+        try {
+          const live = (await sendToExtension({
+            method: "forwardCDPCommand",
+            params: { method: "DevBrowser.listTargets" },
+            timeout: 2000,
+          })) as { targetInfos?: Array<Record<string, unknown>> } | undefined;
+          if (Array.isArray(live?.targetInfos)) {
+            return {
+              targetInfos: live.targetInfos.map((targetInfo) => ({
+                ...targetInfo,
+                attached: true,
+              })),
+            };
+          }
+        } catch (err) {
+          log("live listTargets failed; using cached targets", err);
+        }
         return {
           targetInfos: Array.from(connectedTargets.values()).map((t) => ({
             ...t.targetInfo,
             attached: true,
           })),
         };
+      }
 
       case "Target.createTarget":
       case "Target.closeTarget":
