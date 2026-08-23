@@ -157,7 +157,10 @@ function buildHandlerInput(operation, args) {
   if (typeof args["page-name"] === "string" && args["page-name"].trim()) {
     input.pageName = args["page-name"].trim();
   }
-  if (typeof args.query === "string" && args.query.trim()) {
+  if (Object.prototype.hasOwnProperty.call(args, "query")) {
+    if (typeof args.query !== "string" || !args.query.trim()) {
+      fail("--query requires a non-empty value");
+    }
     input.query = args.query.trim();
   }
   const target = buildTarget(args);
