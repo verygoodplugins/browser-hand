@@ -7,12 +7,9 @@ import type {
 
 const toggle = document.getElementById("active-toggle") as HTMLInputElement;
 const statusText = document.getElementById("status-text") as HTMLSpanElement;
-const connectionStatus = document.getElementById(
-  "connection-status"
-) as HTMLParagraphElement;
-const focusPolicySelect = document.getElementById(
-  "focus-policy"
-) as HTMLSelectElement;
+const popupMark = document.getElementById("popup-mark") as HTMLImageElement;
+const connectionStatus = document.getElementById("connection-status") as HTMLParagraphElement;
+const focusPolicySelect = document.getElementById("focus-policy") as HTMLSelectElement;
 const focusHint = document.getElementById("focus-hint") as HTMLParagraphElement;
 
 const FOCUS_HINTS: Record<FocusPolicy, string> = {
@@ -24,14 +21,12 @@ const FOCUS_HINTS: Record<FocusPolicy, string> = {
 function updateUI(state: StateResponse): void {
   toggle.checked = state.isActive;
   statusText.textContent = state.isActive ? "Active" : "Inactive";
+  popupMark.src = state.isActive ? "/icons/icon-48.png" : "/icons/icon-inactive-48.png";
   focusPolicySelect.value = state.focusPolicy || "background";
-  focusHint.textContent =
-    FOCUS_HINTS[state.focusPolicy] || FOCUS_HINTS.background;
+  focusHint.textContent = FOCUS_HINTS[state.focusPolicy] || FOCUS_HINTS.background;
 
   if (state.isActive) {
-    connectionStatus.textContent = state.isConnected
-      ? "Connected to relay"
-      : "Connecting...";
+    connectionStatus.textContent = state.isConnected ? "Connected to relay" : "Connecting...";
     connectionStatus.className = state.isConnected
       ? "connection-status connected"
       : "connection-status connecting";
@@ -42,28 +37,21 @@ function updateUI(state: StateResponse): void {
 }
 
 function refreshState(): void {
-  chrome.runtime.sendMessage<GetStateMessage, StateResponse>(
-    { type: "getState" },
-    (response) => {
-      if (response) {
-        updateUI(response);
-      }
+  chrome.runtime.sendMessage<GetStateMessage, StateResponse>({ type: "getState" }, (response) => {
+    if (response) {
+      updateUI(response);
     }
-  );
+  });
 }
 
-// Load initial state
 refreshState();
 
-// Poll for state updates while popup is open
 const pollInterval = setInterval(refreshState, 1000);
 
-// Clean up on popup close
 window.addEventListener("unload", () => {
   clearInterval(pollInterval);
 });
 
-// Handle toggle changes
 toggle.addEventListener("change", () => {
   const isActive = toggle.checked;
   chrome.runtime.sendMessage<SetStateMessage, StateResponse>(

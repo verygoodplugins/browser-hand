@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/brand/derived/github-social-1280x640.png" alt="Browser Hand: a low-poly ghost glove with cyan wrist mist, ready to click on your real Chrome" width="1280" />
+</p>
+
 # Browser Hand
 
 **Give your coding agent a hand on your real Chrome** — the one already signed in to Gmail, GitHub, admin panels, and the rest of your work.

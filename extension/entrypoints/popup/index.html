@@ -8,7 +8,17 @@
   </head>
   <body>
     <div class="popup">
-      <h1>Browser Hand</h1>
+      <header class="popup-header">
+        <img
+          id="popup-mark"
+          class="popup-mark"
+          src="/icons/icon-48.png"
+          width="32"
+          height="32"
+          alt=""
+        />
+        <h1>Browser Hand</h1>
+      </header>
       <div class="toggle-row">
         <label class="toggle">
           <input type="checkbox" id="active-toggle" />
@@ -24,9 +34,7 @@
         <option value="tab">Activate tab only</option>
         <option value="window">Focus Chrome window</option>
       </select>
-      <p class="hint" id="focus-hint">
-        Agents keep working without stealing your keyboard focus.
-      </p>
+      <p class="hint" id="focus-hint">Agents keep working without stealing your keyboard focus.</p>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>
