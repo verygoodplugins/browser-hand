@@ -47,10 +47,24 @@ export default defineBackground(() => {
     onDisconnect: () => tabManager.detachAll(),
   });
 
-  // Update badge to show active/inactive state
-  function updateBadge(isActive: boolean): void {
-    chrome.action.setBadgeText({ text: isActive ? "ON" : "" });
-    chrome.action.setBadgeBackgroundColor({ color: "#4CAF50" });
+  const ICON_ACTIVE = {
+    16: "icons/icon-16.png",
+    32: "icons/icon-32.png",
+    48: "icons/icon-48.png",
+    128: "icons/icon-128.png",
+  };
+  const ICON_INACTIVE = {
+    16: "icons/icon-inactive-16.png",
+    32: "icons/icon-inactive-32.png",
+    48: "icons/icon-inactive-48.png",
+    128: "icons/icon-inactive-128.png",
+  };
+
+  function updateActionVisual(isActive: boolean): void {
+    chrome.action.setIcon({ path: isActive ? ICON_ACTIVE : ICON_INACTIVE });
+    // Chrome badges are a text chip (the green "ON" square). Status lives on
+    // the icon as a painted dot instead.
+    chrome.action.setBadgeText({ text: "" });
   }
 
   // Handle state changes
@@ -61,7 +75,7 @@ export default defineBackground(() => {
     } else {
       connectionManager.disconnect();
     }
-    updateBadge(isActive);
+    updateActionVisual(isActive);
   }
 
   async function buildStateResponse(): Promise<StateResponse> {
@@ -159,15 +173,18 @@ export default defineBackground(() => {
 
   chrome.windows.onFocusChanged.addListener((windowId) => {
     if (windowId === chrome.windows.WINDOW_ID_NONE) return;
-    chrome.tabs.query({ active: true, windowId }).then((tabs) => {
-      const tabId = tabs[0]?.id;
-      if (!tabId) return;
-      tabManager.markActiveTab(tabId).catch((error) => {
-        logger.debug("Error marking focused window tab:", tabId, error);
+    chrome.tabs
+      .query({ active: true, windowId })
+      .then((tabs) => {
+        const tabId = tabs[0]?.id;
+        if (!tabId) return;
+        tabManager.markActiveTab(tabId).catch((error) => {
+          logger.debug("Error marking focused window tab:", tabId, error);
+        });
+      })
+      .catch((error) => {
+        logger.debug("Error querying focused window tabs:", error);
       });
-    }).catch((error) => {
-      logger.debug("Error querying focused window tabs:", error);
-    });
   });
 
   // Register debugger event listeners
@@ -218,7 +235,7 @@ export default defineBackground(() => {
 
   // Initialize from stored state
   stateManager.getState().then((state) => {
-    updateBadge(state.isActive);
+    updateActionVisual(state.isActive);
     if (state.isActive) {
       connectionManager.startMaintaining();
     }

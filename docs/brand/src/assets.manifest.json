@@ -1,0 +1,20 @@
+{
+  "assets": [
+    {
+      "source": "github-social.html",
+      "output": "../derived/github-social-1280x640.png",
+      "width": 1280,
+      "height": 640,
+      "selector": ".canvas",
+      "maxBytes": 2500000
+    },
+    {
+      "source": "og-1200x630.html",
+      "output": "../derived/og-1200x630.png",
+      "width": 1200,
+      "height": 630,
+      "selector": ".canvas",
+      "maxBytes": 2500000
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Browser Hand — GitHub social preview</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        background: #0b0a12;
+      }
+      .canvas {
+        width: 1280px;
+        height: 640px;
+        position: relative;
+        overflow: hidden;
+        background: #0b0a12 url("../masters/banner-scene.png") 92% 42% / cover no-repeat;
+        font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        color: #f4efe6;
+      }
+      .shade {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(
+            90deg,
+            rgba(11, 10, 18, 0.92) 0%,
+            rgba(11, 10, 18, 0.72) 38%,
+            rgba(11, 10, 18, 0.18) 62%,
+            rgba(11, 10, 18, 0) 78%
+          ),
+          linear-gradient(
+            180deg,
+            rgba(11, 10, 18, 0.2) 0%,
+            rgba(11, 10, 18, 0) 24%,
+            rgba(11, 10, 18, 0) 80%,
+            rgba(11, 10, 18, 0.35) 100%
+          );
+      }
+      .copy {
+        position: relative;
+        z-index: 1;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 0 12px 88px;
+        max-width: 720px;
+      }
+      .kicker {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 18px;
+        letter-spacing: 0.18em;
+        text-transform: none;
+        color: #7ee7ff;
+        margin-bottom: 18px;
+      }
+      h1 {
+        font-size: 84px;
+        font-weight: 650;
+        letter-spacing: -0.035em;
+        line-height: 0.95;
+        margin-bottom: 22px;
+      }
+      .tag {
+        font-size: 26px;
+        font-weight: 500;
+        line-height: 1.35;
+        color: #c9c2b6;
+        max-width: 22ch;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas" data-render-asset>
+      <div class="shade"></div>
+      <div class="copy">
+        <div class="kicker">browser-hand</div>
+        <h1>Browser Hand</h1>
+        <p class="tag">Give your coding agent a hand on your real Chrome.</p>
+      </div>
+    </div>
+  </body>
+</html>

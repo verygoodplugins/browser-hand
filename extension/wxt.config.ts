@@ -5,8 +5,7 @@ export default defineConfig({
   outDir: "dist",
   manifest: {
     name: "Browser Hand",
-    description:
-      "Give agents a hand on your real Chrome — local extension bridge for Browser Hand",
+    description: "Give agents a hand on your real Chrome — local extension bridge for Browser Hand",
     permissions: ["debugger", "scripting", "tabGroups", "tabs", "storage", "alarms"],
     host_permissions: ["<all_urls>"],
     icons: {
@@ -14,6 +13,14 @@ export default defineConfig({
       32: "icons/icon-32.png",
       48: "icons/icon-48.png",
       128: "icons/icon-128.png",
+    },
+    action: {
+      default_icon: {
+        16: "icons/icon-16.png",
+        32: "icons/icon-32.png",
+        48: "icons/icon-48.png",
+        128: "icons/icon-128.png",
+      },
     },
   },
 });

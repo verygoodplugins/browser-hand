@@ -15,10 +15,23 @@ body {
   padding: 16px;
 }
 
+.popup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.popup-mark {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  flex: none;
+}
+
 h1 {
   font-size: 16px;
   font-weight: 600;
-  margin-bottom: 16px;
   color: #333;
 }
 
@@ -33,7 +46,6 @@ h1 {
   color: #555;
 }
 
-/* Toggle switch */
 .toggle {
   position: relative;
   display: inline-block;
@@ -79,7 +91,6 @@ input:checked + .slider::before {
   transform: translateX(20px);
 }
 
-/* Connection status */
 .connection-status {
   margin-top: 12px;
   font-size: 12px;
