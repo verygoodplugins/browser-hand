@@ -20,6 +20,7 @@ import {
   dispatchOptionPointer,
   insertTextDelayMs,
   optionIsVisible,
+  buildFillFieldsExpression,
 } from "../src/tool.js";
 
 function makeInput({ role = "", value = "", type = "text" } = {}) {
@@ -189,4 +190,17 @@ test("optionIsVisible rejects aria-disabled options", () => {
     hidden: false,
   };
   assert.equal(optionIsVisible(option), false);
+});
+
+test("insertTextDelayMs respects a shared remaining budget across fields", () => {
+  const combo = makeInput({ role: "combobox" });
+  assert.equal(insertTextDelayMs(combo, "JFK", { budgetMs: 0 }), 0);
+  const delay = insertTextDelayMs(combo, "JFK", { budgetMs: 10 });
+  assert.equal(delay, 3);
+});
+
+test("fill expression shares one typing deadline across fields", () => {
+  const src = buildFillFieldsExpression({ a: "JFK", b: "BER" });
+  assert.match(src, /fillDeadline/);
+  assert.match(src, /budgetMs: Math.max\(0, deadline - Date.now\(\)\)/);
 });

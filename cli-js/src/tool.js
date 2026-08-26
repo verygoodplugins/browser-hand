@@ -1970,7 +1970,7 @@ export const FILL_HELPER_SOURCE = [
   .map((fn) => fn.toString())
   .join("\n");
 
-function buildFillFieldsExpression(fields) {
+export function buildFillFieldsExpression(fields) {
   return `(async () => {
     ${FILL_HELPER_SOURCE}
     const fields = ${JSON.stringify(fields)};
@@ -2055,7 +2055,7 @@ function buildFillFieldsExpression(fields) {
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       }
     };
-    const setValue = async (el, value) => {
+    const setValue = async (el, value, deadline = Date.now() + 20000) => {
       const str = String(value ?? '');
       try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
       if (typeof el.focus === 'function') el.focus();
@@ -2081,7 +2081,7 @@ function buildFillFieldsExpression(fields) {
         el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         return { mode: 'radio' };
       }
-      await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str) });
+      await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str, { budgetMs: Math.max(0, deadline - Date.now()) }) });
       if (isComboboxWidget(el) && el.tagName !== 'SELECT') {
         const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
         if (!option) throw new Error('combobox option not found');
@@ -2091,13 +2091,14 @@ function buildFillFieldsExpression(fields) {
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       return { mode: 'text' };
     };
+    const fillDeadline = Date.now() + 20000;
     const filled = [];
     const failed = [];
     for (const [label, value] of Object.entries(fields)) {
       try {
         const el = findField(label);
         if (!el) throw new Error('field not found');
-        await setValue(el, value);
+        await setValue(el, value, fillDeadline);
         filled.push(label);
       } catch (err) {
         failed.push({ label, reason: err.message });
