@@ -432,10 +432,13 @@ export class TabManager {
       target: { tabId },
       world: "MAIN",
       args: [expression],
-      func: (expr: string) => {
+      func: async (expr: string) => {
         try {
           // eslint-disable-next-line no-eval
-          const value = (0, eval)(expr);
+          let value: unknown = (0, eval)(expr);
+          if (value != null && typeof (value as { then?: unknown }).then === "function") {
+            value = await value;
+          }
           return { ok: true as const, value };
         } catch (e) {
           return {

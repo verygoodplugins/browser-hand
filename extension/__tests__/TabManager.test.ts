@@ -5,6 +5,7 @@ import type { Logger } from "../utils/logger";
 
 const mockTabsQuery = vi.fn();
 const mockTabsGet = vi.fn();
+const mockExecuteScript = vi.fn();
 
 vi.stubGlobal("chrome", {
   ...fakeBrowser,
@@ -12,6 +13,9 @@ vi.stubGlobal("chrome", {
     ...fakeBrowser.tabs,
     query: mockTabsQuery,
     get: mockTabsGet,
+  },
+  scripting: {
+    executeScript: mockExecuteScript,
   },
 });
 
@@ -42,6 +46,11 @@ describe("TabManager", () => {
     fakeBrowser.reset();
     mockTabsQuery.mockReset();
     mockTabsGet.mockReset();
+    mockExecuteScript.mockReset();
+    mockExecuteScript.mockImplementation(async ({ args, func }: { args: [string]; func: (expr: string) => unknown }) => {
+      const value = await func(args[0]);
+      return [{ result: value }];
+    });
 
     mockLogger = {
       log: vi.fn(),
@@ -257,6 +266,18 @@ describe("TabManager", () => {
         focused: true,
         active: true,
       });
+    });
+  });
+
+  describe("evaluateViaScripting", () => {
+    it("returns synchronous eval results", async () => {
+      const result = await tabManager.evaluateViaScripting(1, "1 + 1");
+      expect(result.result.value).toBe(2);
+    });
+
+    it("awaits thenable eval results so async fill/type expressions settle", async () => {
+      const result = await tabManager.evaluateViaScripting(1, "(async () => 7)()");
+      expect(result.result.value).toBe(7);
     });
   });
 });

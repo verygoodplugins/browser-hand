@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>20 — React combobox debounce</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <script src="./shared.js"></script>
+    <style>
+      .combo {
+        position: relative;
+        max-width: 28rem;
+      }
+      .combo input {
+        width: 100%;
+        padding: 0.45rem 0.6rem;
+      }
+      .listbox {
+        position: absolute;
+        left: 0;
+        right: 0;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        border: 1px solid #bbb;
+        background: #fff;
+        z-index: 2;
+      }
+      .listbox [role="option"] {
+        padding: 0.4rem 0.6rem;
+        cursor: pointer;
+      }
+      .listbox [role="option"]:hover,
+      .listbox [role="option"][aria-selected="true"] {
+        background: #1a5fb4;
+        color: #fff;
+      }
+      .chip {
+        display: inline-block;
+        margin: 0.4rem 0;
+        padding: 0.2rem 0.5rem;
+        border-radius: 999px;
+        background: #eee;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>20 — React combobox debounce</h1>
+    <p class="meta">
+      No native <code>&lt;form&gt;</code>. Options appear only after per-character
+      <code>input</code> events plus a 150ms debounce. Dumping <code>.value</code>
+      must fail the oracle.
+    </p>
+    <div class="combo">
+      <label id="arrival-label">Arrival airport</label>
+      <input
+        id="arrival"
+        role="combobox"
+        aria-labelledby="arrival-label"
+        aria-autocomplete="list"
+        aria-expanded="false"
+        aria-controls="arrival-list"
+        autocomplete="off"
+      />
+      <div id="chip" class="chip" hidden></div>
+      <ul id="arrival-list" role="listbox" hidden></ul>
+    </div>
+    <div id="oracle-status" data-ok="false">FAIL: pick JFK from the list</div>
+    <script>
+      window.__CHALLENGE__ = { id: "20", name: "React combobox debounce", version: 1 };
+
+      const AIRPORTS = [
+        { iata: "BER", name: "Berlin Brandenburg Airport" },
+        { iata: "JFK", name: "New York John F. Kennedy" },
+        { iata: "LHR", name: "London Heathrow" },
+        { iata: "SFO", name: "San Francisco International" },
+      ];
+
+      const input = document.getElementById("arrival");
+      const list = document.getElementById("arrival-list");
+      const chip = document.getElementById("chip");
+      const state = { typed: "", selected: "BER", queryGen: 0 };
+      let debounceTimer = null;
+
+      function paintChip() {
+        const hit = AIRPORTS.find((item) => item.iata === state.selected);
+        if (!hit) {
+          chip.hidden = true;
+          chip.removeAttribute("aria-label");
+          return;
+        }
+        chip.hidden = false;
+        chip.textContent = hit.iata + " · " + hit.name;
+        chip.setAttribute("aria-label", "Remove " + hit.iata + " · " + hit.name);
+      }
+
+      function closeList() {
+        list.hidden = true;
+        list.innerHTML = "";
+        input.setAttribute("aria-expanded", "false");
+      }
+
+      function renderOptions(query) {
+        const q = String(query || "").trim().toLowerCase();
+        if (q.length < 1) {
+          closeList();
+          return;
+        }
+        const matches = AIRPORTS.filter(
+          (item) =>
+            item.iata.toLowerCase().includes(q) || item.name.toLowerCase().includes(q)
+        );
+        list.innerHTML = "";
+        for (const item of matches) {
+          const opt = document.createElement("li");
+          opt.setAttribute("role", "option");
+          opt.id = "opt-" + item.iata;
+          opt.textContent = item.iata + " · " + item.name;
+          opt.addEventListener("click", function () {
+            state.selected = item.iata;
+            input.value = item.iata;
+            paintChip();
+            closeList();
+            window.__refreshOracle();
+          });
+          list.appendChild(opt);
+        }
+        list.hidden = matches.length === 0;
+        input.setAttribute("aria-expanded", matches.length ? "true" : "false");
+      }
+
+      input.addEventListener("input", function (event) {
+        // App state follows sequential insertText keystrokes, not a dumped .value.
+        if (event.inputType === "insertText" && event.data) {
+          state.typed += event.data;
+        } else if (event.inputType === "deleteContentBackward") {
+          state.typed = state.typed.slice(0, -1);
+        } else if (input.value === "") {
+          state.typed = "";
+        } else {
+          window.__refreshOracle();
+          return;
+        }
+        const gen = ++state.queryGen;
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function () {
+          if (gen !== state.queryGen) return;
+          renderOptions(state.typed);
+          window.__refreshOracle();
+        }, 150);
+        window.__refreshOracle();
+      });
+
+      paintChip();
+
+      window.__oracle = function () {
+        const cosmeticJfk = /jfk/i.test(input.value) || /jfk/i.test(chip.textContent);
+        const checks = {
+          selectedJfk: state.selected === "JFK",
+          notDomOnly: !(cosmeticJfk && state.selected !== "JFK"),
+          listClosed: list.hidden === true,
+        };
+        const ok = checks.selectedJfk && checks.notDomOnly;
+        return {
+          ok,
+          checks,
+          detail: ok
+            ? "JFK selected from typeahead"
+            : "type JFK with per-keystroke input events, then click the option",
+        };
+      };
+    </script>
+  </body>
+</html>
