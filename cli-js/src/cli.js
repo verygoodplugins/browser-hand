@@ -68,7 +68,7 @@ Global flags:
   --target-url <substring>  Pick by URL substring match.
   --target-title <s>        Pick by title substring match.
   --query <text>            Pick by title or URL substring (tabs + snapshot/click/etc).
-  --page-name <name>        Create/use a named relay tab for open/goto/snapshot/screenshot/evaluate/fill/click/type/autofill-profile/focus.
+  --page-name <name>        Named relay tab. open/goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus attach only.
   --focus window|tab        Per-call focus override (open/goto/focus). Does not change popup default.
   --reason <text>           Why focus is needed (human-in-the-loop audit).
   --timeout-ms <ms>         Hard timeout (1000-120000, default 30000).

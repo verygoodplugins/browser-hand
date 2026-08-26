@@ -481,14 +481,32 @@ function relayPageEndpoint(name) {
   return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ""}`;
 }
 
-async function openNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
+async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
+  if (!pageName || typeof pageName !== "string") {
+    return null;
+  }
+  try {
+    return await fetchJson(relayPageEndpoint(pageName), { timeoutMs });
+  } catch (err) {
+    if (/HTTP 404\b|No named page/i.test(String(err.message || ""))) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function openNamedRelayPage(pageName, { timeoutMs = 5000, targetId } = {}) {
   if (!pageName || typeof pageName !== "string") {
     throw new Error("pageName is required for named-page bootstrap");
+  }
+  const body = { name: pageName };
+  if (typeof targetId === "string" && targetId.trim()) {
+    body.targetId = targetId.trim();
   }
   return await fetchJson(relayPageEndpoint(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: pageName }),
+    body: JSON.stringify(body),
     timeoutMs,
   });
 }
@@ -589,25 +607,73 @@ export async function applyAgentFocus(cdp, sessionId, selected, input = {}) {
 }
 
 export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
-  const pageNameEligible = PAGE_NAME_OPERATIONS.has(operation);
-  if (operation === "open" || (pageName && pageNameEligible)) {
+  if (operation === "open" || (operation === "goto" && pageName)) {
     return {
       source: "named_page",
       pageName: pageName || DEFAULT_PAGE_NAME,
       createsTab: true,
     };
   }
-  if (operation === "goto" && !hasHttpTargets(targets)) {
+  if (operation === "goto" && !pageName && !hasHttpTargets(targets)) {
     return {
       source: "named_page",
       pageName: DEFAULT_PAGE_NAME,
       createsTab: true,
     };
   }
-  if (pageName && PAGE_NAME_ATTACH_ONLY_OPERATIONS.has(operation)) {
+  if (
+    pageName &&
+    (PAGE_NAME_OPERATIONS.has(operation) || PAGE_NAME_ATTACH_ONLY_OPERATIONS.has(operation))
+  ) {
     return { source: "named_page", pageName, createsTab: false };
   }
   return { source: "existing_target", createsTab: false };
+}
+
+export function findAdoptTarget(targets, url) {
+  if (!url || !Array.isArray(targets)) {
+    return null;
+  }
+  const normalize = (value) => String(value || "").replace(/\/$/, "");
+  const wanted = normalize(url);
+  if (!wanted || wanted === "about:blank" || wanted === "about:newtab") {
+    return null;
+  }
+  const hits = targets.filter((target) => {
+    const candidate = normalize(target?.url);
+    if (!candidate || candidate === "about:blank" || candidate === "about:newtab") {
+      return false;
+    }
+    return candidate === wanted;
+  });
+  return hits.length === 1 ? hits[0] : null;
+}
+
+export function namedPageNotFoundMessage(pageName, namedPageCount) {
+  const count = Number.isFinite(namedPageCount) ? namedPageCount : 0;
+  const noun = count === 1 ? "page" : "pages";
+  return (
+    `No named page "${pageName}" is open (${count} named ${noun} in the relay). ` +
+    `Run open --page-name first, or doctor --verbose to list them.`
+  );
+}
+
+export async function resolveNamedPageInfo({
+  plan,
+  pageName,
+  url,
+  targets = [],
+  openPage,
+  lookupPage,
+}) {
+  if (!plan || plan.source !== "named_page") {
+    return null;
+  }
+  if (plan.createsTab) {
+    const adopt = url ? findAdoptTarget(targets, url) : null;
+    return openPage(pageName, adopt?.targetId ? { targetId: adopt.targetId } : {});
+  }
+  return lookupPage(pageName);
 }
 
 export function classifyDevBrowserDoctor({
@@ -1084,24 +1150,18 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     // conjure a blank one to act on. Checking the page list first would be
     // check-then-create — the tab can close in the gap — so instead let the
     // single create/get call report which it did, and undo a creation.
-    const pageInfo = await openNamedRelayPage(plan.pageName);
-    if (!plan.createsTab) {
-      const created =
-        pageInfo?.created === undefined
-          ? // Older relay with no `created` flag: a freshly minted tab reports
-            // an empty or about:blank URL, which is the best signal available.
-            ["", "about:blank"].includes(String(pageInfo?.url || "").trim())
-          : pageInfo.created === true;
-      if (created) {
-        await deleteNamedRelayPage(plan.pageName);
-        const known = await listNamedRelayPages();
-        const names = Array.isArray(known?.pages) ? known.pages : [];
-        throw new Error(
-          `No named page "${plan.pageName}" is open. Known pages: ${
-            names.length ? names.join(", ") : "none"
-          }. Use operation "open" with this pageName first.`
-        );
-      }
+    const pageInfo = await resolveNamedPageInfo({
+      plan,
+      pageName: plan.pageName,
+      url: input.url,
+      targets,
+      openPage: (name, options) => openNamedRelayPage(name, options),
+      lookupPage: (name) => lookupNamedRelayPage(name),
+    });
+    if (!pageInfo) {
+      const known = await listNamedRelayPages();
+      const count = Array.isArray(known?.pages) ? known.pages.length : 0;
+      throw new Error(namedPageNotFoundMessage(plan.pageName, count));
     }
     let selected = {
       targetId: pageInfo.targetId,
@@ -2608,7 +2668,7 @@ Current-mode operations:
 Targeting:
 - target defaults to { strategy: "active" }.
 - Optional target fields: id, url, title, name, query, strategy:"first".
-- pageName creates/uses a named relay tab for open/goto/snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus.
+- pageName: open/goto create-or-reuse a named relay tab; snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus attach only.
 - focusPolicy/focus: optional per-call override for open/goto/focus — "window" brings Chrome forward for human input; "tab" activates only; default remains background. Pass reason for audit.
 
 Autofill placeholders:
@@ -2636,7 +2696,7 @@ Resolved placeholder values are redacted from tool output.`,
       pageName: {
         type: "string",
         description:
-          "Named extension-relay tab. Explicit pageName may create an about:blank tab before the operation; goto/open default to autohub-current when no http tab is visible.",
+          "Named extension-relay tab. open and goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus attach to an existing name and fail if it is missing.",
       },
       target: {
         type: "object",
