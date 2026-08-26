@@ -607,7 +607,7 @@ export async function applyAgentFocus(cdp, sessionId, selected, input = {}) {
 }
 
 export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
-  if (operation === "open") {
+  if (operation === "open" || (operation === "goto" && pageName)) {
     return {
       source: "named_page",
       pageName: pageName || DEFAULT_PAGE_NAME,

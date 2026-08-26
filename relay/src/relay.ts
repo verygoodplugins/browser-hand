@@ -341,9 +341,17 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   // Attach-only client operations must be able to resolve a name without
   // invoking the create-or-get endpoint below. A missing name is an ordinary
   // lookup miss, never a reason to mint a visible about:blank Chrome tab.
-  app.get("/pages/:name", (c) => {
+  app.get("/pages/:name", async (c) => {
     const name = c.req.param("name");
-    const existing = resolveNamedPage(name);
+    let existing = resolveNamedPage(name);
+    if (!existing) {
+      // Target.detachedFromTarget can empty connectedTargets briefly while the
+      // replacement attach is in flight. POST /pages already waits 250ms for
+      // that window; attach-only lookup needs the same beat so snapshot/click
+      // during soft-detach recovery does not 404 a still-open named tab.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      existing = resolveNamedPage(name);
+    }
     if (!existing) {
       return c.json({ error: `No named page \"${name}\" is open` }, 404);
     }

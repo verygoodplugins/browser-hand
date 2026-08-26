@@ -55,14 +55,14 @@ test("screenshot with a pageName attaches and never creates", () => {
   assert.equal(plan.createsTab, false);
 });
 
-test("goto with a pageName attaches and never creates", () => {
+test("goto with a pageName still creates or reuses a named tab", () => {
   const plan = planCurrentTargetAccess({
     operation: "goto",
     pageName: "work",
     targets: [{ type: "page", url: "https://point.me/", targetId: "tab-1" }],
   });
   assert.equal(plan.source, "named_page");
-  assert.equal(plan.createsTab, false);
+  assert.equal(plan.createsTab, true);
 });
 
 test("fill/click/type with a pageName stay attach-only", () => {
