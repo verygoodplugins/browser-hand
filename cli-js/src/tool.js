@@ -1793,7 +1793,12 @@ export function dispatchInsertText(el, data) {
 export async function typeByInsertText(el, text, { delayMs = 0 } = {}) {
   const str = String(text ?? "");
   if (typeof el.focus === "function") el.focus();
-  if (!el.isContentEditable && el.value) {
+  if (el.isContentEditable && String(el.textContent || "")) {
+    el.textContent = "";
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    } catch {}
+  } else if (!el.isContentEditable && el.value) {
     el.value = "";
     try {
       if (typeof el.setSelectionRange === "function") el.setSelectionRange(0, 0);
@@ -1854,12 +1859,76 @@ export function collectComboboxOptions(root) {
   return out;
 }
 
+export function optionIsVisible(el) {
+  if (!el) return false;
+  try {
+    if (typeof el.getClientRects === "function" && el.getClientRects().length === 0) {
+      return false;
+    }
+  } catch {}
+  try {
+    const style = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
+    if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+  } catch {}
+  if (el.hidden) return false;
+  return true;
+}
+
+export function listboxRootForCombobox(el, root) {
+  const base = root || (typeof document !== "undefined" ? document : null);
+  const id = typeof el.getAttribute === "function" ? el.getAttribute("aria-controls") : null;
+  if (id && base && typeof base.getElementById === "function") {
+    const box = base.getElementById(id);
+    if (box) return box;
+  }
+  return base;
+}
+
+export function dispatchOptionPointer(option) {
+  if (!option) return false;
+  const fire = (type) => {
+    try {
+      option.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "mouse" }));
+    } catch {
+      try {
+        option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+      } catch {}
+    }
+  };
+  fire("pointerdown");
+  fire("mousedown");
+  fire("pointerup");
+  fire("mouseup");
+  fire("click");
+  if (typeof option.click === "function") {
+    try { option.click(); } catch {}
+  }
+  return true;
+}
+
+export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  const base = root || (typeof document !== "undefined" ? document : null);
+  while (Date.now() <= deadline) {
+    const scope = listboxRootForCombobox(el, base);
+    const options = collectComboboxOptions(scope).filter(optionIsVisible);
+    const hit = matchComboboxOption(options, query);
+    if (hit) return hit;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return null;
+}
+
 export const FILL_HELPER_SOURCE = [
   dispatchInsertText,
   typeByInsertText,
   isComboboxWidget,
   matchComboboxOption,
   collectComboboxOptions,
+  optionIsVisible,
+  listboxRootForCombobox,
+  dispatchOptionPointer,
+  waitForComboboxOption,
 ]
   .map((fn) => fn.toString())
   .join("\n");
@@ -1977,11 +2046,10 @@ function buildFillFieldsExpression(fields) {
       }
       await typeByInsertText(el, str, { delayMs: 55 });
       if (isComboboxWidget(el) && el.tagName !== 'SELECT') {
-        await new Promise(resolve => setTimeout(resolve, 200));
-        const option = matchComboboxOption(collectComboboxOptions(), str);
-        if (option && typeof option.click === 'function') option.click();
-        else if (option) option.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, composed: true }));
-        return { mode: 'combobox', selected: !!option };
+        const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
+        if (!option) throw new Error('combobox option not found');
+        dispatchOptionPointer(option);
+        return { mode: 'combobox', selected: true };
       }
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       return { mode: 'text' };
@@ -1992,11 +2060,8 @@ function buildFillFieldsExpression(fields) {
       try {
         const el = findField(label);
         if (!el) throw new Error('field not found');
-        const result = await setValue(el, value);
+        await setValue(el, value);
         filled.push(label);
-        if (result && result.mode === 'combobox') {
-          filled.push(label + ':combobox');
-        }
       } catch (err) {
         failed.push({ label, reason: err.message });
       }
@@ -2561,8 +2626,18 @@ function buildTypeExpression({ selector, label, text }) {
     if (!el) throw new Error('No input element matched');
     const str = String(text ?? '');
     try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-    await typeByInsertText(el, str, { delayMs: 55 });
-    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    if (el.tagName === 'SELECT') {
+      const wanted = norm(str);
+      const option = Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
+        || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
+      if (!option) throw new Error('No select option matched');
+      el.value = option.value;
+      el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    } else {
+      await typeByInsertText(el, str, { delayMs: 55 });
+      el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+    }
     return { typed: label || selector, url: location.href, title: document.title };
   })()`;
 }

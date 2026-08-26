@@ -12,8 +12,10 @@ import {
   FILL_HELPER_SOURCE,
   dispatchInsertText,
   isComboboxWidget,
+  listboxRootForCombobox,
   matchComboboxOption,
   typeByInsertText,
+  waitForComboboxOption,
 } from "../src/tool.js";
 
 function makeInput({ role = "", value = "" } = {}) {
@@ -85,4 +87,23 @@ test("matchComboboxOption prefers a text match on role=option", () => {
   ];
   const hit = matchComboboxOption(options, "JFK");
   assert.equal(hit.textContent, "JFK · New York John F. Kennedy");
+});
+
+test("listboxRootForCombobox uses aria-controls instead of the whole document", () => {
+  const owned = { id: "arrival-list" };
+  const other = { id: "other-list" };
+  const root = {
+    getElementById: (id) => (id === "arrival-list" ? owned : id === "other-list" ? other : null),
+  };
+  const combo = {
+    getAttribute: (name) => (name === "aria-controls" ? "arrival-list" : null),
+  };
+  assert.equal(listboxRootForCombobox(combo, root), owned);
+});
+
+test("waitForComboboxOption times out when no option appears", async () => {
+  const combo = { getAttribute: () => null };
+  const root = { getElementById: () => null, querySelectorAll: () => [] };
+  const hit = await waitForComboboxOption(combo, "JFK", { timeoutMs: 30, root });
+  assert.equal(hit, null);
 });
