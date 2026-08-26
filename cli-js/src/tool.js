@@ -1790,9 +1790,31 @@ export function dispatchInsertText(el, data) {
   fire("input");
 }
 
+export function usesAtomicValueAssign(el) {
+  if (!el || el.isContentEditable) return false;
+  const t = String(el.type || "").toLowerCase();
+  return (
+    t === "date" ||
+    t === "datetime-local" ||
+    t === "time" ||
+    t === "month" ||
+    t === "week" ||
+    t === "color" ||
+    t === "number" ||
+    t === "range"
+  );
+}
+
 export async function typeByInsertText(el, text, { delayMs = 0 } = {}) {
   const str = String(text ?? "");
   if (typeof el.focus === "function") el.focus();
+  if (usesAtomicValueAssign(el)) {
+    if (!el.isContentEditable && el.value) {
+      el.value = "";
+    }
+    dispatchInsertText(el, str);
+    return;
+  }
   if (el.isContentEditable && String(el.textContent || "")) {
     el.textContent = "";
     try {
@@ -1892,7 +1914,11 @@ export function dispatchOptionPointer(option) {
     } catch {
       try {
         option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
-      } catch {}
+      } catch {
+        try {
+          option.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, composed: true }));
+        } catch {}
+      }
     }
   };
   fire("pointerdown");
@@ -1900,9 +1926,6 @@ export function dispatchOptionPointer(option) {
   fire("pointerup");
   fire("mouseup");
   fire("click");
-  if (typeof option.click === "function") {
-    try { option.click(); } catch {}
-  }
   return true;
 }
 
@@ -1921,6 +1944,7 @@ export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root 
 
 export const FILL_HELPER_SOURCE = [
   dispatchInsertText,
+  usesAtomicValueAssign,
   typeByInsertText,
   isComboboxWidget,
   matchComboboxOption,

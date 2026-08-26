@@ -16,13 +16,15 @@ import {
   matchComboboxOption,
   typeByInsertText,
   waitForComboboxOption,
+  usesAtomicValueAssign,
+  dispatchOptionPointer,
 } from "../src/tool.js";
 
-function makeInput({ role = "", value = "" } = {}) {
+function makeInput({ role = "", value = "", type = "text" } = {}) {
   const events = [];
   const el = {
     tagName: "INPUT",
-    type: "text",
+    type,
     value,
     isContentEditable: false,
     selectionStart: value.length,
@@ -106,4 +108,61 @@ test("waitForComboboxOption times out when no option appears", async () => {
   const root = { getElementById: () => null, querySelectorAll: () => [] };
   const hit = await waitForComboboxOption(combo, "JFK", { timeoutMs: 30, root });
   assert.equal(hit, null);
+});
+
+test("usesAtomicValueAssign covers sanitizing input types", () => {
+  assert.equal(usesAtomicValueAssign(makeInput({ type: "date" })), true);
+  assert.equal(usesAtomicValueAssign(makeInput({ type: "number" })), true);
+  assert.equal(usesAtomicValueAssign(makeInput({ type: "text" })), false);
+});
+
+test("typeByInsertText assigns number values atomically so a leading minus survives", async () => {
+  const el = makeInput({ type: "number" });
+  let stored = "";
+  Object.defineProperty(el, "value", {
+    configurable: true,
+    get() {
+      return stored;
+    },
+    set(next) {
+      const s = String(next);
+      if (s === "" || /^-?\d+(\.\d+)?$/.test(s)) stored = s;
+    },
+  });
+  await typeByInsertText(el, "-1");
+  assert.equal(el.value, "-1");
+});
+
+test("typeByInsertText assigns date values atomically", async () => {
+  const el = makeInput({ type: "date" });
+  let stored = "";
+  Object.defineProperty(el, "value", {
+    configurable: true,
+    get() {
+      return stored;
+    },
+    set(next) {
+      const s = String(next);
+      if (s === "" || /^\d{4}-\d{2}-\d{2}$/.test(s)) stored = s;
+    },
+  });
+  await typeByInsertText(el, "2026-08-26");
+  assert.equal(el.value, "2026-08-26");
+});
+
+test("dispatchOptionPointer fires a single click without a native click() follow-up", () => {
+  const events = [];
+  let nativeClicks = 0;
+  const option = {
+    dispatchEvent(event) {
+      events.push(event && event.type);
+      return true;
+    },
+    click() {
+      nativeClicks += 1;
+    },
+  };
+  dispatchOptionPointer(option);
+  assert.equal(events.filter((type) => type === "click").length, 1);
+  assert.equal(nativeClicks, 0);
 });
