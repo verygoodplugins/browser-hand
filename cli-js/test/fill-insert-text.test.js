@@ -18,6 +18,8 @@ import {
   waitForComboboxOption,
   usesAtomicValueAssign,
   dispatchOptionPointer,
+  insertTextDelayMs,
+  optionIsVisible,
 } from "../src/tool.js";
 
 function makeInput({ role = "", value = "", type = "text" } = {}) {
@@ -165,4 +167,26 @@ test("dispatchOptionPointer fires a single click without a native click() follow
   dispatchOptionPointer(option);
   assert.equal(events.filter((type) => type === "click").length, 1);
   assert.equal(nativeClicks, 0);
+});
+
+test("insertTextDelayMs is zero for ordinary text so long fills stay under the relay timeout", () => {
+  assert.equal(insertTextDelayMs(makeInput({ type: "text" }), "a".repeat(800)), 0);
+});
+
+test("insertTextDelayMs keeps combobox typing under a 20s budget", () => {
+  const combo = makeInput({ role: "combobox" });
+  assert.equal(insertTextDelayMs(combo, "JFK"), 55);
+  const long = "x".repeat(800);
+  const delay = insertTextDelayMs(combo, long);
+  assert.ok(delay < 55, delay);
+  assert.ok(delay * long.length <= 20000, delay * long.length);
+});
+
+test("optionIsVisible rejects aria-disabled options", () => {
+  const option = {
+    getClientRects: () => [{ width: 10, height: 10 }],
+    getAttribute: (name) => (name === "aria-disabled" ? "true" : null),
+    hidden: false,
+  };
+  assert.equal(optionIsVisible(option), false);
 });

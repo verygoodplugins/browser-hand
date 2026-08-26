@@ -1843,6 +1843,12 @@ export function isComboboxWidget(el) {
   return role === "combobox" || el.tagName === "SELECT";
 }
 
+export function insertTextDelayMs(el, text, { requestedMs = 55, budgetMs = 20000 } = {}) {
+  if (!isComboboxWidget(el) || el.tagName === "SELECT") return 0;
+  const n = Math.max(1, String(text ?? "").length);
+  return Math.max(0, Math.min(requestedMs, Math.floor(budgetMs / n)));
+}
+
 export function matchComboboxOption(options, query) {
   const wanted = String(query || "").trim().toLowerCase();
   if (!wanted) return null;
@@ -1893,6 +1899,12 @@ export function optionIsVisible(el) {
     if (style && (style.display === "none" || style.visibility === "hidden")) return false;
   } catch {}
   if (el.hidden) return false;
+  try {
+    if (typeof el.getAttribute === "function" && el.getAttribute("aria-disabled") === "true") {
+      return false;
+    }
+  } catch {}
+  if (el.disabled) return false;
   return true;
 }
 
@@ -1947,6 +1959,7 @@ export const FILL_HELPER_SOURCE = [
   usesAtomicValueAssign,
   typeByInsertText,
   isComboboxWidget,
+  insertTextDelayMs,
   matchComboboxOption,
   collectComboboxOptions,
   optionIsVisible,
@@ -2068,7 +2081,7 @@ function buildFillFieldsExpression(fields) {
         el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         return { mode: 'radio' };
       }
-      await typeByInsertText(el, str, { delayMs: 55 });
+      await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str) });
       if (isComboboxWidget(el) && el.tagName !== 'SELECT') {
         const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
         if (!option) throw new Error('combobox option not found');
@@ -2659,7 +2672,7 @@ function buildTypeExpression({ selector, label, text }) {
       el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     } else {
-      await typeByInsertText(el, str, { delayMs: 55 });
+      await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str) });
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
     return { typed: label || selector, url: location.href, title: document.title };
