@@ -634,17 +634,19 @@ export function findAdoptTarget(targets, url) {
   if (!url || !Array.isArray(targets)) {
     return null;
   }
-  const wanted = String(url);
-  for (const target of targets) {
-    const candidate = String(target?.url || "");
-    if (!candidate || candidate === "about:blank" || candidate === "about:newtab") {
-      continue;
-    }
-    if (candidate === wanted || candidate.startsWith(wanted) || wanted.startsWith(candidate)) {
-      return target;
-    }
+  const normalize = (value) => String(value || "").replace(/\/$/, "");
+  const wanted = normalize(url);
+  if (!wanted || wanted === "about:blank" || wanted === "about:newtab") {
+    return null;
   }
-  return null;
+  const hits = targets.filter((target) => {
+    const candidate = normalize(target?.url);
+    if (!candidate || candidate === "about:blank" || candidate === "about:newtab") {
+      return false;
+    }
+    return candidate === wanted;
+  });
+  return hits.length === 1 ? hits[0] : null;
 }
 
 export function namedPageNotFoundMessage(pageName, namedPageCount) {

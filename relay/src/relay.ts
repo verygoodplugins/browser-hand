@@ -419,6 +419,16 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         created: false,
       });
     }
+    if (existing && existingIsBlank) {
+      return c.json({
+        wsEndpoint: `ws://${host}:${port}/cdp`,
+        name,
+        targetId: existing.targetId,
+        url: existing.targetInfo.url,
+        title: existing.targetInfo.title,
+        created: false,
+      });
+    }
     namedPages.delete(name);
 
     if (!extensionWs) {
@@ -593,11 +603,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             extensionWs.close(4001, "Extension Replaced");
 
             connectedTargets.clear();
-            // Keep name → targetId so a reconnect can rebind the same Chrome
-            // tab (targetId is tab-${chromeTabId}) instead of minting blanks.
-            for (const [pageName, entry] of namedPages) {
-              namedPages.set(pageName, { sessionId: "", targetId: entry.targetId });
-            }
+            namedPages.clear();
             for (const pending of extensionPendingRequests.values()) {
               pending.reject(new Error("Extension connection replaced"));
             }
@@ -747,9 +753,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
           extensionWs = null;
           connectedTargets.clear();
-          for (const [pageName, entry] of namedPages) {
-            namedPages.set(pageName, { sessionId: "", targetId: entry.targetId });
-          }
+          namedPages.clear();
 
           for (const client of playwrightClients.values()) {
             client.ws.close(1000, "Extension disconnected");

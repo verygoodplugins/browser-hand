@@ -144,3 +144,25 @@ test("missing named-page errors stay compact and point to the explicit inventory
   assert.ok(message.length < 220, message);
   assert.ok(!message.includes("named-a"));
 });
+test("findAdoptTarget does not treat prefix-overlapping URLs as the same tab", () => {
+  assert.equal(
+    findAdoptTarget(
+      [{ type: "page", targetId: "acct", url: "https://example.com/accounting" }],
+      "https://example.com/account"
+    ),
+    null
+  );
+});
+
+test("findAdoptTarget returns null when two tabs share the exact URL", () => {
+  assert.equal(
+    findAdoptTarget(
+      [
+        { type: "page", targetId: "a", url: "https://point.me/search" },
+        { type: "page", targetId: "b", url: "https://point.me/search" },
+      ],
+      "https://point.me/search"
+    ),
+    null
+  );
+});
