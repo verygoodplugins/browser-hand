@@ -25,6 +25,7 @@ Updated 2026-07-29 after Browser Hand dogfood + stack fixes.
 | 17 | pass | click-open menu works | — | pass |
 | 18 | pass | policy: stop not solve | skill captcha rule | pass |
 | 19 | pass | username type → target_closed → scripting fallback; multi-step same targetId | extension `7df684b` scripting fallback | pass oracle; logs show fallback |
+| 20 | pending | point.me-shaped combobox: no form, debounce, mutating aria-label chip | ax-refs + combobox recipe | not yet |
 
 \* ch-03: soft-detach is in unpacked build; reload Chrome extension once more for full stickiness without re-navigate recovery.
 
