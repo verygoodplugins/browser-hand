@@ -2668,7 +2668,7 @@ Current-mode operations:
 Targeting:
 - target defaults to { strategy: "active" }.
 - Optional target fields: id, url, title, name, query, strategy:"first".
-- pageName creates/uses a named relay tab for open/goto/snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus.
+- pageName: open/goto create-or-reuse a named relay tab; snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus attach only.
 - focusPolicy/focus: optional per-call override for open/goto/focus — "window" brings Chrome forward for human input; "tab" activates only; default remains background. Pass reason for audit.
 
 Autofill placeholders:
@@ -2696,7 +2696,7 @@ Resolved placeholder values are redacted from tool output.`,
       pageName: {
         type: "string",
         description:
-          "Named extension-relay tab. Explicit pageName may create an about:blank tab before the operation; goto/open default to autohub-current when no http tab is visible.",
+          "Named extension-relay tab. open and goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus attach to an existing name and fail if it is missing.",
       },
       target: {
         type: "object",
