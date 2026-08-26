@@ -338,6 +338,25 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     });
   });
 
+  // Attach-only client operations must be able to resolve a name without
+  // invoking the create-or-get endpoint below. A missing name is an ordinary
+  // lookup miss, never a reason to mint a visible about:blank Chrome tab.
+  app.get("/pages/:name", (c) => {
+    const name = c.req.param("name");
+    const existing = resolveNamedPage(name);
+    if (!existing) {
+      return c.json({ error: `No named page \"${name}\" is open` }, 404);
+    }
+    return c.json({
+      wsEndpoint: `ws://${host}:${port}/cdp`,
+      name,
+      targetId: existing.targetId,
+      url: existing.targetInfo.url,
+      title: existing.targetInfo.title,
+      created: false,
+    });
+  });
+
   app.post("/pages", async (c) => {
     const body = await c.req.json();
     const name = body.name as string;
@@ -349,8 +368,38 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     // Reuse existing named tab. Important: do NOT mint a new about:blank when
     // sessionId churns (common after debugger attach / password-manager
     // activity on username fields) but the tab targetId is still connected.
-    const existing = resolveNamedPage(name);
-    if (existing) {
+    let existing = resolveNamedPage(name);
+    if (!existing) {
+      // Extension reconnect re-registers tabs asynchronously. Give targetId
+      // rebind a beat before minting a blank tab under the same name.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      existing = resolveNamedPage(name);
+    }
+    const existingUrl = existing?.targetInfo?.url || "";
+    const existingIsBlank =
+      !existingUrl || existingUrl === "about:blank" || existingUrl === "about:newtab";
+
+    const adoptTargetId = typeof body.targetId === "string" ? body.targetId : "";
+    if (adoptTargetId && (!existing || existingIsBlank)) {
+      const adopt = findTargetById(adoptTargetId);
+      if (adopt) {
+        namedPages.set(name, {
+          sessionId: adopt.sessionId,
+          targetId: adopt.targetId,
+        });
+        return c.json({
+          wsEndpoint: `ws://${host}:${port}/cdp`,
+          name,
+          targetId: adopt.targetId,
+          url: adopt.targetInfo.url,
+          title: adopt.targetInfo.title,
+          created: false,
+          adopted: true,
+        });
+      }
+    }
+
+    if (existing && !existingIsBlank) {
       // activateTarget is a no-op under extension focusPolicy=background
       await sendToExtension({
         method: "forwardCDPCommand",
@@ -544,7 +593,11 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             extensionWs.close(4001, "Extension Replaced");
 
             connectedTargets.clear();
-            namedPages.clear();
+            // Keep name → targetId so a reconnect can rebind the same Chrome
+            // tab (targetId is tab-${chromeTabId}) instead of minting blanks.
+            for (const [pageName, entry] of namedPages) {
+              namedPages.set(pageName, { sessionId: "", targetId: entry.targetId });
+            }
             for (const pending of extensionPendingRequests.values()) {
               pending.reject(new Error("Extension connection replaced"));
             }
@@ -694,7 +747,9 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
           extensionWs = null;
           connectedTargets.clear();
-          namedPages.clear();
+          for (const [pageName, entry] of namedPages) {
+            namedPages.set(pageName, { sessionId: "", targetId: entry.targetId });
+          }
 
           for (const client of playwrightClients.values()) {
             client.ws.close(1000, "Extension disconnected");
