@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   GYM_COMPARE_SUBSET,
+  DEFAULT_UPSTREAM_BIN,
   buildBrowserHandCommands,
   buildHeadlessScript,
   buildPlaywrightScript,
@@ -16,6 +17,8 @@ import {
   stepCount,
   summarizeComparison,
 } from "../src/gym-compare.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const ORIGIN = "http://127.0.0.1:8766";
 
@@ -130,4 +133,22 @@ test("buildPlaywrightScript is vanilla Playwright locators without getPage", () 
   assert.doesNotMatch(hello, /getPage\(/);
   const iframe = buildPlaywrightScript(GYM_COMPARE_SUBSET.find((item) => item.id === "09"), ORIGIN);
   assert.match(iframe, /frameLocator\("#ticket-frame"\)/);
+});
+
+test("DEFAULT_UPSTREAM_BIN points at this repo's bin/dev-browser.js", () => {
+  assert.match(DEFAULT_UPSTREAM_BIN, /bin\/dev-browser\.js$/);
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  assert.equal(DEFAULT_UPSTREAM_BIN, path.join(repoRoot, "bin/dev-browser.js"));
+});
+
+test("approxTokens stays a pure stdout-bytes/4 proxy", () => {
+  assert.equal(Math.ceil(10 / 4), 3);
+  // Script drivers must not inflate by counting generated input scripts.
+  // summarizeComparison only sums row.stdoutBytes — keep that as stdout-only.
+  const summary = summarizeComparison([
+    { id: "01", driver: "playwright", ok: true, steps: 4, stdoutBytes: 100, approxTokens: 25 },
+    { id: "01", driver: "browser-hand", ok: true, steps: 4, stdoutBytes: 100, approxTokens: 25 },
+  ]);
+  assert.equal(summary.drivers.playwright.stdoutBytes, 100);
+  assert.equal(summary.drivers["browser-hand"].stdoutBytes, 100);
 });

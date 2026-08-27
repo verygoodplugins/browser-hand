@@ -13,6 +13,8 @@ const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(__filename), "../..");
 const DEFAULT_ORIGIN = "http://127.0.0.1:8766";
 const ORACLE_CODE = "JSON.stringify(window.__oracle())";
+/** Repo launcher — npm scripts do not put package.bin on PATH. */
+export const DEFAULT_UPSTREAM_BIN = path.join(REPO_ROOT, "bin/dev-browser.js");
 
 export const GYM_COMPARE_SUBSET = [
   {
@@ -360,9 +362,13 @@ async function runBrowserHandChallenge(challenge, options) {
 async function runDevBrowserChallenge(challenge, options) {
   const started = Date.now();
   const script = buildHeadlessScript(challenge, options.origin);
+  const upstream = options.upstreamBin || DEFAULT_UPSTREAM_BIN;
+  const isJsLauncher = /\.m?js$/i.test(upstream);
   const result = await spawnCaptured(
-    options.upstreamBin,
-    ["--headless", "--browser", "gym-compare", "--timeout", "90"],
+    isJsLauncher ? process.execPath : upstream,
+    isJsLauncher
+      ? [upstream, "--headless", "--browser", "gym-compare", "--timeout", "90"]
+      : ["--headless", "--browser", "gym-compare", "--timeout", "90"],
     {
       timeoutMs: options.headlessTimeoutMs || 120000,
       input: script,
@@ -373,8 +379,7 @@ async function runDevBrowserChallenge(challenge, options) {
     result.code !== 0 && !oracle.ok
       ? (result.stderr || result.stdout || `exit ${result.code}`).trim().slice(0, 400)
       : null;
-  const stdoutBytes =
-    Buffer.byteLength(script, "utf8") + Buffer.byteLength(result.stdout || "", "utf8");
+  const stdoutBytes = Buffer.byteLength(result.stdout || "", "utf8");
   return {
     id: challenge.id,
     name: challenge.name,
@@ -393,7 +398,6 @@ async function runDevBrowserChallenge(challenge, options) {
 
 async function runPlaywrightChallenge(challenge, options) {
   const started = Date.now();
-  const script = buildPlaywrightScript(challenge, options.origin);
   let oracle = { ok: false, checks: {}, detail: "not evaluated" };
   let error = null;
   const page = options.playwrightPage;
@@ -422,7 +426,7 @@ async function runPlaywrightChallenge(challenge, options) {
     error = String(err && err.message ? err.message : err).slice(0, 400);
   }
   const stdout = `GYMCMP:${JSON.stringify({ id: challenge.id, ok: oracle.ok, checks: oracle.checks, detail: oracle.detail })}`;
-  const stdoutBytes = Buffer.byteLength(script, "utf8") + Buffer.byteLength(stdout, "utf8");
+  const stdoutBytes = Buffer.byteLength(stdout, "utf8");
   return {
     id: challenge.id,
     name: challenge.name,
@@ -446,7 +450,7 @@ export async function runGymCompare(options = {}) {
   const resolved = {
     origin,
     browserHandBin: options.browserHandBin || path.join(REPO_ROOT, "cli-js/src/cli.js"),
-    upstreamBin: options.upstreamBin || "dev-browser",
+    upstreamBin: options.upstreamBin || DEFAULT_UPSTREAM_BIN,
     commandTimeoutMs: options.commandTimeoutMs || 30000,
     headlessTimeoutMs: options.headlessTimeoutMs || 120000,
   };
@@ -546,7 +550,7 @@ async function main() {
       "gym-compare — oracle + step-count comparison on challenges 01/08/09/16/20\n" +
         "Playwright is a gym benchmark (disposable Chromium), not a product path.\n\n" +
         "  node cli-js/src/gym-compare.js [--driver all|both|browser-hand|dev-browser|playwright]\n" +
-        "  [--origin http://127.0.0.1:8766] [--browser-hand-bin path/to/cli.js] [--upstream-bin dev-browser]\n"
+        "  [--origin http://127.0.0.1:8766] [--browser-hand-bin path/to/cli.js]\n  [--upstream-bin path/to/bin/dev-browser.js]  (default: repo bin)\n"
     );
     process.exit(0);
   }
