@@ -15,6 +15,7 @@ const DEFAULT_ORIGIN = "http://127.0.0.1:8766";
 const ORACLE_CODE = "JSON.stringify(window.__oracle())";
 /** Repo launcher — npm scripts do not put package.bin on PATH. */
 export const DEFAULT_UPSTREAM_BIN = path.join(REPO_ROOT, "bin/dev-browser.js");
+export const GYM_COMPARE_DRIVERS = ["browser-hand", "dev-browser", "playwright"];
 
 export const GYM_COMPARE_SUBSET = [
   {
@@ -273,11 +274,21 @@ function spawnCaptured(command, args, { cwd, timeoutMs, input } = {}) {
   });
 }
 
+export function gymOriginLooksHealthy(statusCode, body) {
+  if (!(statusCode >= 200 && statusCode < 400)) return false;
+  return /__CHALLENGE__|__oracle/i.test(String(body || ""));
+}
+
 async function originReachable(origin) {
   return new Promise((resolve) => {
-    const req = http.get(`${origin.replace(/\/$/, "")}/`, (res) => {
-      res.resume();
-      resolve(res.statusCode >= 200 && res.statusCode < 500);
+    const req = http.get(`${origin.replace(/\/$/, "")}/01-hello-form.html`, (res) => {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk.toString();
+        if (body.length > 4000) res.destroy();
+      });
+      res.on("end", () => resolve(gymOriginLooksHealthy(res.statusCode, body)));
+      res.on("error", () => resolve(false));
     });
     req.on("error", () => resolve(false));
     req.setTimeout(1500, () => {
@@ -445,7 +456,7 @@ async function runPlaywrightChallenge(challenge, options) {
 
 export async function runGymCompare(options = {}) {
   const origin = options.origin || DEFAULT_ORIGIN;
-  const drivers = options.drivers || ["browser-hand", "dev-browser", "playwright"];
+  const drivers = options.drivers || [...GYM_COMPARE_DRIVERS];
   await ensureGymServer(origin);
   const resolved = {
     origin,
@@ -514,9 +525,9 @@ export async function runGymCompare(options = {}) {
   return { origin, ...summary, results };
 }
 
-function parseCliArgs(argv) {
+export function parseCliArgs(argv) {
   const out = {
-    drivers: ["browser-hand", "dev-browser", "playwright"],
+    drivers: [...GYM_COMPARE_DRIVERS],
     origin: DEFAULT_ORIGIN,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -525,12 +536,19 @@ function parseCliArgs(argv) {
       out.origin = argv[++i];
     } else if (tok === "--driver") {
       const value = argv[++i];
+      if (value == null || value === "") {
+        throw new Error("missing --driver value (all|both|browser-hand|dev-browser|playwright)");
+      }
       if (value === "both") {
         out.drivers = ["browser-hand", "dev-browser"];
       } else if (value === "all") {
-        out.drivers = ["browser-hand", "dev-browser", "playwright"];
-      } else {
+        out.drivers = [...GYM_COMPARE_DRIVERS];
+      } else if (GYM_COMPARE_DRIVERS.includes(value)) {
         out.drivers = [value];
+      } else {
+        throw new Error(
+          `unsupported driver "${value}" (expected all|both|${GYM_COMPARE_DRIVERS.join("|")})`
+        );
       }
     } else if (tok === "--upstream-bin") {
       out.upstreamBin = argv[++i];

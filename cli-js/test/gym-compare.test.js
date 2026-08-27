@@ -9,6 +9,9 @@ import test from "node:test";
 import {
   GYM_COMPARE_SUBSET,
   DEFAULT_UPSTREAM_BIN,
+  GYM_COMPARE_DRIVERS,
+  parseCliArgs,
+  gymOriginLooksHealthy,
   buildBrowserHandCommands,
   buildHeadlessScript,
   buildPlaywrightScript,
@@ -151,4 +154,18 @@ test("approxTokens stays a pure stdout-bytes/4 proxy", () => {
   ]);
   assert.equal(summary.drivers.playwright.stdoutBytes, 100);
   assert.equal(summary.drivers["browser-hand"].stdoutBytes, 100);
+});
+
+test("parseCliArgs rejects unknown drivers", () => {
+  assert.throws(() => parseCliArgs(["--driver", "typo"]), /unsupported driver/i);
+});
+
+test("parseCliArgs all includes playwright", () => {
+  assert.deepEqual(parseCliArgs(["--driver", "all"]).drivers, [...GYM_COMPARE_DRIVERS]);
+});
+
+test("gymOriginLooksHealthy requires a known challenge marker", () => {
+  assert.equal(gymOriginLooksHealthy(200, "<html><script>window.__CHALLENGE__={}</script></html>"), true);
+  assert.equal(gymOriginLooksHealthy(200, "<html>unrelated</html>"), false);
+  assert.equal(gymOriginLooksHealthy(404, "missing"), false);
 });
