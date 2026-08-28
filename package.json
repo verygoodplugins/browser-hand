@@ -19,6 +19,7 @@
     "doctor": "node cli-js/src/cli.js doctor",
     "relay": "node cli-js/src/cli.js relay",
     "smoke:live": "bash scripts/smoke-live.sh",
+    "gym:compare": "node cli-js/src/gym-compare.js",
     "install:extension": "bash scripts/setup.sh",
     "cli": "node cli-js/src/cli.js"
   },
