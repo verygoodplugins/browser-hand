@@ -43,13 +43,12 @@ Use this stricter mode for audits, adversarial reviews, launch checks, complianc
 
 - extension mode: JSON results on stdout from the CLI (parse before reasoning). Screenshots under `~/.browser-hand/screenshots/`.
 - headless/remote-debug mode: a repeatable script pattern that survives Chrome restarts (target IDs change; the `dev-browser --connect ... run /dev/stdin` inventory step regenerates them). Pre/mid/post screenshots under `~/.dev-browser/tmp/`.
-- An updated platform gotchas table (`references/platform-gotchas.md`) — every new DOM oddity hit lands in this skill on the same PR/commit that handled it.
 
 ---
 
 ## Anti-patterns
 
-- **Reaching for headless/remote-debug mode when extension mode would do.** Default to relay. Only escalate when the task is in the gotchas table, needs `setInputFiles`/upload, or genuinely needs script-style multi-step orchestration.
+- **Reaching for headless/remote-debug mode when extension mode would do.** Default to relay. Only escalate when extension mode cannot handle the surface (e.g. `setInputFiles`/upload) or genuinely needs script-style multi-step orchestration.
 - **Skipping the snapshot/probe.** Writes against the wrong tab silently mutate something else the user has open. extension mode: always `snapshot` first. headless/remote-debug mode: always run the read-only probe script first.
 - **Hard-coding tab IDs across sessions.** CDP target IDs reset on Chrome restart. Re-discover them.
 - **Running headless/remote-debug mode `dev-browser run` without `--connect` against a dedicated authenticated debug profile.** You'll get `about:blank`. If you are in headless/remote-debug mode, include `--connect`; if you need the default Chrome profile, use extension mode instead.
@@ -58,7 +57,6 @@ Use this stricter mode for audits, adversarial reviews, launch checks, complianc
 - **Treating raw CDP `/json` 404 as headless/remote-debug mode failure.** For headless/remote-debug mode only, run the `dev-browser --connect ... run /dev/stdin` probe before declaring the debug Chrome unreachable. For default-profile auth work, run extension mode doctor instead.
 - **Calling `setInputFiles` with a host path.** Fails with "fs is not available." Use stage-in-tmp or evaluate-File-bypass.
 - **Trusting "click returned" as "save succeeded."** Verify via screenshot + re-read.
-- **Letting the platform gotchas table go stale.** When you hit a new IG/SC/YT/whatever DOM quirk, write it into `references/platform-gotchas.md` in the same commit that resolves it. The table is the value of this skill.
 - **Conflating "connecting…" with `extensionConnected: false`.** They are different failures with different owners — see the doctor status section above.
 - **Relying on the per-call ephemeral relay for the extension connection.** A relay that lives only for one CLI invocation races the extension's reconnect interval and usually loses. Keep a persistent relay up (`references/setup.md`, extension mode step 2).
 - **Treating an asleep MV3 service worker like a disabled extension (or vice versa).** Both surface as `extensionConnected: false`, but the fix differs — see the doctor status section above.
