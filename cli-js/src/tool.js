@@ -586,6 +586,22 @@ const STEP_OP_ALIASES = {
 const MAX_BATCH_STEPS = 32;
 const NAV_READY_TIMEOUT_MS = 8000;
 
+function batchStepRequestsForegroundFocus(step, operation) {
+  const raw = step.focusPolicy ?? step.focus;
+  if (operation === "focus") {
+    if (raw === undefined || raw === null || raw === false || raw === "") {
+      return true;
+    }
+    const policy = raw === true ? "window" : String(raw);
+    return policy !== "background";
+  }
+  if (raw === undefined || raw === null || raw === false || raw === "") {
+    return false;
+  }
+  const policy = raw === true ? "window" : String(raw);
+  return policy === "window" || policy === "tab";
+}
+
 export function parseBatchSteps(steps) {
   if (!Array.isArray(steps) || steps.length === 0) {
     throw new Error("batch requires a non-empty --steps JSON array");
@@ -613,11 +629,11 @@ export function parseBatchSteps(steps) {
         );
       }
     }
-    if (operation === "focus") {
+    if (batchStepRequestsForegroundFocus(step, operation)) {
       const reason = step.focusReason || step.reason;
       if (typeof reason !== "string" || reason.trim() === "") {
         throw new Error(
-          `batch step ${index}: focus requires a non-empty reason (focusReason or reason) for human-in-the-loop audit`
+          `batch step ${index}: foreground focus requires a non-empty reason (focusReason or reason) for human-in-the-loop audit`
         );
       }
     }
