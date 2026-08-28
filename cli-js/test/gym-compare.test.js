@@ -12,6 +12,7 @@ import {
   GYM_COMPARE_DRIVERS,
   parseCliArgs,
   gymOriginLooksHealthy,
+  assertLoopbackOrigin,
   buildBrowserHandCommands,
   buildHeadlessScript,
   buildPlaywrightScript,
@@ -168,4 +169,14 @@ test("gymOriginLooksHealthy requires a known challenge marker", () => {
   assert.equal(gymOriginLooksHealthy(200, "<html><script>window.__CHALLENGE__={}</script></html>"), true);
   assert.equal(gymOriginLooksHealthy(200, "<html>unrelated</html>"), false);
   assert.equal(gymOriginLooksHealthy(404, "missing"), false);
+});
+
+test("assertLoopbackOrigin allows localhost and 127.0.0.1", () => {
+  assert.equal(assertLoopbackOrigin("http://127.0.0.1:8766").hostname, "127.0.0.1");
+  assert.equal(assertLoopbackOrigin("http://localhost:8766").hostname, "localhost");
+});
+
+test("assertLoopbackOrigin rejects non-loopback hosts", () => {
+  assert.throws(() => assertLoopbackOrigin("http://example.com:8766"), /loopback/i);
+  assert.throws(() => assertLoopbackOrigin("https://evil.test/"), /loopback/i);
 });

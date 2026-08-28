@@ -274,7 +274,27 @@ function spawnCaptured(command, args, { cwd, timeoutMs, input } = {}) {
   });
 }
 
+export function assertLoopbackOrigin(origin) {
+  let url;
+  try {
+    url = new URL(origin);
+  } catch {
+    throw new Error(`invalid --origin "${origin}"`);
+  }
+  const host = (url.hostname || "").toLowerCase();
+  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
+    throw new Error(
+      `gym origin must be loopback (got ${host}); public sites stay navigate/snapshot-only`
+    );
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`gym origin must be http(s) (got ${url.protocol})`);
+  }
+  return url;
+}
+
 export function gymOriginLooksHealthy(statusCode, body) {
+
   if (!(statusCode >= 200 && statusCode < 400)) return false;
   return /__CHALLENGE__|__oracle/i.test(String(body || ""));
 }
@@ -302,12 +322,17 @@ export async function ensureGymServer(origin) {
   if (await originReachable(origin)) {
     return { started: false, origin };
   }
-  const url = new URL(origin);
-  const child = spawn("python3", ["-m", "http.server", url.port || "8766"], {
-    cwd: path.join(REPO_ROOT, "extension/challenges"),
-    stdio: "ignore",
-    detached: true,
-  });
+  const url = assertLoopbackOrigin(origin);
+  const bindHost = url.hostname === "localhost" ? "127.0.0.1" : url.hostname || "127.0.0.1";
+  const child = spawn(
+    "python3",
+    ["-m", "http.server", url.port || "8766", "--bind", bindHost],
+    {
+      cwd: path.join(REPO_ROOT, "extension/challenges"),
+      stdio: "ignore",
+      detached: true,
+    }
+  );
   child.unref();
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -455,7 +480,8 @@ async function runPlaywrightChallenge(challenge, options) {
 }
 
 export async function runGymCompare(options = {}) {
-  const origin = options.origin || DEFAULT_ORIGIN;
+  const originUrl = assertLoopbackOrigin(options.origin || DEFAULT_ORIGIN);
+  const origin = originUrl.origin;
   const drivers = options.drivers || [...GYM_COMPARE_DRIVERS];
   await ensureGymServer(origin);
   const resolved = {
