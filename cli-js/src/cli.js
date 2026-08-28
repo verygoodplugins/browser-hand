@@ -146,6 +146,7 @@ export function slimCliResult(result, { quiet } = {}) {
   }
   const out = { success: result.success };
   if (result.error) out.error = result.error;
+  if (result.warning) out.warning = result.warning;
   if (result.operation) out.operation = result.operation;
   if (result.pageName) out.pageName = result.pageName;
   if (result.operation === "batch" && Array.isArray(result.results)) {
@@ -157,7 +158,7 @@ export function slimCliResult(result, { quiet } = {}) {
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
       const slim = {};
       for (const [key, value] of Object.entries(payload)) {
-        if (QUIET_RESULT_DROP.has(key)) continue;
+        if (result.operation !== "evaluate" && QUIET_RESULT_DROP.has(key)) continue;
         slim[key] = value;
       }
       out.result = slim;
