@@ -90,12 +90,19 @@ test("parseBatchSteps rejects array fields in fill steps", () => {
 
 test("batch collects autofill redactionValues before later steps", async () => {
   const { redactSensitiveText } = await import("../src/tool.js");
-  const batchRedactions = ["autofill-secret-abc"];
-  const autofillStep = { success: true, operation: "autofill_profile", redacted: true };
+  const secret = "autofill-secret-abc";
+  const batchRedactions = [secret];
+
+  // Simulate autofill_profile: redact payload first, then attach raw values.
+  const redactedResult = redactSensitiveText(secret, batchRedactions);
+  assert.equal(redactedResult, "[REDACTED]");
+  const autofillOut = { result: { password: redactedResult }, redactionValues: [...batchRedactions] };
+  assert.deepEqual(autofillOut.redactionValues, [secret]);
+
   const evaluateStep = {
     success: true,
     operation: "evaluate",
-    result: { password: "autofill-secret-abc" },
+    result: { password: secret },
   };
   const redactedEvaluate = {
     ...evaluateStep,
@@ -104,7 +111,6 @@ test("batch collects autofill redactionValues before later steps", async () => {
     },
   };
   assert.equal(redactedEvaluate.result.password, "[REDACTED]");
-  assert.equal(autofillStep.redacted, true);
 });
 
 test("batch redactions aggregate per-step secrets in output", async () => {

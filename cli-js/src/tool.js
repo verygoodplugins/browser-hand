@@ -1517,10 +1517,12 @@ async function executeAttachedOperation({
       result,
       redacted: sub.redactions.length > 0,
     };
+    const redacted = redactSensitiveObject(payload, sub.redactions);
+    // Internal batch channel only — attach after redaction so raw values survive.
     if (sub.redactions.length > 0) {
-      payload.redactionValues = sub.redactions;
+      redacted.redactionValues = [...sub.redactions];
     }
-    return redactSensitiveObject(payload, sub.redactions);
+    return redacted;
   }
 
   if (operation === "click") {
@@ -1838,7 +1840,7 @@ async function runCurrentOperation(input, timeoutMs) {
       operation,
       targets,
     });
-    return await executeAttachedOperation({
+    const out = await executeAttachedOperation({
       cdp,
       sessionId,
       selected,
@@ -1846,6 +1848,11 @@ async function runCurrentOperation(input, timeoutMs) {
       input,
       timeoutMs,
     });
+    if (Array.isArray(out.redactionValues) && out.redactionValues.length) {
+      const { redactionValues, ...rest } = out;
+      return rest;
+    }
+    return out;
   } finally {
     cdp.close();
   }
