@@ -601,6 +601,11 @@ export function parseBatchSteps(steps) {
     if (!BATCHABLE_OPERATIONS.has(operation)) {
       throw new Error(`operation ${JSON.stringify(step.operation)} is not batchable`);
     }
+    if (operation === "fill_fields" && Array.isArray(step.fields)) {
+      throw new Error(
+        `batch step ${index}: fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not an array`
+      );
+    }
     return { ...step, operation };
   });
 }
@@ -1693,6 +1698,7 @@ async function runCurrentBatch(input, timeoutMs) {
   try {
     let attached = null;
     const results = [];
+    const batchRedactions = [];
     for (const rawStep of steps) {
       if (rawStep.operation === "wait") {
         const ms = Math.max(0, Number(rawStep.ms) || 0);
@@ -1708,8 +1714,16 @@ async function runCurrentBatch(input, timeoutMs) {
         ...rawStep,
         fields: rawStep.fields,
       });
+      if (sub.redactions?.length) {
+        batchRedactions.push(...sub.redactions);
+      }
       if (sub.errors.length > 0) {
-        results.push({ ...placeholderFailure(sub, "current"), operation: rawStep.operation });
+        results.push(
+          redactSensitiveObject(
+            { ...placeholderFailure(sub, "current"), operation: rawStep.operation },
+            batchRedactions
+          )
+        );
         continue;
       }
       const walked = sub.vars && typeof sub.vars === "object" ? sub.vars : {};
@@ -1748,7 +1762,7 @@ async function runCurrentBatch(input, timeoutMs) {
         input: stepInput,
         timeoutMs,
       });
-      results.push(out);
+      results.push(redactSensitiveObject(out, batchRedactions));
       if (
         out.success &&
         (stepInput.operation === "open" || stepInput.operation === "goto") &&
@@ -1760,14 +1774,18 @@ async function runCurrentBatch(input, timeoutMs) {
 
     const lastEval = [...results].reverse().find((row) => row && row.operation === "evaluate");
     const last = lastEval || results.at(-1) || {};
-    return {
-      success: results.length > 0 && results.every((row) => row.success !== false),
-      mode: "current",
-      operation: "batch",
-      ...(input.pageName ? { pageName: input.pageName } : {}),
-      results,
-      ...(Object.prototype.hasOwnProperty.call(last, "result") ? { result: last.result } : {}),
-    };
+    return redactSensitiveObject(
+      {
+        success: results.length > 0 && results.every((row) => row.success !== false),
+        mode: "current",
+        operation: "batch",
+        ...(input.pageName ? { pageName: input.pageName } : {}),
+        results,
+        ...(Object.prototype.hasOwnProperty.call(last, "result") ? { result: last.result } : {}),
+        redacted: batchRedactions.length > 0,
+      },
+      batchRedactions
+    );
   } finally {
     cdp.close();
   }
@@ -3351,7 +3369,7 @@ Resolved placeholder values are redacted from tool output.`,
       return redactSensitiveObject(
         {
           ...result,
-          redacted: sub.redactions.length > 0,
+          redacted: sub.redactions.length > 0 || Boolean(result.redacted),
         },
         sub.redactions
       );

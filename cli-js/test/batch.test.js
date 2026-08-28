@@ -70,6 +70,33 @@ test("navigateAndWait subscribes to load before Page.navigate", async () => {
   assert.equal(order[1], "send:Page.navigate");
 });
 
+test("parseBatchSteps rejects array fields in fill steps", () => {
+  assert.throws(
+    () =>
+      parseBatchSteps([
+        { operation: "open", url: "http://127.0.0.1/x" },
+        { operation: "fill_fields", fields: ["Email"] },
+      ]),
+    /fields must be a JSON object map/i
+  );
+});
+
+test("batch redactions aggregate per-step secrets in output", async () => {
+  const { substitutePlaceholders } = await import("../src/autofill.js");
+  const { redactSensitiveText } = await import("../src/tool.js");
+
+  const sub = await substitutePlaceholders(
+    { url: "https://example.test/callback?token={secret:TOKEN}" },
+    { getSecret: async () => "batch-secret-value-xyz" }
+  );
+  assert.equal(sub.redactions.length, 1);
+  const batchRedactions = [...sub.redactions];
+  const resolvedUrl = sub.vars.url;
+  assert.match(resolvedUrl, /batch-secret-value-xyz/);
+  const redactedUrl = redactSensitiveText(resolvedUrl, batchRedactions);
+  assert.equal(redactedUrl, "https://example.test/callback?token=[REDACTED]");
+});
+
 test("navigateAndWait caps the ready wait well under the 30s op timeout", async () => {
   let waited = null;
   const cdp = {
