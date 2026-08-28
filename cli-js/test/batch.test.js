@@ -48,6 +48,20 @@ test("buildHandlerInput parses batch --steps JSON", () => {
   assert.equal(input.steps[1].operation, "fill_fields");
 });
 
+test("parseBatchSteps rejects focus without a human-in-the-loop reason", () => {
+  assert.throws(
+    () => parseBatchSteps([{ operation: "focus" }]),
+    /focus requires a non-empty reason/i
+  );
+  assert.throws(
+    () => parseBatchSteps([{ operation: "focus", reason: "   " }]),
+    /focus requires a non-empty reason/i
+  );
+  const steps = parseBatchSteps([{ operation: "focus", reason: "2fa" }]);
+  assert.equal(steps[0].operation, "focus");
+  assert.equal(steps[0].reason, "2fa");
+});
+
 test("navigateAndWait subscribes to load before Page.navigate", async () => {
   const order = [];
   const cdp = {

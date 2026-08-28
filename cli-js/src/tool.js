@@ -613,6 +613,14 @@ export function parseBatchSteps(steps) {
         );
       }
     }
+    if (operation === "focus") {
+      const reason = step.focusReason || step.reason;
+      if (typeof reason !== "string" || reason.trim() === "") {
+        throw new Error(
+          `batch step ${index}: focus requires a non-empty reason (focusReason or reason) for human-in-the-loop audit`
+        );
+      }
+    }
     return { ...step, operation };
   });
 }
