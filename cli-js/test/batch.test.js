@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildHandlerInput } from "../src/cli.js";
-import { navigateAndWait, parseBatchSteps } from "../src/tool.js";
+import { navigateAndWait, parseBatchSteps, resumeBackgroundPage } from "../src/tool.js";
 
 test("parseBatchSteps rejects an empty list", () => {
   assert.throws(() => parseBatchSteps([]), /non-empty/);
@@ -165,6 +165,36 @@ test("batch redactions aggregate per-step secrets in output", async () => {
   assert.match(resolvedUrl, /batch-secret-value-xyz/);
   const redactedUrl = redactSensitiveText(resolvedUrl, batchRedactions);
   assert.equal(redactedUrl, "https://example.test/callback?token=[REDACTED]");
+});
+
+test("resumeBackgroundPage emulates focus without Target.activateTarget", async () => {
+  const sent = [];
+  const cdp = {
+    async send(method, params, sessionId) {
+      sent.push({ method, params, sessionId });
+    },
+  };
+  await resumeBackgroundPage(cdp, "sid");
+  assert.ok(
+    sent.some(
+      (row) =>
+        row.method === "Emulation.setFocusEmulationEnabled" &&
+        row.params.enabled === true &&
+        row.sessionId === "sid"
+    )
+  );
+  assert.ok(
+    sent.some(
+      (row) =>
+        row.method === "Page.setWebLifecycleState" &&
+        row.params.state === "active" &&
+        row.sessionId === "sid"
+    )
+  );
+  assert.equal(
+    sent.some((row) => row.method === "Target.activateTarget"),
+    false
+  );
 });
 
 test("navigateAndWait caps the ready wait well under the 30s op timeout", async () => {
