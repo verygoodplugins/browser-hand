@@ -1,4 +1,5 @@
 
+.superpowers/
 _scratch/
 !bin/dev-browser.js
 .dev-browser/
