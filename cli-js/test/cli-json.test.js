@@ -70,6 +70,49 @@ test("slimCliResult --quiet keeps evaluate oracle fields only", () => {
   });
 });
 
+test("slimCliResult --quiet slims nested batch results", () => {
+  const slim = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "batch",
+      pageName: "gym-01",
+      results: [
+        {
+          success: true,
+          mode: "current",
+          operation: "open",
+          target: { url: "http://127.0.0.1/x", title: "Hello" },
+          url: "http://127.0.0.1/x",
+        },
+        {
+          success: true,
+          mode: "current",
+          operation: "evaluate",
+          target: { url: "http://127.0.0.1/x" },
+          result: {
+            ok: true,
+            checks: { submitted: true },
+            detail: "ok",
+            url: "http://127.0.0.1/x",
+          },
+        },
+      ],
+      result: { ok: true, checks: { submitted: true }, detail: "ok", url: "http://127.0.0.1/x" },
+    },
+    { quiet: true }
+  );
+  assert.equal(slim.mode, undefined);
+  assert.equal(slim.operation, "batch");
+  assert.equal(slim.pageName, "gym-01");
+  assert.deepEqual(slim.results[0], { success: true, operation: "open" });
+  assert.deepEqual(slim.results[1], {
+    success: true,
+    operation: "evaluate",
+    result: { ok: true, checks: { submitted: true }, detail: "ok", url: "http://127.0.0.1/x" },
+  });
+});
+
 test("slimCliResult --quiet preserves user-requested url/title in evaluate result", () => {
   const slim = slimCliResult(
     {

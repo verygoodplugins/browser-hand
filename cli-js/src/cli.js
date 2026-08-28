@@ -54,6 +54,7 @@ Operations:
   evaluate --code <js>                  Evaluate JavaScript in the active tab.
   goto --url <url>                      Navigate the active tab.
   open --url <url> [--page-name <name>] Create/get a named relay tab and navigate it.
+  batch --steps <json> [--page-name <n>] Run multiple ops on one CDP session (one attach).
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
@@ -85,6 +86,7 @@ Examples:
   browser-hand snapshot --query stripe
   browser-hand doctor
   browser-hand fill --fields '{"Email":"a@b.c"}'
+  browser-hand batch --page-name work --steps '[{"operation":"open","url":"https://example.com"},{"operation":"fill_fields","fields":{"Email":"a@b.c"}},{"operation":"click","text":"Submit"}]'
   browser-hand autofill-profile --context personal
   browser-hand relay   # keep a persistent relay up; leave running, Ctrl-C to stop
 `;
@@ -131,6 +133,7 @@ const QUIET_SLIM_OPS = new Set([
   "evaluate",
   "open",
   "goto",
+  "batch",
 ]);
 const QUIET_RESULT_DROP = new Set(["url", "title"]);
 
@@ -146,6 +149,10 @@ export function slimCliResult(result, { quiet } = {}) {
   if (result.warning) out.warning = result.warning;
   if (result.operation) out.operation = result.operation;
   if (result.pageName) out.pageName = result.pageName;
+  if (result.operation === "batch" && Array.isArray(result.results)) {
+    out.results = result.results.map((step) => slimCliResult(step, { quiet: true }));
+    return out;
+  }
   if (Object.prototype.hasOwnProperty.call(result, "result")) {
     const payload = result.result;
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -299,6 +306,12 @@ function buildHandlerInput(operation, args) {
         fail("goto requires --url");
       }
       input.url = args.url;
+      break;
+    case "batch":
+      input.steps = parseJsonFlag(args.steps, "steps");
+      if (!Array.isArray(input.steps) || input.steps.length === 0) {
+        fail("batch requires --steps JSON array");
+      }
       break;
     case "focus":
       // Defaults to window so `focus --page-name X --reason 2fa` is enough.

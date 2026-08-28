@@ -14,6 +14,7 @@ import {
   puppeteerAriaSelector,
   gymOriginLooksHealthy,
   assertLoopbackOrigin,
+  buildBrowserHandBatchSteps,
   buildBrowserHandCommands,
   buildHeadlessScript,
   buildPlaywrightScript,
@@ -63,6 +64,24 @@ test("parseOracle reads ok from evaluate JSON and CLI wrappers", () => {
   assert.equal(parseOracle({ result: { ok: true, checks: {} } }).ok, true);
   assert.equal(parseOracle({ success: true, result: { ok: false } }).ok, false);
   assert.equal(parseOracle('GYMCMP:{"ok":true,"checks":{}}').ok, true);
+});
+
+test("parseOracle unwraps the last evaluate inside a batch payload", () => {
+  const oracle = parseOracle({
+    success: true,
+    operation: "batch",
+    results: [
+      { success: true, operation: "open" },
+      { success: true, operation: "fill_fields", result: { filled: ["Arrival airport"] } },
+      {
+        success: true,
+        operation: "evaluate",
+        result: { ok: true, checks: { selectedJfk: true }, detail: "JFK selected from typeahead" },
+      },
+    ],
+  });
+  assert.equal(oracle.ok, true);
+  assert.equal(oracle.checks.selectedJfk, true);
 });
 
 test("summarizeComparison tallies pass/fail and steps per driver", () => {
@@ -128,27 +147,37 @@ test("cliErrorFromOutput prefers JSON error over stderr info logs", () => {
   assert.equal(cliErrorFromOutput("{}", "", 0), null);
 });
 
-test("buildBrowserHandCommands emit open, fill, click, evaluate", () => {
+test("buildBrowserHandCommands emit one batch per challenge", () => {
   const hello = GYM_COMPARE_SUBSET.find((item) => item.id === "01");
   const cmds = buildBrowserHandCommands(hello, ORIGIN);
-  assert.equal(cmds[0][0], "open");
+  assert.equal(cmds.length, 1);
+  assert.equal(cmds[0][0], "batch");
   assert.ok(cmds[0].includes("--page-name"));
   assert.ok(cmds[0].includes("gym-01"));
-  const fill = cmds.find((cmd) => cmd[0] === "fill");
-  assert.ok(fill);
-  assert.ok(fill.includes("--fields"));
-  assert.ok(cmds.some((cmd) => cmd[0] === "click" && cmd.includes("Send")));
-  const evaluate = cmds.at(-1);
-  assert.equal(evaluate[0], "evaluate");
-  assert.match(evaluate.join(" "), /__oracle/);
+  assert.ok(cmds[0].includes("--steps"));
+  const steps = JSON.parse(cmds[0][cmds[0].indexOf("--steps") + 1]);
+  assert.equal(steps[0].operation, "open");
+  assert.match(steps[0].url, /01-hello-form\.html/);
+  assert.equal(steps[1].operation, "fill_fields");
+  assert.equal(steps[1].fields.Email, "ada@example.com");
+  assert.equal(steps[2].operation, "click");
+  assert.equal(steps[2].text, "Send");
+  assert.equal(steps.at(-1).operation, "evaluate");
+  assert.match(steps.at(-1).code, /__oracle/);
 });
 
 test("buildPlaywrightScript is vanilla Playwright locators without getPage", () => {
-  const hello = buildPlaywrightScript(GYM_COMPARE_SUBSET.find((item) => item.id === "01"), ORIGIN);
+  const hello = buildPlaywrightScript(
+    GYM_COMPARE_SUBSET.find((item) => item.id === "01"),
+    ORIGIN
+  );
   assert.match(hello, /page\.goto\(/);
   assert.match(hello, /getByLabel\("Full name"\)/);
   assert.doesNotMatch(hello, /getPage\(/);
-  const iframe = buildPlaywrightScript(GYM_COMPARE_SUBSET.find((item) => item.id === "09"), ORIGIN);
+  const iframe = buildPlaywrightScript(
+    GYM_COMPARE_SUBSET.find((item) => item.id === "09"),
+    ORIGIN
+  );
   assert.match(iframe, /frameLocator\("#ticket-frame"\)/);
 });
 
@@ -188,7 +217,10 @@ test("puppeteerAriaSelector uses aria/ locators (Puppeteer has no getByRole)", (
 });
 
 test("gymOriginLooksHealthy requires a known challenge marker", () => {
-  assert.equal(gymOriginLooksHealthy(200, "<html><script>window.__CHALLENGE__={}</script></html>"), true);
+  assert.equal(
+    gymOriginLooksHealthy(200, "<html><script>window.__CHALLENGE__={}</script></html>"),
+    true
+  );
   assert.equal(gymOriginLooksHealthy(200, "<html>unrelated</html>"), false);
   assert.equal(gymOriginLooksHealthy(404, "missing"), false);
 });
@@ -210,8 +242,22 @@ test("assertLoopbackOrigin allows bracketed IPv6 loopback", () => {
 test("buildBrowserHandCommands uses browserHandSteps when present", () => {
   const combo = GYM_COMPARE_SUBSET.find((item) => item.id === "20");
   const cmds = buildBrowserHandCommands(combo, ORIGIN);
-  assert.ok(cmds.some((cmd) => cmd[0] === "fill"));
-  assert.ok(!cmds.some((cmd) => cmd[0] === "click"), "BH must not re-click the already-selected option");
+  assert.equal(cmds.length, 1);
+  const steps = JSON.parse(cmds[0][cmds[0].indexOf("--steps") + 1]);
+  assert.ok(steps.some((step) => step.operation === "fill_fields"));
+  assert.ok(
+    !steps.some((step) => step.operation === "click"),
+    "BH must not re-click the already-selected option"
+  );
   assert.equal(stepCount(combo, { driver: "browser-hand" }), 1 + combo.browserHandSteps.length + 1);
   assert.equal(stepCount(combo), 1 + combo.steps.filter((step) => step.op !== "wait").length + 1);
+});
+
+test("buildBrowserHandBatchSteps is open + recipe + oracle", () => {
+  const hello = GYM_COMPARE_SUBSET.find((item) => item.id === "01");
+  const steps = buildBrowserHandBatchSteps(hello, ORIGIN);
+  assert.deepEqual(
+    steps.map((step) => step.operation),
+    ["open", "fill_fields", "click", "evaluate"]
+  );
 });

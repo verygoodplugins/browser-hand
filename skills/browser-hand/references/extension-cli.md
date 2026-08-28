@@ -48,6 +48,14 @@ browser-hand screenshot --page-name smoke
 browser-hand goto --page-name smoke --url https://example.com/next
 ```
 
+### Batch (one attach)
+
+Multi-step work on one named tab should use `batch` so open/fill/click/evaluate share a CDP session. Separate CLI calls reattach every time.
+
+```bash
+browser-hand batch --page-name smoke --steps '[{"operation":"open","url":"https://example.com"},{"operation":"fill_fields","fields":{"Email":"a@b.c"}},{"operation":"click","text":"Submit"},{"operation":"evaluate","code":"document.title"}]'
+```
+
 - `--fields` must be a **JSON object** of label → value.
 - Click uses a full pointer sequence (not bare `el.click()`).
 - Type/fill on contenteditable fire `beforeinput` + `input` for editors like Lexical.
