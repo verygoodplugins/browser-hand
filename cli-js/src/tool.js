@@ -601,10 +601,17 @@ export function parseBatchSteps(steps) {
     if (!BATCHABLE_OPERATIONS.has(operation)) {
       throw new Error(`operation ${JSON.stringify(step.operation)} is not batchable`);
     }
-    if (operation === "fill_fields" && Array.isArray(step.fields)) {
-      throw new Error(
-        `batch step ${index}: fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not an array`
-      );
+    if (operation === "fill_fields") {
+      const fields = step.fields;
+      if (
+        fields === null ||
+        typeof fields !== "object" ||
+        Array.isArray(fields)
+      ) {
+        throw new Error(
+          `batch step ${index}: fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not ${fields === null ? "null" : Array.isArray(fields) ? "an array" : typeof fields}`
+        );
+      }
     }
     return { ...step, operation };
   });
@@ -1497,22 +1504,23 @@ async function executeAttachedOperation({
       };
     }
     const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
-    return redactSensitiveObject(
-      {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        profile: plan.profile,
-        context: plan.context,
-        planned: plan.matched,
-        skipped: plan.skipped,
-        result,
-        redacted: sub.redactions.length > 0,
-      },
-      sub.redactions
-    );
+    const payload = {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      profile: plan.profile,
+      context: plan.context,
+      planned: plan.matched,
+      skipped: plan.skipped,
+      result,
+      redacted: sub.redactions.length > 0,
+    };
+    if (sub.redactions.length > 0) {
+      payload.redactionValues = sub.redactions;
+    }
+    return redactSensitiveObject(payload, sub.redactions);
   }
 
   if (operation === "click") {
@@ -1754,7 +1762,7 @@ async function runCurrentBatch(input, timeoutMs) {
         };
       }
 
-      const out = await executeAttachedOperation({
+      let out = await executeAttachedOperation({
         cdp,
         sessionId: attached.sessionId,
         selected: attached.selected,
@@ -1762,6 +1770,11 @@ async function runCurrentBatch(input, timeoutMs) {
         input: stepInput,
         timeoutMs,
       });
+      if (Array.isArray(out.redactionValues) && out.redactionValues.length) {
+        batchRedactions.push(...out.redactionValues);
+        const { redactionValues, ...rest } = out;
+        out = rest;
+      }
       results.push(redactSensitiveObject(out, batchRedactions));
       if (
         out.success &&

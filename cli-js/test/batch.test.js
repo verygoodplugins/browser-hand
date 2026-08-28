@@ -79,6 +79,32 @@ test("parseBatchSteps rejects array fields in fill steps", () => {
       ]),
     /fields must be a JSON object map/i
   );
+  assert.throws(
+    () =>
+      parseBatchSteps([
+        { operation: "fill", fields: "Email" },
+      ]),
+    /fields must be a JSON object map/i
+  );
+});
+
+test("batch collects autofill redactionValues before later steps", async () => {
+  const { redactSensitiveText } = await import("../src/tool.js");
+  const batchRedactions = ["autofill-secret-abc"];
+  const autofillStep = { success: true, operation: "autofill_profile", redacted: true };
+  const evaluateStep = {
+    success: true,
+    operation: "evaluate",
+    result: { password: "autofill-secret-abc" },
+  };
+  const redactedEvaluate = {
+    ...evaluateStep,
+    result: {
+      password: redactSensitiveText(evaluateStep.result.password, batchRedactions),
+    },
+  };
+  assert.equal(redactedEvaluate.result.password, "[REDACTED]");
+  assert.equal(autofillStep.redacted, true);
 });
 
 test("batch redactions aggregate per-step secrets in output", async () => {
