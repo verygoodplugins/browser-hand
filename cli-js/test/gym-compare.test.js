@@ -11,6 +11,7 @@ import {
   DEFAULT_UPSTREAM_BIN,
   GYM_COMPARE_DRIVERS,
   parseCliArgs,
+  puppeteerAriaSelector,
   gymOriginLooksHealthy,
   assertLoopbackOrigin,
   buildBrowserHandCommands,
@@ -41,6 +42,18 @@ test("compare subset is the five widget challenges", () => {
 test("stepCount includes navigate, actions, and oracle", () => {
   const hello = GYM_COMPARE_SUBSET.find((item) => item.id === "01");
   assert.equal(stepCount(hello), 1 + hello.steps.length + 1);
+});
+
+test("stepCount ignores wait ops", () => {
+  const combo = GYM_COMPARE_SUBSET.find((item) => item.id === "20");
+  const waits = combo.steps.filter((step) => step.op === "wait").length;
+  assert.equal(waits, 1);
+  assert.equal(stepCount(combo), 1 + (combo.steps.length - waits) + 1);
+});
+
+test("GYM_COMPARE_DRIVERS includes puppeteer as a benchmark sibling", () => {
+  assert.ok(GYM_COMPARE_DRIVERS.includes("playwright"));
+  assert.ok(GYM_COMPARE_DRIVERS.includes("puppeteer"));
 });
 
 test("parseOracle reads ok from evaluate JSON and CLI wrappers", () => {
@@ -165,6 +178,15 @@ test("parseCliArgs all includes playwright", () => {
   assert.deepEqual(parseCliArgs(["--driver", "all"]).drivers, [...GYM_COMPARE_DRIVERS]);
 });
 
+test("parseCliArgs accepts puppeteer", () => {
+  assert.deepEqual(parseCliArgs(["--driver", "puppeteer"]).drivers, ["puppeteer"]);
+});
+
+test("puppeteerAriaSelector uses aria/ locators (Puppeteer has no getByRole)", () => {
+  assert.equal(puppeteerAriaSelector("Full name"), "aria/Full name");
+  assert.equal(puppeteerAriaSelector("Send", "button"), 'aria/Send[role="button"]');
+});
+
 test("gymOriginLooksHealthy requires a known challenge marker", () => {
   assert.equal(gymOriginLooksHealthy(200, "<html><script>window.__CHALLENGE__={}</script></html>"), true);
   assert.equal(gymOriginLooksHealthy(200, "<html>unrelated</html>"), false);
@@ -191,5 +213,5 @@ test("buildBrowserHandCommands uses browserHandSteps when present", () => {
   assert.ok(cmds.some((cmd) => cmd[0] === "fill"));
   assert.ok(!cmds.some((cmd) => cmd[0] === "click"), "BH must not re-click the already-selected option");
   assert.equal(stepCount(combo, { driver: "browser-hand" }), 1 + combo.browserHandSteps.length + 1);
-  assert.equal(stepCount(combo), 1 + combo.steps.length + 1);
+  assert.equal(stepCount(combo), 1 + combo.steps.filter((step) => step.op !== "wait").length + 1);
 });

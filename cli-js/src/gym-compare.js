@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import http from "node:http";
 import https from "node:https";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(path.dirname(__filename), "../..");
@@ -16,7 +16,7 @@ const DEFAULT_ORIGIN = "http://127.0.0.1:8766";
 const ORACLE_CODE = "JSON.stringify(window.__oracle())";
 /** Repo launcher — npm scripts do not put package.bin on PATH. */
 export const DEFAULT_UPSTREAM_BIN = path.join(REPO_ROOT, "bin/dev-browser.js");
-export const GYM_COMPARE_DRIVERS = ["browser-hand", "dev-browser", "playwright"];
+export const GYM_COMPARE_DRIVERS = ["browser-hand", "dev-browser", "playwright", "puppeteer"];
 
 export const GYM_COMPARE_SUBSET = [
   {
@@ -86,13 +86,20 @@ export const GYM_COMPARE_SUBSET = [
   },
 ];
 
+export function actionSteps(steps = []) {
+  return steps.filter((step) => step.op !== "wait");
+}
+
+export function recipeSteps(challenge, driver) {
+  if (driver === "browser-hand" && Array.isArray(challenge.browserHandSteps)) {
+    return challenge.browserHandSteps;
+  }
+  return challenge.steps;
+}
+
 export function stepCount(challenge, { driver } = {}) {
-  const steps =
-    driver === "browser-hand" && Array.isArray(challenge.browserHandSteps)
-      ? challenge.browserHandSteps
-      : challenge.steps;
-  // navigate + recipe actions + oracle evaluate
-  return 1 + steps.length + 1;
+  // navigate + agent-visible actions + oracle evaluate (waits are not steps)
+  return 1 + actionSteps(recipeSteps(challenge, driver)).length + 1;
 }
 
 export function parseOracle(raw) {
@@ -187,10 +194,7 @@ function challengeUrl(challenge, origin) {
 export function buildBrowserHandCommands(challenge, origin) {
   const page = ["--page-name", challenge.pageName];
   const cmds = [["open", "--url", challengeUrl(challenge, origin), ...page, "--quiet"]];
-  const recipe = Array.isArray(challenge.browserHandSteps)
-    ? challenge.browserHandSteps
-    : challenge.steps;
-  for (const step of recipe) {
+  for (const step of recipeSteps(challenge, "browser-hand")) {
     if (step.op === "fill") {
       cmds.push(["fill", ...page, "--fields", JSON.stringify(step.fields), "--quiet"]);
     } else if (step.op === "click") {
@@ -357,6 +361,34 @@ export async function ensureGymServer(origin) {
   throw new Error(`gym server did not start on ${origin}`);
 }
 
+let cachedCliModule = null;
+
+async function loadCliModule(bin) {
+  process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
+  if (cachedCliModule && cachedCliModule.bin === bin) {
+    return cachedCliModule.mod;
+  }
+  const mod = await import(pathToFileURL(bin).href);
+  cachedCliModule = { bin, mod };
+  return mod;
+}
+
+async function invokeBrowserHand(bin, cmd, options) {
+  if (options.spawnCli) {
+    return spawnCaptured(process.execPath, [bin, ...cmd], {
+      timeoutMs: options.commandTimeoutMs || 30000,
+    });
+  }
+  const cli = await loadCliModule(bin);
+  if (typeof cli.runCli !== "function") {
+    return spawnCaptured(process.execPath, [bin, ...cmd], {
+      timeoutMs: options.commandTimeoutMs || 30000,
+    });
+  }
+  const ran = await cli.runCli(cmd);
+  return { code: ran.code ?? 1, stdout: ran.stdout || "", stderr: "" };
+}
+
 async function runBrowserHandChallenge(challenge, options) {
   const started = Date.now();
   const cmds = buildBrowserHandCommands(challenge, options.origin);
@@ -367,14 +399,11 @@ async function runBrowserHandChallenge(challenge, options) {
   const bin = options.browserHandBin;
   for (const cmd of cmds) {
     if (cmd[0] === "wait") {
-      issued += 1;
       await new Promise((resolve) => setTimeout(resolve, Number(cmd[1]) || 0));
       continue;
     }
     issued += 1;
-    const result = await spawnCaptured(process.execPath, [bin, ...cmd], {
-      timeoutMs: options.commandTimeoutMs || 30000,
-    });
+    const result = await invokeBrowserHand(bin, cmd, options);
     stdoutBytes += Buffer.byteLength(result.stdout || "", "utf8");
     if (cmd[0] === "evaluate") {
       try {
@@ -397,7 +426,7 @@ async function runBrowserHandChallenge(challenge, options) {
     name: challenge.name,
     driver: "browser-hand",
     ok: lastOracle.ok && !error,
-    steps: issued,
+    steps: stepCount(challenge, { driver: "browser-hand" }),
     expectedSteps: stepCount(challenge, { driver: "browser-hand" }),
     detail: lastOracle.detail,
     checks: lastOracle.checks,
@@ -445,21 +474,18 @@ async function runDevBrowserChallenge(challenge, options) {
   };
 }
 
-async function runPlaywrightChallenge(challenge, options) {
+async function runLocatorPageChallenge(challenge, options, { driver, page }) {
   const started = Date.now();
   let oracle = { ok: false, checks: {}, detail: "not evaluated" };
   let error = null;
-  const page = options.playwrightPage;
   try {
     if (!page) {
-      throw new Error("playwright page missing");
+      throw new Error(`${driver} page missing`);
     }
     await page.goto(challengeUrl(challenge, options.origin), { waitUntil: "domcontentloaded" });
     for (const step of challenge.steps) {
       const root =
-        step.scope === "iframe" && challenge.frame
-          ? page.frameLocator(challenge.frame)
-          : page;
+        step.scope === "iframe" && challenge.frame ? page.frameLocator(challenge.frame) : page;
       if (step.op === "fill") {
         for (const [label, value] of Object.entries(step.fields)) {
           await root.getByLabel(label).fill(value);
@@ -479,7 +505,7 @@ async function runPlaywrightChallenge(challenge, options) {
   return {
     id: challenge.id,
     name: challenge.name,
-    driver: "playwright",
+    driver,
     ok: !error && oracle.ok,
     steps: stepCount(challenge),
     expectedSteps: stepCount(challenge),
@@ -489,6 +515,93 @@ async function runPlaywrightChallenge(challenge, options) {
     stdoutBytes,
     approxTokens: approxTokens(stdoutBytes),
     ms: Date.now() - started,
+  };
+}
+
+async function runPlaywrightChallenge(challenge, options) {
+  return runLocatorPageChallenge(challenge, options, {
+    driver: "playwright",
+    page: options.playwrightPage,
+  });
+}
+
+export function puppeteerAriaSelector(name, role) {
+  return role ? `aria/${name}[role="${role}"]` : `aria/${name}`;
+}
+
+async function puppeteerRoot(page, challenge, step) {
+  if (step.scope === "iframe" && challenge.frame) {
+    const handle = await page.$(challenge.frame);
+    if (!handle) {
+      throw new Error(`iframe ${challenge.frame} not found`);
+    }
+    const frame = await handle.contentFrame();
+    if (!frame) {
+      throw new Error(`iframe ${challenge.frame} has no document`);
+    }
+    return frame;
+  }
+  return page;
+}
+
+async function runPuppeteerChallenge(challenge, options) {
+  const started = Date.now();
+  let oracle = { ok: false, checks: {}, detail: "not evaluated" };
+  let error = null;
+  const page = options.puppeteerPage;
+  try {
+    if (!page) {
+      throw new Error("puppeteer page missing");
+    }
+    await page.goto(challengeUrl(challenge, options.origin), { waitUntil: "domcontentloaded" });
+    for (const step of challenge.steps) {
+      const root = await puppeteerRoot(page, challenge, step);
+      if (step.op === "fill") {
+        for (const [label, value] of Object.entries(step.fields)) {
+          await root.locator(puppeteerAriaSelector(label)).fill(value);
+        }
+      } else if (step.op === "click") {
+        await root.locator(puppeteerAriaSelector(step.name, step.role || "button")).click();
+      } else if (step.op === "wait") {
+        await new Promise((resolve) => setTimeout(resolve, Number(step.ms) || 0));
+      }
+    }
+    oracle = parseOracle(await page.evaluate(() => window.__oracle()));
+  } catch (err) {
+    error = String(err && err.message ? err.message : err).slice(0, 400);
+  }
+  const stdout = `GYMCMP:${JSON.stringify({ id: challenge.id, ok: oracle.ok, checks: oracle.checks, detail: oracle.detail })}`;
+  const stdoutBytes = Buffer.byteLength(stdout, "utf8");
+  return {
+    id: challenge.id,
+    name: challenge.name,
+    driver: "puppeteer",
+    ok: !error && oracle.ok,
+    steps: stepCount(challenge),
+    expectedSteps: stepCount(challenge),
+    detail: oracle.detail,
+    checks: oracle.checks,
+    error,
+    stdoutBytes,
+    approxTokens: approxTokens(stdoutBytes),
+    ms: Date.now() - started,
+  };
+}
+
+function unavailableDriverRow(challenge, driver, error) {
+  return {
+    id: challenge.id,
+    name: challenge.name,
+    driver,
+    ok: false,
+    steps: 0,
+    expectedSteps: stepCount(challenge),
+    detail: "",
+    checks: {},
+    error,
+    stdoutBytes: 0,
+    approxTokens: 0,
+    ms: 0,
   };
 }
 
@@ -503,10 +616,13 @@ export async function runGymCompare(options = {}) {
     upstreamBin: options.upstreamBin || DEFAULT_UPSTREAM_BIN,
     commandTimeoutMs: options.commandTimeoutMs || 30000,
     headlessTimeoutMs: options.headlessTimeoutMs || 120000,
+    spawnCli: options.spawnCli === true,
   };
   let playwrightBrowser = null;
   let playwrightContext = null;
   let playwrightLaunchError = null;
+  let puppeteerBrowser = null;
+  let puppeteerLaunchError = null;
   if (drivers.includes("playwright")) {
     try {
       const { chromium } = await import("playwright");
@@ -516,6 +632,23 @@ export async function runGymCompare(options = {}) {
       playwrightLaunchError = `Playwright benchmark driver unavailable: ${String(
         err && err.message ? err.message : err
       ).slice(0, 240)}. Run npx playwright install chromium.`;
+    }
+  }
+  if (drivers.includes("puppeteer")) {
+    try {
+      const [{ chromium }, puppeteerMod] = await Promise.all([
+        import("playwright"),
+        import("puppeteer-core"),
+      ]);
+      const puppeteer = puppeteerMod.default || puppeteerMod;
+      puppeteerBrowser = await puppeteer.launch({
+        executablePath: chromium.executablePath(),
+        headless: true,
+      });
+    } catch (err) {
+      puppeteerLaunchError = `Puppeteer benchmark driver unavailable: ${String(
+        err && err.message ? err.message : err
+      ).slice(0, 240)}. Install puppeteer-core and Playwright Chromium.`;
     }
   }
   const results = [];
@@ -529,35 +662,39 @@ export async function runGymCompare(options = {}) {
       }
       if (drivers.includes("playwright")) {
         if (playwrightLaunchError) {
-          results.push({
-            id: challenge.id,
-            name: challenge.name,
-            driver: "playwright",
-            ok: false,
-            steps: 0,
-            expectedSteps: stepCount(challenge),
-            detail: "",
-            checks: {},
-            error: playwrightLaunchError,
-            stdoutBytes: 0,
-            approxTokens: 0,
-            ms: 0,
-          });
-          continue;
+          results.push(unavailableDriverRow(challenge, "playwright", playwrightLaunchError));
+        } else {
+          const page = await playwrightContext.newPage();
+          try {
+            results.push(
+              await runPlaywrightChallenge(challenge, { ...resolved, playwrightPage: page })
+            );
+          } finally {
+            await page.close();
+          }
         }
-        const page = await playwrightContext.newPage();
-        try {
-          results.push(
-            await runPlaywrightChallenge(challenge, { ...resolved, playwrightPage: page })
-          );
-        } finally {
-          await page.close();
+      }
+      if (drivers.includes("puppeteer")) {
+        if (puppeteerLaunchError) {
+          results.push(unavailableDriverRow(challenge, "puppeteer", puppeteerLaunchError));
+        } else {
+          const page = await puppeteerBrowser.newPage();
+          try {
+            results.push(
+              await runPuppeteerChallenge(challenge, { ...resolved, puppeteerPage: page })
+            );
+          } finally {
+            await page.close();
+          }
         }
       }
     }
   } finally {
     if (playwrightBrowser) {
       await playwrightBrowser.close();
+    }
+    if (puppeteerBrowser) {
+      await puppeteerBrowser.close();
     }
   }
   const summary = summarizeComparison(results);
@@ -576,7 +713,7 @@ export function parseCliArgs(argv) {
     } else if (tok === "--driver") {
       const value = argv[++i];
       if (value == null || value === "") {
-        throw new Error("missing --driver value (all|both|browser-hand|dev-browser|playwright)");
+        throw new Error(`missing --driver value (all|both|${GYM_COMPARE_DRIVERS.join("|")})`);
       }
       if (value === "both") {
         out.drivers = ["browser-hand", "dev-browser"];
@@ -605,8 +742,8 @@ async function main() {
   if (args.help) {
     process.stdout.write(
       "gym-compare — oracle + step-count comparison on challenges 01/08/09/16/20\n" +
-        "Playwright is a gym benchmark (disposable Chromium), not a product path.\n\n" +
-        "  node cli-js/src/gym-compare.js [--driver all|both|browser-hand|dev-browser|playwright]\n" +
+        "Playwright and Puppeteer are gym benchmarks (disposable Chromium), not product paths.\n\n" +
+        "  node cli-js/src/gym-compare.js [--driver all|both|browser-hand|dev-browser|playwright|puppeteer]\n" +
         "  [--origin http://127.0.0.1:8766] [--browser-hand-bin path/to/cli.js]\n  [--upstream-bin path/to/bin/dev-browser.js]  (default: repo bin)\n"
     );
     process.exit(0);

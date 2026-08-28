@@ -72,7 +72,7 @@ Global flags:
   --focus window|tab        Per-call focus override (open/goto/focus). Does not change popup default.
   --reason <text>           Why focus is needed (human-in-the-loop audit).
   --timeout-ms <ms>         Hard timeout (1000-120000, default 30000).
-  --quiet                   Suppress stderr progress lines.
+  --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers).
   -h, --help                Show this help.
 
 Examples:
@@ -118,6 +118,47 @@ function parseArgs(argv) {
 function fail(message, code = 2) {
   process.stderr.write(`browser-hand: ${message}\n`);
   process.exit(code);
+}
+
+export function encodeCliJson(value) {
+  return `${JSON.stringify(value)}\n`;
+}
+
+const QUIET_SLIM_OPS = new Set([
+  "fill_fields",
+  "click",
+  "type",
+  "evaluate",
+  "open",
+  "goto",
+]);
+const QUIET_RESULT_DROP = new Set(["url", "title"]);
+
+export function slimCliResult(result, { quiet } = {}) {
+  if (!quiet || !result || typeof result !== "object") {
+    return result;
+  }
+  if (!QUIET_SLIM_OPS.has(result.operation)) {
+    return result;
+  }
+  const out = { success: result.success };
+  if (result.error) out.error = result.error;
+  if (result.operation) out.operation = result.operation;
+  if (result.pageName) out.pageName = result.pageName;
+  if (Object.prototype.hasOwnProperty.call(result, "result")) {
+    const payload = result.result;
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+      const slim = {};
+      for (const [key, value] of Object.entries(payload)) {
+        if (QUIET_RESULT_DROP.has(key)) continue;
+        slim[key] = value;
+      }
+      out.result = slim;
+    } else {
+      out.result = payload;
+    }
+  }
+  return out;
 }
 
 function buildTarget(args) {
@@ -270,38 +311,38 @@ function buildHandlerInput(operation, args) {
   return input;
 }
 
-async function main() {
-  const argv = process.argv.slice(2);
+export async function runCli(argv) {
   const args = parseArgs(argv);
+  const quiet = !!args.quiet;
 
   if (args.help || args._.length === 0) {
-    process.stdout.write(HELP);
-    process.exit(args.help ? 0 : 2);
+    return { code: args.help ? 0 : 2, stdout: HELP, help: true };
   }
 
   const raw = args._[0];
   const operation = OP_ALIASES[raw] || raw;
 
-  if (args.quiet) {
+  if (quiet) {
     process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
   }
 
   if (operation === "relay") {
     let res;
     try {
-      // Resolves immediately if a relay is already up; otherwise blocks,
-      // serving the relay in the foreground until it exits (Ctrl-C).
       res = await startPersistentRelay();
     } catch (err) {
-      fail(err && err.message ? err.message : String(err), 1);
-      return;
+      const result = { success: false, error: err && err.message ? err.message : String(err) };
+      return { code: 1, result, stdout: encodeCliJson(result) };
     }
-    process.stdout.write(`${JSON.stringify(res, null, 2)}\n`);
-    process.exit(res.alreadyRunning ? 0 : res.exitCode || 0);
+    const result = slimCliResult(res, { quiet });
+    return {
+      code: res.alreadyRunning ? 0 : res.exitCode || 0,
+      result,
+      stdout: encodeCliJson(result),
+    };
   }
 
   const input = buildHandlerInput(operation, args);
-
   let result;
   try {
     result = await devBrowserTool.handler(input);
@@ -311,9 +352,18 @@ async function main() {
       error: err && err.message ? err.message : String(err),
     };
   }
+  result = slimCliResult(result, { quiet });
+  return {
+    code: result && result.success === true ? 0 : 1,
+    result,
+    stdout: encodeCliJson(result),
+  };
+}
 
-  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  process.exit(result && result.success === true ? 0 : 1);
+async function main() {
+  const ran = await runCli(process.argv.slice(2));
+  process.stdout.write(ran.stdout);
+  process.exit(ran.code);
 }
 
 const invoked = process.argv[1]
