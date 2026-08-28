@@ -180,3 +180,7 @@ test("assertLoopbackOrigin rejects non-loopback hosts", () => {
   assert.throws(() => assertLoopbackOrigin("http://example.com:8766"), /loopback/i);
   assert.throws(() => assertLoopbackOrigin("https://evil.test/"), /loopback/i);
 });
+
+test("assertLoopbackOrigin allows bracketed IPv6 loopback", () => {
+  assert.equal(assertLoopbackOrigin("http://[::1]:8766").hostname, "[::1]");
+});

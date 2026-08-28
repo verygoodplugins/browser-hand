@@ -281,7 +281,7 @@ export function assertLoopbackOrigin(origin) {
   } catch {
     throw new Error(`invalid --origin "${origin}"`);
   }
-  const host = (url.hostname || "").toLowerCase();
+  const host = (url.hostname || "").toLowerCase().replace(/^\[|\]$/g, "");
   if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
     throw new Error(
       `gym origin must be loopback (got ${host}); public sites stay navigate/snapshot-only`
@@ -323,7 +323,8 @@ export async function ensureGymServer(origin) {
     return { started: false, origin };
   }
   const url = assertLoopbackOrigin(origin);
-  const bindHost = url.hostname === "localhost" ? "127.0.0.1" : url.hostname || "127.0.0.1";
+  const rawHost = (url.hostname || "").replace(/^\[|\]$/g, "");
+  const bindHost = rawHost === "localhost" || !rawHost ? "127.0.0.1" : rawHost;
   const child = spawn(
     "python3",
     ["-m", "http.server", url.port || "8766", "--bind", bindHost],
@@ -383,7 +384,7 @@ async function runBrowserHandChallenge(challenge, options) {
     id: challenge.id,
     name: challenge.name,
     driver: "browser-hand",
-    ok: lastOracle.ok,
+    ok: lastOracle.ok && !error,
     steps: issued,
     expectedSteps: stepCount(challenge),
     detail: lastOracle.detail,
