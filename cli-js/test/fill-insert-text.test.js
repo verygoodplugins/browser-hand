@@ -88,7 +88,10 @@ test("isComboboxWidget detects explicit combobox role", () => {
 test("matchComboboxOption prefers a text match on role=option", () => {
   const options = [
     { getAttribute: (name) => (name === "role" ? "option" : null), textContent: "BER · Berlin" },
-    { getAttribute: (name) => (name === "role" ? "option" : null), textContent: "JFK · New York John F. Kennedy" },
+    {
+      getAttribute: (name) => (name === "role" ? "option" : null),
+      textContent: "JFK · New York John F. Kennedy",
+    },
   ];
   const hit = matchComboboxOption(options, "JFK");
   assert.equal(hit.textContent, "JFK · New York John F. Kennedy");
@@ -174,11 +177,11 @@ test("insertTextDelayMs is zero for ordinary text so long fills stay under the r
   assert.equal(insertTextDelayMs(makeInput({ type: "text" }), "a".repeat(800)), 0);
 });
 
-test("insertTextDelayMs keeps combobox typing under a 20s budget", () => {
+test("insertTextDelayMs is zero for combobox keystrokes so background tabs are not timer-throttled", () => {
   const combo = makeInput({ role: "combobox" });
-  assert.equal(insertTextDelayMs(combo, "JFK"), 55);
+  assert.equal(insertTextDelayMs(combo, "JFK"), 0);
   const long = "x".repeat(800);
-  const delay = insertTextDelayMs(combo, long);
+  const delay = insertTextDelayMs(combo, long, { requestedMs: 55 });
   assert.ok(delay < 55, delay);
   assert.ok(delay * long.length <= 20000, delay * long.length);
 });
@@ -192,10 +195,26 @@ test("optionIsVisible rejects aria-disabled options", () => {
   assert.equal(optionIsVisible(option), false);
 });
 
+test("optionIsVisible ignores empty client rects in a background tab", () => {
+  const previous = globalThis.document;
+  globalThis.document = { visibilityState: "hidden" };
+  try {
+    const option = {
+      getClientRects: () => [],
+      getAttribute: () => null,
+      hidden: false,
+    };
+    assert.equal(optionIsVisible(option), true);
+  } finally {
+    if (previous === undefined) delete globalThis.document;
+    else globalThis.document = previous;
+  }
+});
+
 test("insertTextDelayMs respects a shared remaining budget across fields", () => {
   const combo = makeInput({ role: "combobox" });
-  assert.equal(insertTextDelayMs(combo, "JFK", { budgetMs: 0 }), 0);
-  const delay = insertTextDelayMs(combo, "JFK", { budgetMs: 10 });
+  assert.equal(insertTextDelayMs(combo, "JFK", { requestedMs: 55, budgetMs: 0 }), 0);
+  const delay = insertTextDelayMs(combo, "JFK", { requestedMs: 55, budgetMs: 10 });
   assert.equal(delay, 3);
 });
 

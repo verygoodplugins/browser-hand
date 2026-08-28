@@ -135,7 +135,15 @@ const QUIET_SLIM_OPS = new Set([
   "goto",
   "batch",
 ]);
-const QUIET_RESULT_DROP = new Set(["url", "title"]);
+const QUIET_RESULT_DROP = new Set([
+  "url",
+  "title",
+  "score",
+  "candidateCount",
+  "runnersUp",
+  "documentHidden",
+  "visible",
+]);
 
 export function slimCliResult(result, { quiet } = {}) {
   if (!quiet || !result || typeof result !== "object") {
@@ -159,6 +167,7 @@ export function slimCliResult(result, { quiet } = {}) {
       const slim = {};
       for (const [key, value] of Object.entries(payload)) {
         if (result.operation !== "evaluate" && QUIET_RESULT_DROP.has(key)) continue;
+        if (key === "failed" && Array.isArray(value) && value.length === 0) continue;
         slim[key] = value;
       }
       out.result = slim;

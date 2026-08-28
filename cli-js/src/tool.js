@@ -1131,6 +1131,22 @@ class CdpClient {
   }
 }
 
+export async function resumeBackgroundPage(cdp, sessionId) {
+  // Emulate in-page focus so Chrome does not throttle timers / rAF / layout
+  // on a background tab. This is not Target.activateTarget and does not
+  // steal OS or window focus.
+  try {
+    await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true }, sessionId);
+  } catch {
+    // Older Chrome, or the domain is unavailable on this target.
+  }
+  try {
+    await cdp.send("Page.setWebLifecycleState", { state: "active" }, sessionId);
+  } catch {
+    // Experimental; safe to skip.
+  }
+}
+
 export async function navigateAndWait(cdp, sessionId, url, timeoutMs) {
   const waitMs = Math.min(
     Math.max(
@@ -1147,6 +1163,7 @@ export async function navigateAndWait(cdp, sessionId, url, timeoutMs) {
     .catch(() => null);
   const navResult = await cdp.send("Page.navigate", { url }, sessionId);
   await ready;
+  await resumeBackgroundPage(cdp, sessionId);
   return navResult;
 }
 
@@ -1162,7 +1179,7 @@ async function attachTarget(cdp, targetId) {
     }
     await cdp.send("Runtime.enable", undefined, sessionId);
     await cdp.send("Page.enable", undefined, sessionId);
-    await cdp.send("DOM.enable", undefined, sessionId);
+    await resumeBackgroundPage(cdp, sessionId);
     return sessionId;
   };
 
@@ -2172,7 +2189,7 @@ export function isComboboxWidget(el) {
   return role === "combobox" || el.tagName === "SELECT";
 }
 
-export function insertTextDelayMs(el, text, { requestedMs = 55, budgetMs = 20000 } = {}) {
+export function insertTextDelayMs(el, text, { requestedMs = 0, budgetMs = 20000 } = {}) {
   if (!isComboboxWidget(el) || el.tagName === "SELECT") return 0;
   const n = Math.max(1, String(text ?? "").length);
   return Math.max(0, Math.min(requestedMs, Math.floor(budgetMs / n)));
@@ -2224,11 +2241,17 @@ export function collectComboboxOptions(root) {
 
 export function optionIsVisible(el) {
   if (!el) return false;
-  try {
-    if (typeof el.getClientRects === "function" && el.getClientRects().length === 0) {
-      return false;
-    }
-  } catch {}
+  // Background tabs often report empty client rects even for real options.
+  // Skip the layout check when the document is hidden so combobox select
+  // still works without stealing OS focus.
+  const backgrounded = typeof document !== "undefined" && document.visibilityState === "hidden";
+  if (!backgrounded) {
+    try {
+      if (typeof el.getClientRects === "function" && el.getClientRects().length === 0) {
+        return false;
+      }
+    } catch {}
+  }
   try {
     const style = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
     if (style && (style.display === "none" || style.visibility === "hidden")) return false;
@@ -2288,7 +2311,7 @@ export function dispatchOptionPointer(option) {
   return true;
 }
 
-export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root } = {}) {
+export async function waitForComboboxOption(el, query, { timeoutMs = 2500, root } = {}) {
   const deadline = Date.now() + timeoutMs;
   const base = root || (typeof document !== "undefined" ? document : null);
   while (Date.now() <= deadline) {
@@ -2430,7 +2453,7 @@ export function buildFillFieldsExpression(fields) {
       }
       await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str, { budgetMs: Math.max(0, deadline - Date.now()) }) });
       if (isComboboxWidget(el) && el.tagName !== 'SELECT') {
-        const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
+        const option = await waitForComboboxOption(el, str, { timeoutMs: 2500 });
         if (!option) throw new Error('combobox option not found');
         dispatchOptionPointer(option);
         return { mode: 'combobox', selected: true };

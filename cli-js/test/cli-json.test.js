@@ -48,7 +48,7 @@ test("slimCliResult --quiet drops mode/target/url/title from fill", () => {
     success: true,
     operation: "fill_fields",
     pageName: "gym-01",
-    result: { filled: ["Email"], failed: [] },
+    result: { filled: ["Email"] },
   });
 });
 
