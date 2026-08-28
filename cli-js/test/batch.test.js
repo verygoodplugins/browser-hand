@@ -76,6 +76,16 @@ test("parseBatchSteps rejects open/goto foreground focus without reason", () => 
   assert.equal(ok[0].focusPolicy, "tab");
 });
 
+test("validateBatchTopLevelFocus rejects batch --focus without --reason", async () => {
+  const { validateBatchTopLevelFocus } = await import("../src/tool.js");
+  assert.equal(
+    validateBatchTopLevelFocus({ focusPolicy: "window", steps: [] }),
+    "batch foreground focus requires a non-empty reason (--reason or --focus-reason)"
+  );
+  assert.equal(validateBatchTopLevelFocus({ focusPolicy: "background" }), null);
+  assert.equal(validateBatchTopLevelFocus({ focusPolicy: "window", reason: "2fa" }), null);
+});
+
 test("navigateAndWait subscribes to load before Page.navigate", async () => {
   const order = [];
   const cdp = {

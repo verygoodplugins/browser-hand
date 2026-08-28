@@ -602,6 +602,22 @@ function batchStepRequestsForegroundFocus(step, operation) {
   return policy === "window" || policy === "tab";
 }
 
+export function validateBatchTopLevelFocus(input = {}) {
+  const raw = input.focusPolicy ?? input.focus;
+  if (raw === undefined || raw === null || raw === false || raw === "") {
+    return null;
+  }
+  const policy = raw === true ? "window" : String(raw);
+  if (policy !== "window" && policy !== "tab") {
+    return null;
+  }
+  const reason = input.focusReason || input.reason;
+  if (typeof reason !== "string" || reason.trim() === "") {
+    return "batch foreground focus requires a non-empty reason (--reason or --focus-reason)";
+  }
+  return null;
+}
+
 export function parseBatchSteps(steps) {
   if (!Array.isArray(steps) || steps.length === 0) {
     throw new Error("batch requires a non-empty --steps JSON array");
@@ -1724,6 +1740,16 @@ async function runCurrentBatch(input, timeoutMs) {
       mode: "current",
       operation: "batch",
       error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const batchFocusError = validateBatchTopLevelFocus(input);
+  if (batchFocusError) {
+    return {
+      success: false,
+      mode: "current",
+      operation: "batch",
+      error: batchFocusError,
     };
   }
 
