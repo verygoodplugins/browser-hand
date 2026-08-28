@@ -117,6 +117,19 @@ export function parseOracle(raw) {
       return { ok: false, checks: {}, detail: `unparseable oracle: ${trimmed.slice(0, 200)}` };
     }
   }
+  if (
+    value &&
+    typeof value === "object" &&
+    value.operation === "batch" &&
+    Array.isArray(value.results)
+  ) {
+    const lastEval = [...value.results]
+      .reverse()
+      .find((step) => step && step.operation === "evaluate");
+    if (lastEval) {
+      return parseOracle(lastEval);
+    }
+  }
   if (value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "result")) {
     return parseOracle(value.result);
   }
@@ -191,20 +204,32 @@ function challengeUrl(challenge, origin) {
   return `${origin.replace(/\/$/, "")}/${challenge.file}`;
 }
 
-export function buildBrowserHandCommands(challenge, origin) {
-  const page = ["--page-name", challenge.pageName];
-  const cmds = [["open", "--url", challengeUrl(challenge, origin), ...page, "--quiet"]];
+export function buildBrowserHandBatchSteps(challenge, origin) {
+  const steps = [{ operation: "open", url: challengeUrl(challenge, origin) }];
   for (const step of recipeSteps(challenge, "browser-hand")) {
     if (step.op === "fill") {
-      cmds.push(["fill", ...page, "--fields", JSON.stringify(step.fields), "--quiet"]);
+      steps.push({ operation: "fill_fields", fields: step.fields });
     } else if (step.op === "click") {
-      cmds.push(["click", ...page, "--text", step.name, "--quiet"]);
+      steps.push({ operation: "click", text: step.name });
     } else if (step.op === "wait") {
-      cmds.push(["wait", String(step.ms)]);
+      steps.push({ operation: "wait", ms: Number(step.ms) || 0 });
     }
   }
-  cmds.push(["evaluate", ...page, "--code", ORACLE_CODE, "--quiet"]);
-  return cmds;
+  steps.push({ operation: "evaluate", code: ORACLE_CODE });
+  return steps;
+}
+
+export function buildBrowserHandCommands(challenge, origin) {
+  return [
+    [
+      "batch",
+      "--page-name",
+      challenge.pageName,
+      "--steps",
+      JSON.stringify(buildBrowserHandBatchSteps(challenge, origin)),
+      "--quiet",
+    ],
+  ];
 }
 
 function playwrightRoot(challenge, step) {
@@ -242,10 +267,12 @@ export function buildLocatorSteps(challenge, origin) {
 }
 
 export function buildHeadlessScript(challenge, origin) {
-  return [
-    `const page = await browser.getPage(${JSON.stringify(challenge.pageName)});`,
-    ...buildLocatorSteps(challenge, origin),
-  ].join("\n") + "\n";
+  return (
+    [
+      `const page = await browser.getPage(${JSON.stringify(challenge.pageName)});`,
+      ...buildLocatorSteps(challenge, origin),
+    ].join("\n") + "\n"
+  );
 }
 
 /** Vanilla Playwright recipe used only as a gym benchmark, not a product path. */
@@ -308,7 +335,6 @@ export function assertLoopbackOrigin(origin) {
 }
 
 export function gymOriginLooksHealthy(statusCode, body) {
-
   if (!(statusCode >= 200 && statusCode < 400)) return false;
   return /__CHALLENGE__|__oracle/i.test(String(body || ""));
 }
@@ -341,15 +367,11 @@ export async function ensureGymServer(origin) {
   const url = assertLoopbackOrigin(origin);
   const rawHost = (url.hostname || "").replace(/^\[|\]$/g, "");
   const bindHost = rawHost === "localhost" || !rawHost ? "127.0.0.1" : rawHost;
-  const child = spawn(
-    "python3",
-    ["-m", "http.server", url.port || "8766", "--bind", bindHost],
-    {
-      cwd: path.join(REPO_ROOT, "extension/challenges"),
-      stdio: "ignore",
-      detached: true,
-    }
-  );
+  const child = spawn("python3", ["-m", "http.server", url.port || "8766", "--bind", bindHost], {
+    cwd: path.join(REPO_ROOT, "extension/challenges"),
+    stdio: "ignore",
+    detached: true,
+  });
   child.unref();
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
@@ -405,12 +427,10 @@ async function runBrowserHandChallenge(challenge, options) {
     issued += 1;
     const result = await invokeBrowserHand(bin, cmd, options);
     stdoutBytes += Buffer.byteLength(result.stdout || "", "utf8");
-    if (cmd[0] === "evaluate") {
-      try {
-        lastOracle = parseOracle(JSON.parse(result.stdout));
-      } catch {
-        lastOracle = parseOracle(result.stdout);
-      }
+    try {
+      lastOracle = parseOracle(JSON.parse(result.stdout));
+    } catch {
+      lastOracle = parseOracle(result.stdout);
     }
     if (result.code !== 0) {
       error = cliErrorFromOutput(result.stdout, result.stderr, result.code);

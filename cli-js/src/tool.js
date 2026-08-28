@@ -145,10 +145,18 @@ export function filterTabTargets(targets = [], query = {}) {
     pages = pages.filter((item) => item.targetId === idNeedle || item.id === idNeedle);
   }
   if (urlNeedle) {
-    pages = pages.filter((item) => String(item.url || "").toLowerCase().includes(urlNeedle));
+    pages = pages.filter((item) =>
+      String(item.url || "")
+        .toLowerCase()
+        .includes(urlNeedle)
+    );
   }
   if (titleNeedle) {
-    pages = pages.filter((item) => String(item.title || "").toLowerCase().includes(titleNeedle));
+    pages = pages.filter((item) =>
+      String(item.title || "")
+        .toLowerCase()
+        .includes(titleNeedle)
+    );
   }
   if (textNeedle) {
     pages = pages.filter((item) => {
@@ -200,9 +208,7 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
     throw new Error("No http(s) Chrome tabs are available through Browser Hand");
   }
 
-  const explicit = Boolean(
-    target.id || target.url || target.title || target.name || target.query
-  );
+  const explicit = Boolean(target.id || target.url || target.title || target.name || target.query);
   let candidates = pages;
 
   if (target.id) {
@@ -555,6 +561,49 @@ const PAGE_NAME_ATTACH_ONLY_OPERATIONS = new Set([
   "autofill_profile",
   "focus",
 ]);
+
+const BATCHABLE_OPERATIONS = new Set([
+  "open",
+  "goto",
+  "snapshot",
+  "screenshot",
+  "evaluate",
+  "fill_fields",
+  "click",
+  "type",
+  "autofill_profile",
+  "focus",
+  "wait",
+]);
+
+const STEP_OP_ALIASES = {
+  fill: "fill_fields",
+  "fill-fields": "fill_fields",
+  "autofill-profile": "autofill_profile",
+  shot: "screenshot",
+};
+
+const MAX_BATCH_STEPS = 32;
+const NAV_READY_TIMEOUT_MS = 8000;
+
+export function parseBatchSteps(steps) {
+  if (!Array.isArray(steps) || steps.length === 0) {
+    throw new Error("batch requires a non-empty --steps JSON array");
+  }
+  if (steps.length > MAX_BATCH_STEPS) {
+    throw new Error(`batch is limited to ${MAX_BATCH_STEPS} steps`);
+  }
+  return steps.map((step, index) => {
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      throw new Error(`batch step ${index} must be an object`);
+    }
+    const operation = STEP_OP_ALIASES[step.operation] || step.operation;
+    if (!BATCHABLE_OPERATIONS.has(operation)) {
+      throw new Error(`operation ${JSON.stringify(step.operation)} is not batchable`);
+    }
+    return { ...step, operation };
+  });
+}
 
 const FOCUS_POLICIES = new Set(["background", "tab", "window"]);
 
@@ -1030,6 +1079,25 @@ class CdpClient {
   }
 }
 
+export async function navigateAndWait(cdp, sessionId, url, timeoutMs) {
+  const waitMs = Math.min(
+    Math.max(
+      250,
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) ? timeoutMs : NAV_READY_TIMEOUT_MS
+    ),
+    NAV_READY_TIMEOUT_MS
+  );
+  // Subscribe before navigate so a fast load is not missed. Wait for `load`
+  // (not DOMContentLoaded) so same-origin iframes finish — gym challenge 09
+  // fills inside a frame that is not in the parent DCL snapshot.
+  const ready = cdp
+    .waitForEvent("Page.loadEventFired", { sessionId, timeoutMs: waitMs })
+    .catch(() => null);
+  const navResult = await cdp.send("Page.navigate", { url }, sessionId);
+  await ready;
+  return navResult;
+}
+
 async function attachTarget(cdp, targetId) {
   const tryOnce = async () => {
     const attach = await cdp.send("Target.attachToTarget", {
@@ -1213,13 +1281,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
           pageName: plan.pageName,
         };
         sessionId = await attachTarget(cdp, selected.targetId);
-        await cdp.send("Page.navigate", { url: cached.url }, sessionId);
-        await cdp
-          .waitForEvent("Page.loadEventFired", {
-            sessionId,
-            timeoutMs: 15000,
-          })
-          .catch(() => null);
+        await navigateAndWait(cdp, sessionId, cached.url, 15000);
         selected.url = cached.url;
         setCachedNamedPage(plan.pageName, {
           targetId: selected.targetId,
@@ -1364,6 +1426,353 @@ async function runCurrentTabs(input = {}, timeoutMs) {
   }
 }
 
+async function executeAttachedOperation({
+  cdp,
+  sessionId,
+  selected,
+  targetPlan,
+  input,
+  timeoutMs,
+}) {
+  const operation = input.operation;
+
+  if (operation === "snapshot") {
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      snapshot: await evalValue(cdp, sessionId, buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS)),
+    };
+  }
+
+  if (operation === "fill_fields") {
+    if (Array.isArray(input.fields)) {
+      return {
+        success: false,
+        mode: "current",
+        operation,
+        error:
+          'fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not an array. Array input is a silent no-op trap for agents.',
+      };
+    }
+    const fields = input.fields && typeof input.fields === "object" ? input.fields : {};
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      result: await evalValue(cdp, sessionId, buildFillFieldsExpression(fields)),
+    };
+  }
+
+  if (operation === "autofill_profile") {
+    const inspection = await evalValue(cdp, sessionId, buildAutofillProfileControlsExpression());
+    const plan = buildAutofillProfilePlan({
+      controls: Array.isArray(inspection?.controls) ? inspection.controls : [],
+      page: {
+        title: inspection?.title || selected.title || "",
+        url: inspection?.url || selected.url || "",
+      },
+      autofill: autofillData,
+      profile: input.profile || "default",
+      contextHint: input.contextHint || "",
+    });
+    const sub = await substituteAutofillProfileFields(plan.fields);
+    if (sub.errors.length > 0) {
+      return {
+        ...placeholderFailure(sub, "current"),
+        operation,
+        profile: plan.profile,
+        context: plan.context,
+        planned: plan.matched,
+        skipped: plan.skipped,
+      };
+    }
+    const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
+    return redactSensitiveObject(
+      {
+        success: true,
+        mode: "current",
+        operation,
+        target: compactTarget(selected),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+        profile: plan.profile,
+        context: plan.context,
+        planned: plan.matched,
+        skipped: plan.skipped,
+        result,
+        redacted: sub.redactions.length > 0,
+      },
+      sub.redactions
+    );
+  }
+
+  if (operation === "click") {
+    const query = input.selector || input.text || input.value || "";
+    const result = await evalValue(
+      cdp,
+      sessionId,
+      buildClickExpression({
+        selector: input.selector,
+        text: input.text || input.value,
+      })
+    );
+    const base = {
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+    };
+    if (!result || !result.found) {
+      return {
+        success: false,
+        ...base,
+        error: result?.disabled
+          ? `Matched ${JSON.stringify(query)}, but that control is disabled. A real click would do nothing, so this was not dispatched.`
+          : `No clickable element matched ${JSON.stringify(query)}`,
+        result: result || null,
+      };
+    }
+    return {
+      success: true,
+      ...base,
+      // A caveat about the tab, not a claim about the outcome. Verifying what
+      // a click did is the caller's job — they have snapshot and evaluate.
+      ...(result.interrupted
+        ? {
+            warning: `The control was removed from the page during the click, before the ${result.interrupted} event. Part of the sequence was not delivered, so the action may or may not have run — re-check the page rather than assuming either way.`,
+          }
+        : {}),
+      ...(result.documentHidden && !result.interrupted
+        ? {
+            warning:
+              'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
+          }
+        : {}),
+      result: {
+        clicked: query,
+        matched: result.matched,
+        score: result.score,
+        candidateCount: result.candidateCount,
+        ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
+        visible: result.visible,
+        ...(result.interrupted ? { interrupted: result.interrupted } : {}),
+        documentHidden: result.documentHidden,
+        url: result.url,
+      },
+    };
+  }
+
+  if (operation === "type") {
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      result: await evalValue(
+        cdp,
+        sessionId,
+        buildTypeExpression({
+          selector: input.selector,
+          label: input.label,
+          text: input.text || input.value || "",
+        })
+      ),
+    };
+  }
+
+  if (operation === "evaluate") {
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      result: await evaluateUserCode(cdp, sessionId, input.code || input.script),
+    };
+  }
+
+  if (operation === "focus") {
+    const focus = await applyAgentFocus(cdp, sessionId, selected, {
+      focusPolicy: input.focusPolicy || input.focus || "window",
+      focusReason: input.focusReason || input.reason,
+      focusTtlMs: input.focusTtlMs,
+    });
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      focus,
+    };
+  }
+
+  if (operation === "open" || operation === "goto") {
+    if (!input.url) {
+      return { success: false, error: `url is required for ${operation}` };
+    }
+    const navResult = await navigateAndWait(cdp, sessionId, input.url, timeoutMs);
+    selected.url = input.url;
+    if (input.pageName && !isBlankUrl(input.url)) {
+      setCachedNamedPage(input.pageName, {
+        targetId: selected.targetId,
+        url: input.url,
+        title: selected.title || "",
+      });
+    }
+    const navError = navResult?.errorText || null;
+    const httpStatusCode =
+      typeof navResult?.httpStatusCode === "number" ? navResult.httpStatusCode : null;
+    let focus = null;
+    if (navError === null && (input.focusPolicy || input.focus)) {
+      focus = await applyAgentFocus(cdp, sessionId, selected, input);
+    }
+    return {
+      success: navError === null,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      url: input.url,
+      ...(httpStatusCode !== null ? { httpStatusCode } : {}),
+      ...(navError ? { error: navError } : {}),
+      ...(focus ? { focus } : {}),
+    };
+  }
+
+  if (operation === "screenshot") {
+    // Prefer a fast CDP capture. Extension races a short timeout then falls
+    // back to chrome.tabs.captureVisibleTab (no OS focus steal).
+    const result = await cdp.send(
+      "Page.captureScreenshot",
+      {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: input.fullPage === true,
+      },
+      sessionId
+    );
+    const filePath = await saveCurrentScreenshot(result?.data, selected);
+    return {
+      success: true,
+      mode: "current",
+      operation,
+      target: compactTarget(selected),
+      ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+      filePath,
+    };
+  }
+
+  return {
+    success: false,
+    mode: "current",
+    error: `Unsupported current-mode operation: ${operation}`,
+  };
+}
+
+async function runCurrentBatch(input, timeoutMs) {
+  let steps;
+  try {
+    steps = parseBatchSteps(input.steps);
+  } catch (err) {
+    return {
+      success: false,
+      mode: "current",
+      operation: "batch",
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  const cdp = new CdpClient(info.wsEndpoint);
+  try {
+    let attached = null;
+    const results = [];
+    for (const rawStep of steps) {
+      if (rawStep.operation === "wait") {
+        const ms = Math.max(0, Number(rawStep.ms) || 0);
+        if (ms) {
+          await new Promise((resolve) => setTimeout(resolve, ms));
+        }
+        results.push({ success: true, operation: "wait", ms });
+        continue;
+      }
+
+      const sub = await substituteForCurrent({
+        ...input,
+        ...rawStep,
+        fields: rawStep.fields,
+      });
+      if (sub.errors.length > 0) {
+        results.push({ ...placeholderFailure(sub, "current"), operation: rawStep.operation });
+        continue;
+      }
+      const walked = sub.vars && typeof sub.vars === "object" ? sub.vars : {};
+      const stepInput = {
+        ...input,
+        ...rawStep,
+        ...walked,
+        pageName: rawStep.pageName || input.pageName,
+        operation: rawStep.operation,
+      };
+      delete stepInput.steps;
+
+      const pageName = stepInput.pageName || null;
+      const needSelect =
+        !attached || (pageName && attached.pageName && pageName !== attached.pageName);
+      if (needSelect) {
+        const targetResult = await cdp.send("Target.getTargets");
+        const targets = targetResult?.targetInfos || [];
+        const next = await selectOrOpenCurrentTarget({
+          cdp,
+          input: stepInput,
+          operation: stepInput.operation,
+          targets,
+        });
+        attached = {
+          ...next,
+          pageName: next.plan?.pageName || pageName,
+        };
+      }
+
+      const out = await executeAttachedOperation({
+        cdp,
+        sessionId: attached.sessionId,
+        selected: attached.selected,
+        targetPlan: attached.plan,
+        input: stepInput,
+        timeoutMs,
+      });
+      results.push(out);
+      if (
+        out.success &&
+        (stepInput.operation === "open" || stepInput.operation === "goto") &&
+        stepInput.url
+      ) {
+        attached.selected = { ...attached.selected, url: stepInput.url };
+      }
+    }
+
+    const lastEval = [...results].reverse().find((row) => row && row.operation === "evaluate");
+    const last = lastEval || results.at(-1) || {};
+    return {
+      success: results.length > 0 && results.every((row) => row.success !== false),
+      mode: "current",
+      operation: "batch",
+      ...(input.pageName ? { pageName: input.pageName } : {}),
+      results,
+      ...(Object.prototype.hasOwnProperty.call(last, "result") ? { result: last.result } : {}),
+    };
+  } finally {
+    cdp.close();
+  }
+}
+
 async function runCurrentOperation(input, timeoutMs) {
   const operation = input.operation;
   if (operation === "doctor") {
@@ -1371,6 +1780,9 @@ async function runCurrentOperation(input, timeoutMs) {
   }
   if (operation === "tabs") {
     return await runCurrentTabs(input, timeoutMs);
+  }
+  if (operation === "batch") {
+    return await runCurrentBatch(input, timeoutMs);
   }
 
   if (input.query && !(input.target && input.target.query)) {
@@ -1395,250 +1807,18 @@ async function runCurrentOperation(input, timeoutMs) {
       operation,
       targets,
     });
-
-    if (operation === "snapshot") {
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        snapshot: await evalValue(cdp, sessionId, buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS)),
-      };
-    }
-
-    if (operation === "fill_fields") {
-      if (Array.isArray(input.fields)) {
-        return {
-          success: false,
-          mode: "current",
-          operation,
-          error:
-            'fields must be a JSON object map of label→value (e.g. {"Email":"a@b.c"}), not an array. Array input is a silent no-op trap for agents.',
-        };
-      }
-      const fields = input.fields && typeof input.fields === "object" ? input.fields : {};
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evalValue(cdp, sessionId, buildFillFieldsExpression(fields)),
-      };
-    }
-
-    if (operation === "autofill_profile") {
-      const inspection = await evalValue(cdp, sessionId, buildAutofillProfileControlsExpression());
-      const plan = buildAutofillProfilePlan({
-        controls: Array.isArray(inspection?.controls) ? inspection.controls : [],
-        page: {
-          title: inspection?.title || selected.title || "",
-          url: inspection?.url || selected.url || "",
-        },
-        autofill: autofillData,
-        profile: input.profile || "default",
-        contextHint: input.contextHint || "",
-      });
-      const sub = await substituteAutofillProfileFields(plan.fields);
-      if (sub.errors.length > 0) {
-        return {
-          ...placeholderFailure(sub, "current"),
-          operation,
-          profile: plan.profile,
-          context: plan.context,
-          planned: plan.matched,
-          skipped: plan.skipped,
-        };
-      }
-      const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
-      return redactSensitiveObject(
-        {
-          success: true,
-          mode: "current",
-          operation,
-          target: compactTarget(selected),
-          ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-          profile: plan.profile,
-          context: plan.context,
-          planned: plan.matched,
-          skipped: plan.skipped,
-          result,
-          redacted: sub.redactions.length > 0,
-        },
-        sub.redactions
-      );
-    }
-
-    if (operation === "click") {
-      const query = input.selector || input.text || input.value || "";
-      const result = await evalValue(
-        cdp,
-        sessionId,
-        buildClickExpression({
-          selector: input.selector,
-          text: input.text || input.value,
-        })
-      );
-      const base = {
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-      };
-      if (!result || !result.found) {
-        return {
-          success: false,
-          ...base,
-          error: result?.disabled
-            ? `Matched ${JSON.stringify(query)}, but that control is disabled. A real click would do nothing, so this was not dispatched.`
-            : `No clickable element matched ${JSON.stringify(query)}`,
-          result: result || null,
-        };
-      }
-      return {
-        success: true,
-        ...base,
-        // A caveat about the tab, not a claim about the outcome. Verifying what
-        // a click did is the caller's job — they have snapshot and evaluate.
-        ...(result.interrupted
-          ? {
-              warning: `The control was removed from the page during the click, before the ${result.interrupted} event. Part of the sequence was not delivered, so the action may or may not have run — re-check the page rather than assuming either way.`,
-            }
-          : {}),
-        ...(result.documentHidden && !result.interrupted
-          ? {
-              warning:
-                'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
-            }
-          : {}),
-        result: {
-          clicked: query,
-          matched: result.matched,
-          score: result.score,
-          candidateCount: result.candidateCount,
-          ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
-          visible: result.visible,
-          ...(result.interrupted ? { interrupted: result.interrupted } : {}),
-          documentHidden: result.documentHidden,
-          url: result.url,
-        },
-      };
-    }
-
-    if (operation === "type") {
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evalValue(
-          cdp,
-          sessionId,
-          buildTypeExpression({
-            selector: input.selector,
-            label: input.label,
-            text: input.text || input.value || "",
-          })
-        ),
-      };
-    }
-
-    if (operation === "evaluate") {
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evaluateUserCode(cdp, sessionId, input.code || input.script),
-      };
-    }
-
-    if (operation === "focus") {
-      const focus = await applyAgentFocus(cdp, sessionId, selected, {
-        focusPolicy: input.focusPolicy || input.focus || "window",
-        focusReason: input.focusReason || input.reason,
-        focusTtlMs: input.focusTtlMs,
-      });
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        focus,
-      };
-    }
-
-    if (operation === "open" || operation === "goto") {
-      if (!input.url) {
-        return { success: false, error: `url is required for ${operation}` };
-      }
-      const navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
-      await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
-      selected.url = input.url;
-      if (input.pageName && !isBlankUrl(input.url)) {
-        setCachedNamedPage(input.pageName, {
-          targetId: selected.targetId,
-          url: input.url,
-          title: selected.title || "",
-        });
-      }
-      const navError = navResult?.errorText || null;
-      const httpStatusCode =
-        typeof navResult?.httpStatusCode === "number" ? navResult.httpStatusCode : null;
-      let focus = null;
-      if (navError === null && (input.focusPolicy || input.focus)) {
-        focus = await applyAgentFocus(cdp, sessionId, selected, input);
-      }
-      return {
-        success: navError === null,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        url: input.url,
-        ...(httpStatusCode !== null ? { httpStatusCode } : {}),
-        ...(navError ? { error: navError } : {}),
-        ...(focus ? { focus } : {}),
-      };
-    }
-
-    if (operation === "screenshot") {
-      // Prefer a fast CDP capture. Extension races a short timeout then falls
-      // back to chrome.tabs.captureVisibleTab (no OS focus steal).
-      const result = await cdp.send(
-        "Page.captureScreenshot",
-        {
-          format: "png",
-          fromSurface: true,
-          captureBeyondViewport: input.fullPage === true,
-        },
-        sessionId
-      );
-      const filePath = await saveCurrentScreenshot(result?.data, selected);
-      return {
-        success: true,
-        mode: "current",
-        operation,
-        target: compactTarget(selected),
-        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        filePath,
-      };
-    }
-
-    return {
-      success: false,
-      mode: "current",
-      error: `Unsupported current-mode operation: ${operation}`,
-    };
+    return await executeAttachedOperation({
+      cdp,
+      sessionId,
+      selected,
+      targetPlan,
+      input,
+      timeoutMs,
+    });
   } finally {
     cdp.close();
   }
 }
-
 
 function buildSnapshotExpression(maxTextChars) {
   return `(() => {
@@ -1801,7 +1981,6 @@ function buildAutofillProfileControlsExpression() {
   })()`;
 }
 
-
 export function dispatchInsertText(el, data) {
   const str = String(data ?? "");
   const fire = (type) => {
@@ -1845,7 +2024,9 @@ export function dispatchInsertText(el, data) {
     } catch {}
   }
   if (el._valueTracker) {
-    try { el._valueTracker.setValue(""); } catch {}
+    try {
+      el._valueTracker.setValue("");
+    } catch {}
   }
   fire("input");
 }
@@ -1910,7 +2091,9 @@ export function insertTextDelayMs(el, text, { requestedMs = 55, budgetMs = 20000
 }
 
 export function matchComboboxOption(options, query) {
-  const wanted = String(query || "").trim().toLowerCase();
+  const wanted = String(query || "")
+    .trim()
+    .toLowerCase();
   if (!wanted) return null;
   const list = Array.from(options || []);
   const textOf = (item) => String(item.textContent || item.innerText || "").toLowerCase();
@@ -1931,7 +2114,11 @@ export function collectComboboxOptions(root) {
       out.push(...Array.from(node.querySelectorAll('[role="option"]')));
     } catch {}
     let all = [];
-    try { all = Array.from(node.querySelectorAll("*")); } catch { all = []; }
+    try {
+      all = Array.from(node.querySelectorAll("*"));
+    } catch {
+      all = [];
+    }
     for (const host of all) {
       if (host.shadowRoot) walk(host.shadowRoot, depth + 1);
     }
@@ -1982,13 +2169,25 @@ export function dispatchOptionPointer(option) {
   if (!option) return false;
   const fire = (type) => {
     try {
-      option.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "mouse" }));
+      option.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 1,
+          pointerType: "mouse",
+        })
+      );
     } catch {
       try {
-        option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+        option.dispatchEvent(
+          new MouseEvent(type, { bubbles: true, cancelable: true, composed: true })
+        );
       } catch {
         try {
-          option.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, composed: true }));
+          option.dispatchEvent(
+            new Event(type, { bubbles: true, cancelable: true, composed: true })
+          );
         } catch {}
       }
     }
@@ -2856,6 +3055,7 @@ const operations = [
   "evaluate",
   "goto",
   "focus",
+  "batch",
   "doctor",
   "tabs",
   "run_script",
@@ -2880,6 +3080,7 @@ Current-mode operations:
 - screenshot: save a PNG under ~/.autohub/browser-screenshots.
 - evaluate: evaluate JavaScript in the selected tab.
 - goto: navigate the selected tab.
+- batch: run multiple current-mode steps on one CDP session (one attach).
 - focus: one-shot human-in-the-loop focus (tab|window) with reason; does not change the popup default (background).
 - doctor: classify relay/extension/target-bootstrap health.
 - tabs: list every http(s) tab (active/focused first). Fast inventory — do not use doctor to find a tab.
@@ -2920,7 +3121,7 @@ Resolved placeholder values are redacted from tool output.`,
       target: {
         type: "object",
         description:
-          'Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.',
+          "Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.",
         additionalProperties: true,
       },
       query: {
@@ -2962,6 +3163,15 @@ Resolved placeholder values are redacted from tool output.`,
       url: {
         type: "string",
         description: "URL for goto.",
+      },
+      steps: {
+        type: "array",
+        description:
+          'Ordered current-mode steps for operation:"batch". One CDP attach; open/fill/click/evaluate share the session. Max 32.',
+        items: {
+          type: "object",
+          additionalProperties: true,
+        },
       },
       code: {
         type: "string",
