@@ -184,3 +184,12 @@ test("assertLoopbackOrigin rejects non-loopback hosts", () => {
 test("assertLoopbackOrigin allows bracketed IPv6 loopback", () => {
   assert.equal(assertLoopbackOrigin("http://[::1]:8766").hostname, "[::1]");
 });
+
+test("buildBrowserHandCommands uses browserHandSteps when present", () => {
+  const combo = GYM_COMPARE_SUBSET.find((item) => item.id === "20");
+  const cmds = buildBrowserHandCommands(combo, ORIGIN);
+  assert.ok(cmds.some((cmd) => cmd[0] === "fill"));
+  assert.ok(!cmds.some((cmd) => cmd[0] === "click"), "BH must not re-click the already-selected option");
+  assert.equal(stepCount(combo, { driver: "browser-hand" }), 1 + combo.browserHandSteps.length + 1);
+  assert.equal(stepCount(combo), 1 + combo.steps.length + 1);
+});

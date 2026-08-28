@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -80,12 +81,18 @@ export const GYM_COMPARE_SUBSET = [
       { op: "wait", ms: 250 },
       { op: "click", role: "option", name: "JFK · New York John F. Kennedy" },
     ],
+    // BH fill already selects the matching option; a second click fails.
+    browserHandSteps: [{ op: "fill", fields: { "Arrival airport": "JFK" } }],
   },
 ];
 
-export function stepCount(challenge) {
+export function stepCount(challenge, { driver } = {}) {
+  const steps =
+    driver === "browser-hand" && Array.isArray(challenge.browserHandSteps)
+      ? challenge.browserHandSteps
+      : challenge.steps;
   // navigate + recipe actions + oracle evaluate
-  return 1 + challenge.steps.length + 1;
+  return 1 + steps.length + 1;
 }
 
 export function parseOracle(raw) {
@@ -180,7 +187,10 @@ function challengeUrl(challenge, origin) {
 export function buildBrowserHandCommands(challenge, origin) {
   const page = ["--page-name", challenge.pageName];
   const cmds = [["open", "--url", challengeUrl(challenge, origin), ...page, "--quiet"]];
-  for (const step of challenge.steps) {
+  const recipe = Array.isArray(challenge.browserHandSteps)
+    ? challenge.browserHandSteps
+    : challenge.steps;
+  for (const step of recipe) {
     if (step.op === "fill") {
       cmds.push(["fill", ...page, "--fields", JSON.stringify(step.fields), "--quiet"]);
     } else if (step.op === "click") {
@@ -301,7 +311,9 @@ export function gymOriginLooksHealthy(statusCode, body) {
 
 async function originReachable(origin) {
   return new Promise((resolve) => {
-    const req = http.get(`${origin.replace(/\/$/, "")}/01-hello-form.html`, (res) => {
+    const target = `${origin.replace(/\/$/, "")}/01-hello-form.html`;
+    const client = target.startsWith("https:") ? https : http;
+    const req = client.get(target, (res) => {
       let body = "";
       res.on("data", (chunk) => {
         body += chunk.toString();
@@ -386,7 +398,7 @@ async function runBrowserHandChallenge(challenge, options) {
     driver: "browser-hand",
     ok: lastOracle.ok && !error,
     steps: issued,
-    expectedSteps: stepCount(challenge),
+    expectedSteps: stepCount(challenge, { driver: "browser-hand" }),
     detail: lastOracle.detail,
     checks: lastOracle.checks,
     error,
