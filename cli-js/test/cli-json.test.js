@@ -70,6 +70,39 @@ test("slimCliResult --quiet keeps evaluate oracle fields only", () => {
   });
 });
 
+test("slimCliResult --quiet preserves user-requested url/title in evaluate result", () => {
+  const slim = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "evaluate",
+      target: { url: "http://127.0.0.1/x" },
+      result: { url: "http://127.0.0.1/x", title: "Hello", ok: true },
+    },
+    { quiet: true }
+  );
+  assert.deepEqual(slim, {
+    success: true,
+    operation: "evaluate",
+    result: { url: "http://127.0.0.1/x", title: "Hello", ok: true },
+  });
+});
+
+test("slimCliResult --quiet preserves click warnings", () => {
+  const slim = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "click",
+      warning: "Dispatched, but this tab is backgrounded.",
+      result: { clicked: "#submit", url: "http://127.0.0.1/x" },
+    },
+    { quiet: true }
+  );
+  assert.equal(slim.warning, "Dispatched, but this tab is backgrounded.");
+  assert.deepEqual(slim.result, { clicked: "#submit" });
+});
+
 test("slimCliResult --quiet does not strip doctor or tabs", () => {
   const doctor = {
     success: true,
