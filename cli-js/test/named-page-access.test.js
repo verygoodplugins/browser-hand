@@ -14,9 +14,9 @@ import {
   findAdoptTarget,
   namedPageNotFoundMessage,
   planCurrentTargetAccess,
-  planDoctorSmoke,
   resolveNamedPageInfo,
   samePageUrl,
+  doctorSmokeUrl,
 } from "../src/tool.js";
 
 test("open with a pageName is allowed to create a tab", () => {
@@ -182,17 +182,16 @@ test("findAdoptTarget still reuses one tab when none is focused", () => {
   assert.equal(hit.targetId, "a");
 });
 
-test("samePageUrl treats a trailing slash as the same page", () => {
+test("samePageUrl ignores a path slash and keeps a query slash", () => {
   assert.equal(samePageUrl("https://example.com/a/", "https://example.com/a"), true);
+  assert.equal(samePageUrl("https://example.com/?next=/", "https://example.com/?next="), false);
   assert.equal(samePageUrl("about:blank", "https://example.com"), false);
 });
 
-test("doctor smoke attaches to an existing tab instead of creating a blank", () => {
-  const plan = planDoctorSmoke([
-    { type: "page", targetId: "blank", url: "about:blank" },
-    { type: "page", targetId: "work", url: "https://example.com/", focused: true },
-  ]);
-  assert.equal(plan.mode, "attach");
-  assert.equal(plan.target.targetId, "work");
-  assert.deepEqual(planDoctorSmoke([]), { mode: "create" });
+test("doctor smoke url is a unique controllable blank probe", () => {
+  const url = doctorSmokeUrl("autohub-doctor-1");
+  assert.equal(url.startsWith("about:blank?browser-hand-doctor="), true);
+  assert.equal(url.startsWith("data:"), false);
+  assert.notEqual(url, "about:blank");
+  assert.notEqual(doctorSmokeUrl("autohub-doctor-1"), doctorSmokeUrl("autohub-doctor-2"));
 });

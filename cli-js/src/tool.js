@@ -633,38 +633,41 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   return { source: "existing_target", createsTab: false };
 }
 
+function normalizePageUrl(url) {
+  const raw = String(url || "");
+  try {
+    const parsed = new URL(raw);
+    if (parsed.pathname.length > 1) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    }
+    return parsed.toString();
+  } catch {
+    return raw.replace(/\/$/, "");
+  }
+}
+
 export function samePageUrl(left, right) {
-  const normalize = (value) => String(value || "").replace(/\/$/, "");
-  const a = normalize(left);
-  const b = normalize(right);
+  const a = normalizePageUrl(left);
+  const b = normalizePageUrl(right);
   return Boolean(a) && a === b && !isBlankUrl(a);
 }
 
-export function planDoctorSmoke(targets = []) {
-  const pages = (targets || []).filter(isHttpPageTarget);
-  if (pages.length === 0) {
-    return { mode: "create" };
-  }
-  const ranked = [...pages].sort((a, b) => {
-    const score = (item) => (item?.focused === true ? 2 : 0) + (item?.active === true ? 1 : 0);
-    const diff = score(b) - score(a);
-    if (diff !== 0) return diff;
-    return String(a?.targetId || "").localeCompare(String(b?.targetId || ""));
-  });
-  return { mode: "attach", target: ranked[0] };
+export function doctorSmokeUrl(pageName) {
+  // about:blank? is controllable and unique. data: URLs are created and then
+  // rejected by the extension, which leaves the tab behind.
+  return `about:blank?browser-hand-doctor=${encodeURIComponent(pageName)}`;
 }
 
 export function findAdoptTarget(targets, url) {
   if (!url || !Array.isArray(targets)) {
     return null;
   }
-  const normalize = (value) => String(value || "").replace(/\/$/, "");
-  const wanted = normalize(url);
+  const wanted = normalizePageUrl(url);
   if (!wanted || isBlankUrl(wanted)) {
     return null;
   }
   const hits = targets.filter((target) => {
-    const candidate = normalize(target?.url);
+    const candidate = normalizePageUrl(target?.url);
     if (!candidate || isBlankUrl(candidate)) {
       return false;
     }
@@ -1327,41 +1330,29 @@ async function runCurrentDoctor(timeoutMs) {
       result.hint =
         "Doctor is a health check. For a fast full inventory use `browser-hand tabs` or `browser-hand tabs --query stripe`.";
 
-      const smokePlan = planDoctorSmoke(targets);
       try {
-        if (smokePlan.mode === "attach") {
-          const sessionId = await attachTarget(cdp, smokePlan.target.targetId);
-          const value = await evalValue(cdp, sessionId, "(() => 1 + 1)()");
-          result.smoke = {
-            success: value === 2,
-            reusedExistingTab: true,
-            target: compactTarget(smokePlan.target),
-          };
-        } else {
-          const pageInfo = await openNamedRelayPage(smokeName, {
-            timeoutMs: Math.min(timeoutMs, 5000),
-          });
-          result.smoke = {
-            success: true,
-            pageName: smokeName,
-            target: compactTarget({
-              targetId: pageInfo.targetId,
-              title: pageInfo.title || "",
-              url: pageInfo.url || "",
-            }),
-          };
-          await cdp.send("Target.closeTarget", { targetId: pageInfo.targetId }).catch(() => null);
-        }
+        const pageInfo = await openNamedRelayPage(smokeName, {
+          timeoutMs: Math.min(timeoutMs, 15000),
+          url: doctorSmokeUrl(smokeName),
+        });
+        result.smoke = {
+          success: true,
+          pageName: smokeName,
+          target: compactTarget({
+            targetId: pageInfo.targetId,
+            title: pageInfo.title || "",
+            url: pageInfo.url || "",
+          }),
+        };
+        await cdp.send("Target.closeTarget", { targetId: pageInfo.targetId }).catch(() => null);
       } catch (err) {
         result.smoke = {
           success: false,
-          ...(smokePlan.mode === "create" ? { pageName: smokeName } : { reusedExistingTab: true }),
+          pageName: smokeName,
           error: err.message,
         };
       } finally {
-        if (smokePlan.mode === "create") {
-          await deleteNamedRelayPage(smokeName);
-        }
+        await deleteNamedRelayPage(smokeName);
       }
     } catch (err) {
       result.cdpError = err.message;
@@ -1628,7 +1619,8 @@ async function runCurrentOperation(input, timeoutMs) {
       if (!input.url) {
         return { success: false, error: `url is required for ${operation}` };
       }
-      const alreadyThere = samePageUrl(selected.url, input.url);
+      const alreadyThere =
+        operation === "open" && createdTarget !== true && samePageUrl(selected.url, input.url);
       let navResult = null;
       if (!alreadyThere) {
         try {

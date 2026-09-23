@@ -304,13 +304,25 @@ export class CDPRouter {
         const tab = await chrome.tabs.create({ url, active: false });
         if (!tab.id) throw new Error("Failed to create tab");
 
-        // Add tab to "Browser Hand" group
-        await this.getOrCreateBrowserHandGroup(tab.id);
+        try {
+          // Add tab to "Browser Hand" group
+          await this.getOrCreateBrowserHandGroup(tab.id);
 
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        await this.tabManager.register(tab);
-        const targetInfo = await this.tabManager.attach(tab.id);
-        return { targetId: targetInfo.targetId };
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const registered = await this.tabManager.register(tab);
+          if (!registered) {
+            throw new Error(`Refusing to keep an uncontrollable tab: ${url}`);
+          }
+          const targetInfo = await this.tabManager.attach(tab.id);
+          return { targetId: targetInfo.targetId };
+        } catch (err) {
+          try {
+            await chrome.tabs.remove(tab.id);
+          } catch {
+            // The tab may already be gone.
+          }
+          throw err;
+        }
       }
 
       case "Target.closeTarget": {

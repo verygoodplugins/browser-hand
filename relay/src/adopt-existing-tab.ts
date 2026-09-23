@@ -23,9 +23,18 @@ export function isBlankPageUrl(url: string | undefined | null): boolean {
   );
 }
 
-/** Exact URL match with a trailing slash ignored. Query and hash stay significant. */
+/** Exact URL match. Only a path's trailing slash is ignored — not a slash inside the query or hash. */
 export function normalizePageUrl(url: string | undefined | null): string {
-  return String(url || "").replace(/\/$/, "");
+  const raw = String(url || "");
+  try {
+    const parsed = new URL(raw);
+    if (parsed.pathname.length > 1) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    }
+    return parsed.toString();
+  } catch {
+    return raw.replace(/\/$/, "");
+  }
 }
 
 function rankTarget(target: AdoptTarget): number {

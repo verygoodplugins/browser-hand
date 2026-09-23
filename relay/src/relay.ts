@@ -141,8 +141,18 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   const adoptedByTarget = new Map<string, { clientSessionId: string; liveTargetId: string }>();
   const quietDetach = new Set<string>();
   const lastFrameId = new Map<string, string>();
+  /** Target ids handed back from createTarget/open that already belonged to the user. */
+  const protectedTargetIds = new Set<string>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
+
+  function clearAdoptionState(): void {
+    adoptedBlanks.clear();
+    adoptedByTarget.clear();
+    quietDetach.clear();
+    lastFrameId.clear();
+    protectedTargetIds.clear();
+  }
 
   function listedTargets(): AdoptTarget[] {
     return Array.from(connectedTargets.values()).map((target) => {
@@ -345,7 +355,13 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     if (adopted) {
       sessionId = adopted.liveSessionId;
     }
-    if (params && typeof params.targetId === "string") {
+    if (method === "Target.closeTarget") {
+      const closingId = typeof params?.targetId === "string" ? params.targetId : "";
+      if (closingId && (protectedTargetIds.has(closingId) || adoptedByTarget.has(closingId))) {
+        log(`Ignoring close of adopted tab ${closingId}`);
+        return { success: true };
+      }
+    } else if (params && typeof params.targetId === "string") {
       const mapped = adoptedByTarget.get(params.targetId);
       if (mapped) {
         params = { ...params, targetId: mapped.liveTargetId };
@@ -454,6 +470,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         if (url && !isBlankPageUrl(url)) {
           const existing = pickExistingPageTarget(listedTargets(), url);
           if (existing) {
+            protectedTargetIds.add(existing.targetId);
             log(`Target.createTarget reused ${existing.targetId} for ${url}`);
             return { targetId: existing.targetId };
           }
@@ -552,6 +569,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           sessionId: adopt.sessionId,
           targetId: adopt.targetId,
         });
+        protectedTargetIds.add(adopt.targetId);
         return c.json({
           wsEndpoint: `ws://${host}:${port}/cdp`,
           name,
@@ -572,6 +590,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         const live = findTargetById(adopt.targetId);
         if (live) {
           namedPages.set(name, { sessionId: live.sessionId, targetId: live.targetId });
+          protectedTargetIds.add(live.targetId);
           if (existing && existingIsBlank) {
             quietDetach.add(existing.sessionId);
             await sendToExtension({
@@ -811,6 +830,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
             connectedTargets.clear();
             namedPages.clear();
+            clearAdoptionState();
             for (const pending of extensionPendingRequests.values()) {
               pending.reject(new Error("Extension connection replaced"));
             }
@@ -982,6 +1002,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           extensionWs = null;
           connectedTargets.clear();
           namedPages.clear();
+          clearAdoptionState();
 
           for (const client of playwrightClients.values()) {
             client.ws.close(1000, "Extension disconnected");

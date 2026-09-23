@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   isBlankPageUrl,
+  normalizePageUrl,
   pickExistingPageTarget,
   planBlankNavigation,
 } from "./adopt-existing-tab.ts";
@@ -12,6 +13,18 @@ test("blank urls are not adoptable pages", () => {
   assert.equal(isBlankPageUrl("about:blank"), true);
   assert.equal(isBlankPageUrl("about:blank?x=1"), true);
   assert.equal(isBlankPageUrl("https://example.com"), false);
+});
+
+test("normalizePageUrl keeps a slash that belongs to the query", () => {
+  assert.equal(normalizePageUrl("https://example.com/?next=/"), "https://example.com/?next=/");
+  assert.equal(normalizePageUrl("https://example.com/a/"), "https://example.com/a");
+  assert.equal(
+    pickExistingPageTarget(
+      [{ type: "page", targetId: "q", url: "https://example.com/?next=/" }],
+      "https://example.com/?next="
+    ),
+    null
+  );
 });
 
 test("pickExistingPageTarget reuses the focused tab when several share the URL", () => {
