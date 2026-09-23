@@ -187,6 +187,24 @@ test("open does not navigate again when the tab is already on that URL", () => {
     }),
     true
   );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      created: true,
+      currentUrl: "https://example.com/",
+      requestedUrl: "http://example.com/",
+    }),
+    false
+  );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      created: true,
+      currentUrl: "about:blank",
+      requestedUrl: "https://example.com/a",
+    }),
+    true
+  );
 });
 
 test("missing named-page errors stay compact and point to the explicit inventory", () => {

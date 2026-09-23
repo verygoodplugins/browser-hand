@@ -652,10 +652,11 @@ export function samePageUrl(left, right) {
   return Boolean(a) && a === b && !isBlankUrl(a);
 }
 
-/** open skips a second navigation when the tab is already on that URL. goto may reload. */
-export function openNeedsNavigation({ operation, currentUrl, requestedUrl }) {
+/** open skips a second navigation when the tab is already on that URL, or when a fresh tab already left about:blank. goto may reload. */
+export function openNeedsNavigation({ operation, created = false, currentUrl, requestedUrl }) {
   if (operation === "goto") return true;
   if (operation !== "open") return false;
+  if (created && !isBlankUrl(currentUrl)) return false;
   return !samePageUrl(currentUrl, requestedUrl);
 }
 
@@ -1632,6 +1633,7 @@ async function runCurrentOperation(input, timeoutMs) {
       }
       const alreadyThere = !openNeedsNavigation({
         operation,
+        created: createdTarget === true,
         currentUrl: selected.url,
         requestedUrl: input.url,
       });
@@ -1645,14 +1647,41 @@ async function runCurrentOperation(input, timeoutMs) {
           }
           throw err;
         }
-        await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
+        const adopted =
+          typeof navResult?.loaderId === "string" && navResult.loaderId.startsWith("adopted-");
+        if (!adopted) {
+          await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
+        }
         selected.url = input.url;
       } else if (createdTarget === true) {
+        const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
+        let href = "";
+        while (Date.now() < deadline) {
+          href = await evalValue(cdp, sessionId, "location.href").catch(() => "");
+          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "");
+          if (typeof href === "string" && href.startsWith("chrome-error://")) {
+            navResult = { errorText: `navigation failed: ${href}` };
+            break;
+          }
+          if (typeof href === "string" && !isBlankUrl(href) && (ready === "complete" || ready == null)) {
+            selected.url = href;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!navResult?.errorText && isBlankUrl(typeof href === "string" ? href : "")) {
+          navResult = { errorText: "tab did not leave about:blank before the timeout" };
+        }
+      } else {
         const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
         while (Date.now() < deadline) {
           const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "complete");
           if (ready === "complete" || ready == null) break;
           await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        const href = await evalValue(cdp, sessionId, "location.href").catch(() => "");
+        if (typeof href === "string" && href.startsWith("chrome-error://")) {
+          navResult = { errorText: `navigation failed: ${href}` };
         }
       }
       if (input.pageName && !isBlankUrl(input.url)) {

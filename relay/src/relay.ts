@@ -143,8 +143,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   const lastFrameId = new Map<string, string>();
   /** Target ids handed back from createTarget/open that already belonged to the user. */
   const protectedTargetIds = new Set<string>();
+  /** Tabs this relay created. Blank adoption may close these, not a user's existing blank. */
+  const relayCreatedTargetIds = new Set<string>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
+
+  const deferredCdpEvents: CDPEvent[] = [];
 
   function clearAdoptionState(): void {
     adoptedBlanks.clear();
@@ -152,6 +156,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     quietDetach.clear();
     lastFrameId.clear();
     protectedTargetIds.clear();
+    relayCreatedTargetIds.clear();
   }
 
   function listedTargets(): AdoptTarget[] {
@@ -313,7 +318,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         navigateUrl: typeof params?.url === "string" ? params.url : "",
         targets: listedTargets(),
       });
-      if (plan.action === "adopt" && plan.target.sessionId && plan.target.targetId) {
+      if (
+        plan.action === "adopt" &&
+        plan.target.sessionId &&
+        plan.target.targetId &&
+        relayCreatedTargetIds.has(clientTarget.targetId)
+      ) {
         const liveSessionId = plan.target.sessionId;
         const liveTargetId = plan.target.targetId;
         adoptedBlanks.set(clientTarget.sessionId, {
@@ -326,6 +336,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           clientSessionId: clientTarget.sessionId,
           liveTargetId,
         });
+        protectedTargetIds.add(liveTargetId);
         for (const [name, entry] of namedPages) {
           if (entry.targetId === clientTarget.targetId || entry.sessionId === clientTarget.sessionId) {
             namedPages.set(name, { sessionId: liveSessionId, targetId: liveTargetId });
@@ -343,9 +354,9 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         const loaderId = `adopted-${liveTargetId}`;
         const url = plan.target.url || (typeof params?.url === "string" ? params.url : "");
         const stamp = Date.now() / 1000;
-        for (const event of adoptedNavigationEvents(clientSessionId, frameId, loaderId, url, stamp)) {
-          sendToPlaywright(event);
-        }
+        deferredCdpEvents.push(
+          ...adoptedNavigationEvents(clientSessionId, frameId, loaderId, url, stamp)
+        );
         log(`Adopted blank ${clientTarget.targetId} onto existing tab ${liveTargetId}`);
         return { frameId, loaderId, isDownload: false };
       }
@@ -475,10 +486,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             return { targetId: existing.targetId };
           }
         }
-        return await sendToExtension({
+        const created = (await sendToExtension({
           method: "forwardCDPCommand",
           params: { method, params },
-        });
+        })) as { targetId?: string };
+        if (created?.targetId) relayCreatedTargetIds.add(created.targetId);
+        return created;
       }
 
       case "Target.closeTarget":
@@ -658,6 +671,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           params: { url: !isBlankPageUrl(requestedUrl) ? requestedUrl : "about:blank" },
         },
       })) as { targetId: string };
+      if (result?.targetId) relayCreatedTargetIds.add(result.targetId);
 
       if (c.req.raw.signal.aborted) {
         await sendToExtension({
@@ -794,6 +808,10 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             }
 
             sendToPlaywright({ id, sessionId, result }, clientId);
+            while (deferredCdpEvents.length) {
+              const event = deferredCdpEvents.shift();
+              if (event) sendToPlaywright(event, clientId);
+            }
           } catch (e) {
             log("Error handling CDP command:", method, e);
             sendToPlaywright(
