@@ -652,6 +652,13 @@ export function samePageUrl(left, right) {
   return Boolean(a) && a === b && !isBlankUrl(a);
 }
 
+/** open skips a second navigation when the tab is already on that URL. goto may reload. */
+export function openNeedsNavigation({ operation, currentUrl, requestedUrl }) {
+  if (operation === "goto") return true;
+  if (operation !== "open") return false;
+  return !samePageUrl(currentUrl, requestedUrl);
+}
+
 export function doctorSmokeUrl(pageName) {
   // about:blank? is controllable and unique. data: URLs are created and then
   // rejected by the extension, which leaves the tab behind.
@@ -699,6 +706,7 @@ export async function resolveNamedPageInfo({
   pageName,
   url,
   targets = [],
+  timeoutMs,
   openPage,
   lookupPage,
 }) {
@@ -710,6 +718,7 @@ export async function resolveNamedPageInfo({
     return openPage(pageName, {
       ...(adopt?.targetId ? { targetId: adopt.targetId } : {}),
       ...(url ? { url } : {}),
+      ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
     });
   }
   return lookupPage(pageName);
@@ -1178,7 +1187,7 @@ function setCachedNamedPage(pageName, entry) {
   saveNamedPageTargetCache(cache);
 }
 
-async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
+async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeoutMs }) {
   const plan = planCurrentTargetAccess({
     operation,
     pageName: input.pageName,
@@ -1194,6 +1203,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       pageName: plan.pageName,
       url: input.url,
       targets,
+      timeoutMs,
       openPage: (name, options) => openNamedRelayPage(name, options),
       lookupPage: (name) => lookupNamedRelayPage(name),
     });
@@ -1437,6 +1447,7 @@ async function runCurrentOperation(input, timeoutMs) {
       input,
       operation,
       targets,
+      timeoutMs,
     });
 
     if (operation === "snapshot") {
@@ -1619,8 +1630,11 @@ async function runCurrentOperation(input, timeoutMs) {
       if (!input.url) {
         return { success: false, error: `url is required for ${operation}` };
       }
-      const alreadyThere =
-        operation === "open" && createdTarget !== true && samePageUrl(selected.url, input.url);
+      const alreadyThere = !openNeedsNavigation({
+        operation,
+        currentUrl: selected.url,
+        requestedUrl: input.url,
+      });
       let navResult = null;
       if (!alreadyThere) {
         try {
@@ -1633,6 +1647,13 @@ async function runCurrentOperation(input, timeoutMs) {
         }
         await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
         selected.url = input.url;
+      } else if (createdTarget === true) {
+        const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
+        while (Date.now() < deadline) {
+          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "complete");
+          if (ready === "complete" || ready == null) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
       }
       if (input.pageName && !isBlankUrl(input.url)) {
         setCachedNamedPage(input.pageName, {
@@ -1659,7 +1680,7 @@ async function runCurrentOperation(input, timeoutMs) {
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         url: input.url,
         created: createdTarget === true,
-        reusedExistingTab: alreadyThere,
+        reusedExistingTab: alreadyThere && createdTarget !== true,
         ...(httpStatusCode !== null ? { httpStatusCode } : {}),
         ...(navError ? { error: navError } : {}),
         ...(focus ? { focus } : {}),

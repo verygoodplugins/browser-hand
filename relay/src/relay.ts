@@ -959,6 +959,36 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
               log(`Target detached: ${detachParams.sessionId}`);
 
+              for (const adopted of [...adoptedBlanks.values()]) {
+                if (
+                  adopted.liveSessionId !== detachParams.sessionId &&
+                  adopted.clientSessionId !== detachParams.sessionId
+                ) {
+                  continue;
+                }
+                const rebound = findTargetById(adopted.liveTargetId);
+                if (rebound && rebound.sessionId !== adopted.liveSessionId) {
+                  adopted.liveSessionId = rebound.sessionId;
+                  log(
+                    `Adopted session ${adopted.clientSessionId} rebound → ${rebound.sessionId}`
+                  );
+                  continue;
+                }
+                if (rebound && adopted.clientSessionId !== detachParams.sessionId) {
+                  continue;
+                }
+                adoptedBlanks.delete(adopted.clientSessionId);
+                adoptedByTarget.delete(adopted.clientTargetId);
+                lastFrameId.delete(adopted.clientSessionId);
+                if (adopted.clientSessionId !== detachParams.sessionId) {
+                  sendToPlaywright({
+                    method: "Target.detachedFromTarget",
+                    params: { sessionId: adopted.clientSessionId },
+                  });
+                }
+                log(`Dropped adopted session ${adopted.clientSessionId}`);
+              }
+
               sendToPlaywright({
                 method: "Target.detachedFromTarget",
                 params: detachParams,
