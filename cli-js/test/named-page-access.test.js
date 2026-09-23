@@ -14,7 +14,9 @@ import {
   findAdoptTarget,
   namedPageNotFoundMessage,
   planCurrentTargetAccess,
+  planDoctorSmoke,
   resolveNamedPageInfo,
+  samePageUrl,
 } from "../src/tool.js";
 
 test("open with a pageName is allowed to create a tab", () => {
@@ -134,7 +136,11 @@ test("open resolves through the create-or-adopt endpoint", async () => {
     },
   });
 
-  assert.deepEqual(result, { name: "work", targetId: "tab-point" });
+  assert.deepEqual(result, {
+    name: "work",
+    targetId: "tab-point",
+    url: "https://point.me/search",
+  });
 });
 
 test("missing named-page errors stay compact and point to the explicit inventory", () => {
@@ -154,15 +160,39 @@ test("findAdoptTarget does not treat prefix-overlapping URLs as the same tab", (
   );
 });
 
-test("findAdoptTarget returns null when two tabs share the exact URL", () => {
-  assert.equal(
-    findAdoptTarget(
-      [
-        { type: "page", targetId: "a", url: "https://point.me/search" },
-        { type: "page", targetId: "b", url: "https://point.me/search" },
-      ],
-      "https://point.me/search"
-    ),
-    null
+test("findAdoptTarget reuses the focused tab when two tabs share the exact URL", () => {
+  const hit = findAdoptTarget(
+    [
+      { type: "page", targetId: "a", url: "https://point.me/search" },
+      { type: "page", targetId: "b", url: "https://point.me/search", focused: true },
+    ],
+    "https://point.me/search"
   );
+  assert.equal(hit.targetId, "b");
+});
+
+test("findAdoptTarget still reuses one tab when none is focused", () => {
+  const hit = findAdoptTarget(
+    [
+      { type: "page", targetId: "b", url: "https://point.me/search" },
+      { type: "page", targetId: "a", url: "https://point.me/search" },
+    ],
+    "https://point.me/search"
+  );
+  assert.equal(hit.targetId, "a");
+});
+
+test("samePageUrl treats a trailing slash as the same page", () => {
+  assert.equal(samePageUrl("https://example.com/a/", "https://example.com/a"), true);
+  assert.equal(samePageUrl("about:blank", "https://example.com"), false);
+});
+
+test("doctor smoke attaches to an existing tab instead of creating a blank", () => {
+  const plan = planDoctorSmoke([
+    { type: "page", targetId: "blank", url: "about:blank" },
+    { type: "page", targetId: "work", url: "https://example.com/", focused: true },
+  ]);
+  assert.equal(plan.mode, "attach");
+  assert.equal(plan.target.targetId, "work");
+  assert.deepEqual(planDoctorSmoke([]), { mode: "create" });
 });

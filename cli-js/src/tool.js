@@ -495,13 +495,16 @@ async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   }
 }
 
-async function openNamedRelayPage(pageName, { timeoutMs = 5000, targetId } = {}) {
+async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url } = {}) {
   if (!pageName || typeof pageName !== "string") {
     throw new Error("pageName is required for named-page bootstrap");
   }
   const body = { name: pageName };
   if (typeof targetId === "string" && targetId.trim()) {
     body.targetId = targetId.trim();
+  }
+  if (typeof url === "string" && url.trim() && !isBlankUrl(url)) {
+    body.url = url.trim();
   }
   return await fetchJson(relayPageEndpoint(), {
     method: "POST",
@@ -630,23 +633,53 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   return { source: "existing_target", createsTab: false };
 }
 
+export function samePageUrl(left, right) {
+  const normalize = (value) => String(value || "").replace(/\/$/, "");
+  const a = normalize(left);
+  const b = normalize(right);
+  return Boolean(a) && a === b && !isBlankUrl(a);
+}
+
+export function planDoctorSmoke(targets = []) {
+  const pages = (targets || []).filter(isHttpPageTarget);
+  if (pages.length === 0) {
+    return { mode: "create" };
+  }
+  const ranked = [...pages].sort((a, b) => {
+    const score = (item) => (item?.focused === true ? 2 : 0) + (item?.active === true ? 1 : 0);
+    const diff = score(b) - score(a);
+    if (diff !== 0) return diff;
+    return String(a?.targetId || "").localeCompare(String(b?.targetId || ""));
+  });
+  return { mode: "attach", target: ranked[0] };
+}
+
 export function findAdoptTarget(targets, url) {
   if (!url || !Array.isArray(targets)) {
     return null;
   }
   const normalize = (value) => String(value || "").replace(/\/$/, "");
   const wanted = normalize(url);
-  if (!wanted || wanted === "about:blank" || wanted === "about:newtab") {
+  if (!wanted || isBlankUrl(wanted)) {
     return null;
   }
   const hits = targets.filter((target) => {
     const candidate = normalize(target?.url);
-    if (!candidate || candidate === "about:blank" || candidate === "about:newtab") {
+    if (!candidate || isBlankUrl(candidate)) {
       return false;
     }
     return candidate === wanted;
   });
-  return hits.length === 1 ? hits[0] : null;
+  if (hits.length === 0) return null;
+  // One open tab is enough. Another blank is what agents hit when two tabs
+  // already shared the URL and this returned null.
+  hits.sort((a, b) => {
+    const score = (item) => (item?.focused === true ? 2 : 0) + (item?.active === true ? 1 : 0);
+    const diff = score(b) - score(a);
+    if (diff !== 0) return diff;
+    return String(a?.targetId || "").localeCompare(String(b?.targetId || ""));
+  });
+  return hits[0];
 }
 
 export function namedPageNotFoundMessage(pageName, namedPageCount) {
@@ -671,7 +704,10 @@ export async function resolveNamedPageInfo({
   }
   if (plan.createsTab) {
     const adopt = url ? findAdoptTarget(targets, url) : null;
-    return openPage(pageName, adopt?.targetId ? { targetId: adopt.targetId } : {});
+    return openPage(pageName, {
+      ...(adopt?.targetId ? { targetId: adopt.targetId } : {}),
+      ...(url ? { url } : {}),
+    });
   }
   return lookupPage(pageName);
 }
@@ -1235,6 +1271,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       plan,
       selected,
       sessionId,
+      created: pageInfo.created === true,
     };
   }
 
@@ -1249,6 +1286,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     plan,
     selected,
     sessionId: await attachTarget(cdp, selected.targetId),
+    created: false,
   };
 }
 
@@ -1289,28 +1327,41 @@ async function runCurrentDoctor(timeoutMs) {
       result.hint =
         "Doctor is a health check. For a fast full inventory use `browser-hand tabs` or `browser-hand tabs --query stripe`.";
 
+      const smokePlan = planDoctorSmoke(targets);
       try {
-        const pageInfo = await openNamedRelayPage(smokeName, {
-          timeoutMs: Math.min(timeoutMs, 5000),
-        });
-        result.smoke = {
-          success: true,
-          pageName: smokeName,
-          target: compactTarget({
-            targetId: pageInfo.targetId,
-            title: pageInfo.title || "",
-            url: pageInfo.url || "",
-          }),
-        };
-        await cdp.send("Target.closeTarget", { targetId: pageInfo.targetId }).catch(() => null);
+        if (smokePlan.mode === "attach") {
+          const sessionId = await attachTarget(cdp, smokePlan.target.targetId);
+          const value = await evalValue(cdp, sessionId, "(() => 1 + 1)()");
+          result.smoke = {
+            success: value === 2,
+            reusedExistingTab: true,
+            target: compactTarget(smokePlan.target),
+          };
+        } else {
+          const pageInfo = await openNamedRelayPage(smokeName, {
+            timeoutMs: Math.min(timeoutMs, 5000),
+          });
+          result.smoke = {
+            success: true,
+            pageName: smokeName,
+            target: compactTarget({
+              targetId: pageInfo.targetId,
+              title: pageInfo.title || "",
+              url: pageInfo.url || "",
+            }),
+          };
+          await cdp.send("Target.closeTarget", { targetId: pageInfo.targetId }).catch(() => null);
+        }
       } catch (err) {
         result.smoke = {
           success: false,
-          pageName: smokeName,
+          ...(smokePlan.mode === "create" ? { pageName: smokeName } : { reusedExistingTab: true }),
           error: err.message,
         };
       } finally {
-        await deleteNamedRelayPage(smokeName);
+        if (smokePlan.mode === "create") {
+          await deleteNamedRelayPage(smokeName);
+        }
       }
     } catch (err) {
       result.cdpError = err.message;
@@ -1389,6 +1440,7 @@ async function runCurrentOperation(input, timeoutMs) {
       plan: targetPlan,
       selected,
       sessionId,
+      created: createdTarget,
     } = await selectOrOpenCurrentTarget({
       cdp,
       input,
@@ -1576,9 +1628,20 @@ async function runCurrentOperation(input, timeoutMs) {
       if (!input.url) {
         return { success: false, error: `url is required for ${operation}` };
       }
-      const navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
-      await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
-      selected.url = input.url;
+      const alreadyThere = samePageUrl(selected.url, input.url);
+      let navResult = null;
+      if (!alreadyThere) {
+        try {
+          navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
+        } catch (err) {
+          if (createdTarget && isBlankUrl(selected.url)) {
+            await cdp.send("Target.closeTarget", { targetId: selected.targetId }).catch(() => null);
+          }
+          throw err;
+        }
+        await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
+        selected.url = input.url;
+      }
       if (input.pageName && !isBlankUrl(input.url)) {
         setCachedNamedPage(input.pageName, {
           targetId: selected.targetId,
@@ -1587,6 +1650,9 @@ async function runCurrentOperation(input, timeoutMs) {
         });
       }
       const navError = navResult?.errorText || null;
+      if (navError && createdTarget && isBlankUrl(selected.url)) {
+        await cdp.send("Target.closeTarget", { targetId: selected.targetId }).catch(() => null);
+      }
       const httpStatusCode =
         typeof navResult?.httpStatusCode === "number" ? navResult.httpStatusCode : null;
       let focus = null;
@@ -1600,6 +1666,8 @@ async function runCurrentOperation(input, timeoutMs) {
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         url: input.url,
+        created: createdTarget === true,
+        reusedExistingTab: alreadyThere,
         ...(httpStatusCode !== null ? { httpStatusCode } : {}),
         ...(navError ? { error: navError } : {}),
         ...(focus ? { focus } : {}),
