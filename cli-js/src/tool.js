@@ -1647,12 +1647,17 @@ async function runCurrentOperation(input, timeoutMs) {
           }
           throw err;
         }
+        const urlBeforeNav = selected.url;
         const adopted =
           typeof navResult?.loaderId === "string" && navResult.loaderId.startsWith("adopted-");
         if (!adopted) {
           await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
         }
-        selected.url = input.url;
+        if (!navResult?.errorText) {
+          selected.url = input.url;
+        } else {
+          selected.url = urlBeforeNav;
+        }
       } else if (createdTarget === true) {
         const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
         let href = "";
@@ -1692,7 +1697,7 @@ async function runCurrentOperation(input, timeoutMs) {
         });
       }
       const navError = navResult?.errorText || null;
-      if (navError && createdTarget && isBlankUrl(selected.url)) {
+      if (navError && createdTarget) {
         await cdp.send("Target.closeTarget", { targetId: selected.targetId }).catch(() => null);
       }
       const httpStatusCode =
