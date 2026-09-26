@@ -206,6 +206,36 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
 });
 
+test("a shadow control does not join a light-DOM form with the same id", () => {
+  const light = h("form", { id: "checkout", name: "checkout", action: "/pay" }, [
+    h("input", { id: "in-form", name: "note", type: "text", "aria-label": "Note" }),
+  ]);
+  const card = h("input", {
+    id: "card",
+    name: "card",
+    type: "text",
+    form: "checkout",
+    "aria-label": "Card",
+  });
+  const shadow = h("div", {}, [card]);
+  card.getRootNode = () => shadow;
+  const host = h("span");
+  host.shadowRoot = shadow;
+  shadow.host = host;
+  shadow.getElementById = () => null;
+  const root = h("div", {}, [light, host]);
+  root.getElementById = (id) => (id === "checkout" ? light : null);
+
+  const forms = summarizeSnapshotForms(root, () => true);
+  const orphan = forms.find((form) => form.orphan);
+  assert.ok(orphan);
+  assert.ok(orphan.fields.some((field) => field.name === "card"));
+  assert.equal(
+    forms.some((form) => form.id === "checkout" && form.fields.some((field) => field.name === "card")),
+    false
+  );
+});
+
 test("a hidden iframe is not a form source", () => {
   const inner = h("div", {}, [
     h("form", { id: "stale", name: "stale", action: "/old" }, [

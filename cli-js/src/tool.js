@@ -1713,12 +1713,15 @@ export function summarizeSnapshotForms(root, visible) {
     const formId = attr(el, "form");
     if (formId) {
       const scopes = [];
+      let own = null;
       try {
-        if (typeof el.getRootNode === "function") scopes.push(el.getRootNode());
+        own = typeof el.getRootNode === "function" ? el.getRootNode() : null;
       } catch {
-        /* detached */
+        own = null;
       }
-      scopes.push(root);
+      if (own) scopes.push(own);
+      // form/id lookup does not cross a shadow boundary.
+      if (!own || !own.host) scopes.push(root);
       for (const scope of scopes) {
         if (!scope || typeof scope.getElementById !== "function") continue;
         const named = scope.getElementById(formId);
