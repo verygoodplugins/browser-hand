@@ -261,6 +261,27 @@ test("form summaries stop at 120 fields", () => {
   assert.equal(forms[0].fields.length, 120);
 });
 
+test("iframe forms share the 120 field cap with the parent", () => {
+  const frameFields = (id) => {
+    const inputs = [];
+    for (let i = 0; i < 80; i += 1) {
+      inputs.push(h("input", { name: `${id}-${i}`, type: "text", "aria-label": `${id} ${i}` }));
+    }
+    return h("div", {}, [h("form", { id, name: id, action: `/${id}` }, inputs)]);
+  };
+  const first = h("iframe", { id: "one" });
+  first.contentDocument = frameFields("one");
+  const second = h("iframe", { id: "two" });
+  second.contentDocument = frameFields("two");
+  const root = h("div", {}, [first, second]);
+  const forms = collectSnapshotForms(root, () => true);
+  const total = forms.reduce((count, form) => count + form.fields.length, 0);
+  assert.equal(total, 120);
+  assert.equal(forms[0].frame, "one");
+  assert.equal(forms[0].fields.length, 80);
+  assert.equal(forms[1].fields.length, 40);
+});
+
 test("same-origin iframe forms are tagged with the frame", () => {
   const inner = h("div", {}, [
     h("form", { id: "inner", name: "inner", action: "/in" }, [

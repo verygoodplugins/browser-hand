@@ -1661,7 +1661,7 @@ export function snapshotControlRegion(el) {
   return "control";
 }
 
-export function summarizeSnapshotForms(root, visible) {
+export function summarizeSnapshotForms(root, visible, limit = 120) {
   const isVisible = typeof visible === "function" ? visible : () => true;
   const norm = (value) => String(value || "").replace(/\s+/g, " ").trim();
   const short = (value) => norm(value).slice(0, 240);
@@ -1833,14 +1833,14 @@ export function summarizeSnapshotForms(root, visible) {
       }
     }
   });
-  const MAX_SNAPSHOT_FIELDS = 120;
+  const maxFields = Number.isFinite(limit) ? Math.max(0, limit) : 120;
   const allFields = fieldsUnder(root);
   const grouped = new Map();
   for (const form of formNodes) grouped.set(form, []);
   const orphanEls = [];
   let counted = 0;
   for (const el of allFields) {
-    if (counted >= MAX_SNAPSHOT_FIELDS) break;
+    if (counted >= maxFields) break;
     const owner = formFor(el);
     if (owner && grouped.has(owner)) grouped.get(owner).push(el);
     else if (!owner) orphanEls.push(el);
@@ -1865,7 +1865,9 @@ export function summarizeSnapshotForms(root, visible) {
 
 export function collectSnapshotForms(doc, visible) {
   const isVisible = typeof visible === "function" ? visible : () => true;
-  const forms = summarizeSnapshotForms(doc, visible);
+  const CAP = 120;
+  const forms = summarizeSnapshotForms(doc, visible, CAP);
+  let remaining = CAP - forms.reduce((count, form) => count + form.fields.length, 0);
   let frames = [];
   try {
     frames = Array.from(doc.querySelectorAll("iframe")).slice(0, 20);
@@ -1886,10 +1888,14 @@ export function collectSnapshotForms(doc, visible) {
     } catch {
       child = null;
     }
-    if (!child) continue;
+    if (!child || remaining <= 0) continue;
     const frameName = iframe.id || iframe.name || iframe.title || "iframe";
-    for (const form of summarizeSnapshotForms(child, visible)) {
-      forms.push({ ...form, frame: frameName });
+    for (const form of summarizeSnapshotForms(child, visible, remaining)) {
+      if (remaining <= 0) break;
+      const fields = form.fields.slice(0, remaining);
+      remaining -= fields.length;
+      if (!fields.length) continue;
+      forms.push({ ...form, fields, frame: frameName });
     }
   }
   return forms;
