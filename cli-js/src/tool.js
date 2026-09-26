@@ -2072,6 +2072,13 @@ export function collectFillLabels(el, root) {
   } catch {
     /* closest is missing */
   }
+  // Gym 02 puts the visible label in the previous sibling with a broken `for`.
+  try {
+    const prev = el.previousElementSibling;
+    if (prev && String(prev.tagName || "").toUpperCase() === "LABEL") push(textOf(prev));
+  } catch {
+    /* no sibling walk */
+  }
   try {
     const labelledBy = typeof el.getAttribute === "function" ? el.getAttribute("aria-labelledby") : "";
     if (labelledBy && root && typeof root.getElementById === "function") {
@@ -2107,6 +2114,20 @@ export function collectFillLabels(el, root) {
  * Score is exact, then prefix, then the candidate containing the query — never
  * the reverse, so a short id cannot steal a longer key.
  */
+function queryWordOverlap(labels, wanted) {
+  const words = new Set(wanted.split(" ").filter((word) => word.length >= 3));
+  let best = 0;
+  if (!labels || typeof labels.length !== "number") return 0;
+  for (let i = 0; i < labels.length; i += 1) {
+    const label = labels[i];
+    if (!label) continue;
+    for (const word of label.split(" ")) {
+      if (word.length >= 3 && words.has(word) && word.length > best) best = word.length;
+    }
+  }
+  return best;
+}
+
 export function pickFillCandidate(candidates, wantedRaw) {
   const wanted = normalizeFillKey(wantedRaw);
   if (!wanted || !candidates || typeof candidates.length !== "number") return null;
@@ -2118,10 +2139,17 @@ export function pickFillCandidate(candidates, wantedRaw) {
     if (rawLabels && typeof rawLabels.length === "number") {
       for (let j = 0; j < rawLabels.length; j += 1) labels.push(normalizeFillKey(rawLabels[j]));
     }
-    const score = scoreLabelMatch(labels, wanted);
-    if (score > 0 && (!best || score > best.score)) best = { index: i, score };
+    const scored = scoreLabelMatch(labels, wanted);
+    const overlap = queryWordOverlap(labels, wanted);
+    // A whole word of the query ("company" inside "company name") still matches.
+    // A shorter token such as id "n" does not, because words shorter than 3 are ignored.
+    const score = scored || (overlap >= 3 ? 1 : 0);
+    if (score <= 0) continue;
+    if (!best || score > best.score || (score === best.score && overlap > best.overlap)) {
+      best = { index: i, score, overlap };
+    }
   }
-  return best;
+  return best ? { index: best.index, score: best.score } : null;
 }
 
 function fillControlIsEditable(el) {
@@ -2142,8 +2170,9 @@ function fillControlIsEditable(el) {
  */
 export function fillValueStuck(el, value, mode) {
   if (!el) return false;
-  const expected = String(value);
-  let kind = mode || "";
+  const written = mode && typeof mode === "object" ? mode : null;
+  const expected = value == null ? "" : String(value);
+  let kind = written ? written.mode : mode || "";
   if (!kind) {
     const type = String(el.type || "").toLowerCase();
     if (type === "checkbox") kind = "checkbox";
@@ -2185,16 +2214,58 @@ export function fillValueStuck(el, value, mode) {
     return false;
   }
   if (kind === "combobox") {
-    const valueText = String(el.value == null ? "" : el.value);
-    const contentText = String(el.textContent == null ? "" : el.textContent);
-    if (expected === "") return valueText === "" || contentText === "";
-    const needle = expected.toLowerCase();
-    return valueText.toLowerCase().indexOf(needle) !== -1 || contentText.toLowerCase().indexOf(needle) !== -1;
+    const option = written && written.option;
+    const optionText = normalizeFillKey(option && (option.textContent || option.innerText));
+    const first = optionText.split(" ").filter(Boolean)[0] || "";
+    const got = normalizeFillKey(el.value == null ? "" : el.value);
+    let expanded = null;
+    try {
+      expanded = typeof el.getAttribute === "function" ? el.getAttribute("aria-expanded") : null;
+    } catch {
+      expanded = null;
+    }
+    // The list is still open, so the click did not commit.
+    if (expanded === "true") return false;
+    let selected = false;
+    try {
+      selected = !!(option && typeof option.getAttribute === "function" && option.getAttribute("aria-selected") === "true");
+    } catch {
+      selected = false;
+    }
+    if (selected) return true;
+    if (got && optionText && (got === optionText || got.includes(optionText))) return true;
+    // Challenge 20 writes the IATA code and closes the list. The typed query
+    // alone, while the popup is still open, must not count.
+    if (got && first && got === first && expanded === "false") return true;
+    if (!got && first && expanded !== "true") {
+      let around = "";
+      try {
+        const scope =
+          (typeof el.closest === "function" && el.closest("[role='combobox']")) || el.parentElement;
+        around = normalizeFillKey(scope && (scope.innerText || scope.textContent));
+      } catch {
+        around = "";
+      }
+      if (around.includes(first)) return true;
+    }
+    return false;
   }
+  const compact = (raw) => normalizeFillKey(raw).replace(/ /g, "");
   if (kind === "contenteditable" || fillControlIsEditable(el)) {
-    return String(el.textContent == null ? "" : el.textContent) === expected;
+    const got = String(el.textContent == null ? "" : el.textContent);
+    if (got === expected) return true;
+    const gotKey = compact(got);
+    const wantKey = compact(expected);
+    if (!wantKey) return gotKey === "";
+    return gotKey === wantKey || gotKey.includes(wantKey);
   }
-  return String(el.value) === expected;
+  const gotRaw = String(el.value == null ? "" : el.value);
+  if (gotRaw === expected) return true;
+  const gotKey = compact(gotRaw);
+  const wantKey = compact(expected);
+  if (!wantKey) return gotKey === "";
+  // Masks insert punctuation. "(555) 123-4567" still holds 5551234567.
+  return gotKey === wantKey || gotKey.includes(wantKey);
 }
 
 /** True only when fill reported an empty failed array. Null and garbage are misses. */
@@ -2322,7 +2393,7 @@ export function buildFillFieldsExpression(fields) {
         const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
         if (!option) throw new Error('combobox option not found');
         dispatchOptionPointer(option);
-        return { mode: 'combobox', selected: true };
+        return { mode: 'combobox', selected: true, option };
       }
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       return { mode: 'text' };
@@ -2339,7 +2410,7 @@ export function buildFillFieldsExpression(fields) {
         }
         const written = await setValue(el, value, fillDeadline);
         const mode = written && written.mode;
-        if (!fillValueStuck(el, value, mode)) {
+        if (!fillValueStuck(el, value, written)) {
           failed.push({ label, reason: 'value did not stick', mode });
         } else {
           filled.push(label);
@@ -2507,6 +2578,7 @@ export const FILL_MATCH_HELPER_SOURCE = [
   normalizeFillKey,
   collectFillLabels,
   scoreLabelMatch,
+  queryWordOverlap,
   pickFillCandidate,
   fillValueStuck,
   fillControlIsEditable,

@@ -50,6 +50,25 @@ test("Name does not match a control whose only token is n", () => {
   assert.equal(picked, null);
 });
 
+test("Company name matches a broken for= label and prefers company over name", () => {
+  const label = { tagName: "LABEL", innerText: "Company name", htmlFor: "missing-id" };
+  const company = {
+    id: "company",
+    previousElementSibling: label,
+    labels: [],
+    closest: () => null,
+    getAttribute: (attr) => (attr === "name" ? "company" : null),
+  };
+  const labels = collectFillLabels(company, { querySelectorAll: () => [] });
+  assert.ok(labels.includes("company name"));
+  const picked = pickFillCandidate(
+    [{ labels: ["name"] }, { labels: collectFillLabels({ id: "company", getAttribute: (attr) => (attr === "name" ? "company" : null), labels: [] }, null) }],
+    "Company name"
+  );
+  assert.equal(picked.index, 1);
+  assert.equal(picked.score, 1);
+});
+
 test("Name matches name fullName when that is the only candidate", () => {
   const picked = pickFillCandidate(
     [{ labels: collectFillLabels(control({ name: "fullName" }), null) }],
@@ -108,6 +127,9 @@ test("a missed Name field fails the command", () => {
 test("fillValueStuck reads a text input back", () => {
   assert.equal(fillValueStuck({ value: "Ada" }, "Ada"), true);
   assert.equal(fillValueStuck({ value: "" }, "Ada"), false);
+  assert.equal(fillValueStuck({ value: "" }, null), true);
+  assert.equal(fillValueStuck({ value: "(555) 123-4567" }, "5551234567"), true);
+  assert.equal(fillValueStuck({ value: "555" }, "5551234567"), false);
 });
 
 test("fillValueStuck follows checkbox, radio, select, contenteditable, and combobox", () => {
@@ -133,7 +155,30 @@ test("fillValueStuck follows checkbox, radio, select, contenteditable, and combo
   );
   assert.equal(fillValueStuck({ isContentEditable: true, textContent: "Ada" }, "Ada", "text"), true);
   assert.equal(fillValueStuck({ isContentEditable: true, textContent: "" }, "Ada", "text"), false);
-  assert.equal(fillValueStuck({ value: "JFK · New York", textContent: "" }, "JFK", "combobox"), true);
+  const option = { textContent: "JFK · New York John F. Kennedy", getAttribute: () => null };
+  assert.equal(
+    fillValueStuck(
+      { value: "JFK", getAttribute: (name) => (name === "aria-expanded" ? "true" : null) },
+      "JFK",
+      { mode: "combobox", option }
+    ),
+    false
+  );
+  assert.equal(
+    fillValueStuck(
+      { value: "JFK", getAttribute: (name) => (name === "aria-expanded" ? "false" : null) },
+      "JFK",
+      { mode: "combobox", option }
+    ),
+    true
+  );
+  assert.equal(
+    fillValueStuck({ value: "JFK · New York John F. Kennedy", getAttribute: () => null }, "JFK", {
+      mode: "combobox",
+      option,
+    }),
+    true
+  );
   assert.equal(fillValueStuck({ value: "", textContent: "" }, "JFK", "combobox"), false);
 });
 
