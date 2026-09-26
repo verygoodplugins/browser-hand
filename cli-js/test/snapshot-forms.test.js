@@ -208,6 +208,21 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
 });
 
+test("form=missing does not fall through to the ancestor form", () => {
+  const note = h("input", { name: "note", type: "text", form: "missing", "aria-label": "Note" });
+  const form = h("form", { id: "real", name: "real", action: "/r" }, [note]);
+  const root = h("div", {}, [form]);
+  root.getElementById = () => null;
+
+  const forms = summarizeSnapshotForms(root, () => true);
+  assert.equal(
+    forms.some((entry) => entry.id === "real"),
+    false
+  );
+  const orphan = forms.find((entry) => entry.orphan);
+  assert.ok(orphan.fields.some((field) => field.name === "note"));
+});
+
 test("a shadow control does not join a light-DOM form with the same id", () => {
   const light = h("form", { id: "checkout", name: "checkout", action: "/pay" }, [
     h("input", { id: "in-form", name: "note", type: "text", "aria-label": "Note" }),
