@@ -2221,9 +2221,11 @@ export function fillValueStuck(el, value, mode) {
   }
   if (kind === "combobox") {
     const option = written && written.option;
-    const optionText = normalizeFillKey(option && (option.textContent || option.innerText));
+    const optionRaw = String((option && (option.textContent || option.innerText)) || "");
+    const optionText = normalizeFillKey(optionRaw);
     const first = optionText.split(" ").filter(Boolean)[0] || "";
-    const got = normalizeFillKey(el.value == null ? "" : el.value);
+    const gotRaw = String(el.value == null ? "" : el.value);
+    const got = normalizeFillKey(gotRaw);
     let expanded = null;
     try {
       expanded = typeof el.getAttribute === "function" ? el.getAttribute("aria-expanded") : null;
@@ -2239,6 +2241,8 @@ export function fillValueStuck(el, value, mode) {
       selected = false;
     }
     if (selected) return true;
+    // 東京 folds to nothing. Compare the raw committed text before giving up.
+    if (!optionText && optionRaw && gotRaw === optionRaw) return true;
     if (got && optionText && (got === optionText || got.includes(optionText))) return true;
     // Challenge 20 writes the IATA code and closes the list. The typed query
     // alone, while the popup is still open, must not count.
