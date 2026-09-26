@@ -13,6 +13,7 @@ import {
   collectFillLabels,
   fillFieldsSucceeded,
   fillValueStuck,
+  normalizeFillKey,
   pickFillCandidate,
 } from "../src/tool.js";
 
@@ -133,12 +134,15 @@ test("fillValueStuck reads a text input back", () => {
   assert.equal(fillValueStuck({ value: "Ada" }, "Ada"), true);
   assert.equal(fillValueStuck({ value: "" }, "Ada"), false);
   assert.equal(fillValueStuck({ value: "" }, null), true);
-  assert.equal(fillValueStuck({ value: "(555) 123-4567" }, "5551234567"), true);
+  assert.equal(fillValueStuck({ value: "(555) 123-4567", type: "tel" }, "5551234567"), true);
+  assert.equal(fillValueStuck({ value: "(555) 123-4567" }, "5551234567"), false);
+  assert.equal(fillValueStuck({ value: "ab" }, "a-b"), false);
   assert.equal(fillValueStuck({ value: "555" }, "5551234567"), false);
   assert.equal(fillValueStuck({ value: "" }, "-"), false);
   assert.equal(fillValueStuck({ value: "大阪" }, "東京"), false);
   assert.equal(fillValueStuck({ value: "東京" }, "東京"), true);
   assert.equal(fillValueStuck({ value: "Ada Lovelace" }, "Ada"), false);
+  assert.notEqual(normalizeFillKey("東京1"), normalizeFillKey("大阪1"));
   assert.equal(
     fillValueStuck(
       { tagName: "SELECT", selectedOptions: [{ value: "大阪", text: "大阪" }] },
@@ -154,6 +158,14 @@ test("fillValueStuck reads a text input back", () => {
       "select"
     ),
     true
+  );
+  assert.equal(
+    fillValueStuck(
+      { tagName: "SELECT", selectedOptions: [{ value: "大阪1", text: "大阪1" }] },
+      "東京1",
+      "select"
+    ),
+    false
   );
 });
 
