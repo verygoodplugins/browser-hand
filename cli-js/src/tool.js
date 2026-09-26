@@ -1676,28 +1676,6 @@ export function summarizeSnapshotForms(root, visible) {
       return "";
     }
   };
-  const labelFor = (el) => {
-    const parts = [];
-    if (el && el.id && root && typeof root.querySelectorAll === "function") {
-      try {
-        const labels = Array.from(root.querySelectorAll("label[for]")).filter((label) => {
-          const forId = label.htmlFor || attr(label, "for");
-          return forId === el.id;
-        });
-        parts.push(...labels.map((label) => label.innerText));
-      } catch {}
-    }
-    try {
-      const wrapping = el && typeof el.closest === "function" ? el.closest("label") : null;
-      if (wrapping) parts.push(wrapping.innerText);
-    } catch {}
-    parts.push(attr(el, "aria-label"), attr(el, "placeholder"));
-    for (const part of parts) {
-      const text = short(part);
-      if (text) return text;
-    }
-    return "";
-  };
   const fieldType = (el) => {
     const typed = attr(el, "type").trim();
     if (typed) return typed;
@@ -1711,12 +1689,6 @@ export function summarizeSnapshotForms(root, visible) {
     }
   };
   const include = (el) => shown(el) && !skipTypes.has(attr(el, "type").trim().toLowerCase());
-  const toField = (el) => ({
-    label: labelFor(el),
-    type: fieldType(el),
-    name: attr(el, "name"),
-    id: (el && (el.id || attr(el, "id"))) || "",
-  });
   const query = (node, sel) => {
     if (!node || typeof node.querySelectorAll !== "function") return [];
     try {
@@ -1732,11 +1704,104 @@ export function summarizeSnapshotForms(root, visible) {
       return null;
     }
   };
+  // closest() stops at a shadow boundary. A field inside an open shadow root
+  // still belongs to the form that contains the host.
+  const formFor = (el, depth = 0) => {
+    if (!el || depth > 8) return null;
+    const direct = owningForm(el);
+    if (direct) return direct;
+    try {
+      const scope = typeof el.getRootNode === "function" ? el.getRootNode() : null;
+      if (scope && scope.host) return formFor(scope.host, depth + 1);
+    } catch {
+      /* detached */
+    }
+    return null;
+  };
+  const eachRoot = (node, depth, visit) => {
+    if (!node || depth > 6) return;
+    visit(node);
+    for (const host of query(node, "*")) {
+      if (host && host.shadowRoot) eachRoot(host.shadowRoot, depth + 1, visit);
+    }
+  };
+  const labelRootsFor = (el) => {
+    const scopes = [];
+    const push = (node) => {
+      if (node && !scopes.includes(node)) scopes.push(node);
+    };
+    push(root);
+    try {
+      if (el && typeof el.getRootNode === "function") push(el.getRootNode());
+    } catch {
+      /* detached */
+    }
+    return scopes;
+  };
+  const labelForInScopes = (el) => {
+    const parts = [];
+    for (const scope of labelRootsFor(el)) {
+      if (!(el && el.id) || !scope || typeof scope.querySelectorAll !== "function") continue;
+      try {
+        const labels = Array.from(scope.querySelectorAll("label[for]")).filter((label) => {
+          const forId = label.htmlFor || attr(label, "for");
+          return forId === el.id;
+        });
+        parts.push(...labels.map((label) => label.innerText));
+      } catch {
+        /* scope gone */
+      }
+    }
+    try {
+      const wrapping = el && typeof el.closest === "function" ? el.closest("label") : null;
+      if (wrapping) parts.push(wrapping.innerText);
+    } catch {
+      /* detached */
+    }
+    parts.push(attr(el, "aria-label"), attr(el, "placeholder"));
+    for (const part of parts) {
+      const text = short(part);
+      if (text) return text;
+    }
+    return "";
+  };
+  const toFieldInScope = (el) => ({
+    label: labelForInScopes(el),
+    type: fieldType(el),
+    name: attr(el, "name"),
+    id: (el && (el.id || attr(el, "id"))) || "",
+  });
+  const fieldsUnder = (node) => {
+    const found = [];
+    const seen = new Set();
+    eachRoot(node, 0, (scope) => {
+      for (const el of query(scope, fieldSel)) {
+        if (seen.has(el) || !include(el)) continue;
+        seen.add(el);
+        found.push(el);
+      }
+    });
+    return found;
+  };
   const forms = [];
-  for (const form of query(root, "form")) {
-    const fields = query(form, fieldSel)
-      .filter((el) => include(el) && owningForm(el) === form)
-      .map(toField);
+  const seenForms = new Set();
+  const formNodes = [];
+  eachRoot(root, 0, (scope) => {
+    for (const form of query(scope, "form")) {
+      if (!seenForms.has(form)) {
+        seenForms.add(form);
+        formNodes.push(form);
+      }
+    }
+  });
+  const claimed = new Set();
+  for (const form of formNodes) {
+    const fields = fieldsUnder(form)
+      .filter((el) => formFor(el) === form && !claimed.has(el))
+      .map((el) => {
+        claimed.add(el);
+        return toFieldInScope(el);
+      });
     if (!fields.length) continue;
     forms.push({
       id: (form && (form.id || attr(form, "id"))) || "",
@@ -1745,11 +1810,35 @@ export function summarizeSnapshotForms(root, visible) {
       fields,
     });
   }
-  const orphans = query(root, fieldSel)
-    .filter((el) => include(el) && !owningForm(el))
-    .map(toField);
+  const orphans = fieldsUnder(root)
+    .filter((el) => !formFor(el) && !claimed.has(el))
+    .map(toFieldInScope);
   if (orphans.length) {
     forms.push({ id: "", name: "", action: "", orphan: true, fields: orphans });
+  }
+  return forms;
+}
+
+export function collectSnapshotForms(doc, visible) {
+  const forms = summarizeSnapshotForms(doc, visible);
+  let frames = [];
+  try {
+    frames = Array.from(doc.querySelectorAll("iframe")).slice(0, 20);
+  } catch {
+    frames = [];
+  }
+  for (const iframe of frames) {
+    let child = null;
+    try {
+      child = iframe.contentDocument;
+    } catch {
+      child = null;
+    }
+    if (!child) continue;
+    const frameName = iframe.id || iframe.name || iframe.title || "iframe";
+    for (const form of summarizeSnapshotForms(child, visible)) {
+      forms.push({ ...form, frame: frameName });
+    }
   }
   return forms;
 }
@@ -1768,6 +1857,7 @@ export function buildSnapshotExpression(maxTextChars) {
       }
     };
     const summarizeSnapshotForms = ${summarizeSnapshotForms.toString()};
+    const collectSnapshotForms = ${collectSnapshotForms.toString()};
     const snapshotControlRegion = ${snapshotControlRegion.toString()};
     const labelForInRoot = (el, root) => {
       const parts = [];
@@ -1859,7 +1949,7 @@ export function buildSnapshotExpression(maxTextChars) {
       })
       .slice(0, 20)
       .map(el => short(el.innerText));
-    const forms = summarizeSnapshotForms(document, visible);
+    const forms = collectSnapshotForms(document, visible);
     return {
       url: location.href,
       title: document.title,

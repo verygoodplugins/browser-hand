@@ -11,11 +11,13 @@ import vm from "node:vm";
 
 import {
   buildSnapshotExpression,
+  collectSnapshotForms,
   snapshotControlRegion,
   summarizeSnapshotForms,
 } from "../src/tool.js";
 
 function matches(el, sel) {
+  if (sel === "*") return true;
   const m = String(sel)
     .trim()
     .match(/^([a-zA-Z0-9_-]*)(?:\[([a-zA-Z0-9_-]+)(?:="([^"]*)")?\])?$/);
@@ -148,6 +150,42 @@ test("uses tag name when type is empty and prefers label[for], wrapping label, a
   ]);
 });
 
+test("fields inside an open shadow root stay on their form", () => {
+  const input = h("input", { id: "full-name", name: "fullName", type: "text" });
+  const shadow = h("div", {}, [h("label", { for: "full-name", text: "Name" }), input]);
+  input.getRootNode = () => shadow;
+  const host = h("span", {});
+  host.shadowRoot = shadow;
+  shadow.host = host;
+  const root = h("div", {}, [h("form", { id: "profile", name: "profile", action: "/save" }, [host])]);
+
+  assert.deepEqual(summarizeSnapshotForms(root, () => true), [
+    {
+      id: "profile",
+      name: "profile",
+      action: "/save",
+      fields: [{ label: "Name", type: "text", name: "fullName", id: "full-name" }],
+    },
+  ]);
+});
+
+test("same-origin iframe forms are tagged with the frame", () => {
+  const inner = h("div", {}, [
+    h("form", { id: "inner", name: "inner", action: "/in" }, [
+      h("input", { id: "em", name: "email", type: "email", "aria-label": "Email" }),
+    ]),
+  ]);
+  const frame = h("iframe", { id: "checkout" });
+  frame.contentDocument = inner;
+  const root = h("div", {}, [frame]);
+
+  const forms = collectSnapshotForms(root, () => true);
+  assert.equal(forms.length, 1);
+  assert.equal(forms[0].frame, "checkout");
+  assert.equal(forms[0].fields[0].name, "email");
+  assert.equal(forms[0].fields[0].label, "Email");
+});
+
 test("omits a form when every field fails the visibility predicate", () => {
   const root = h("div", {}, [
     h("form", { id: "f", name: "f", action: "/f" }, [
@@ -185,7 +223,7 @@ test("buildSnapshotExpression lists forms before controls and assigns region", (
   const controlsAt = body.indexOf("controls");
   const linksAt = body.indexOf("links");
   assert.ok(formsAt !== -1 && formsAt < controlsAt && controlsAt < linksAt);
-  assert.match(src, /const forms = summarizeSnapshotForms\(document, visible\)/);
+  assert.match(src, /const forms = collectSnapshotForms\(document, visible\)/);
   assert.match(src, /region:\s*snapshotControlRegion\(el\)/);
   assert.match(src, /\.slice\(0,\s*100\)/);
 
