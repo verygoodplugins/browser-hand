@@ -1704,8 +1704,8 @@ export function summarizeSnapshotForms(root, visible, limit = 120) {
       return null;
     }
   };
-  // closest() stops at a shadow boundary. A field inside an open shadow root
-  // still belongs to the form that contains the host.
+  // closest() stops at a shadow boundary. A shadow input is not part of the
+  // light-DOM form that contains its host, so the walk stops there too.
   const formFor = (el, depth = 0) => {
     if (!el || depth > 8) return null;
     // The form attribute (and el.form) associates a control that is not nested.

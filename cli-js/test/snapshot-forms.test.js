@@ -150,7 +150,7 @@ test("uses tag name when type is empty and prefers label[for], wrapping label, a
   ]);
 });
 
-test("fields inside an open shadow root stay on their form", () => {
+test("a shadow input inside a light-DOM form is not submitted with that form", () => {
   const input = h("input", { id: "full-name", name: "fullName", type: "text" });
   const shadow = h("div", {}, [h("label", { for: "full-name", text: "Name" }), input]);
   input.getRootNode = () => shadow;
@@ -159,11 +159,13 @@ test("fields inside an open shadow root stay on their form", () => {
   shadow.host = host;
   const root = h("div", {}, [h("form", { id: "profile", name: "profile", action: "/save" }, [host])]);
 
-  assert.deepEqual(summarizeSnapshotForms(root, () => true), [
+  const forms = summarizeSnapshotForms(root, () => true);
+  assert.deepEqual(forms, [
     {
-      id: "profile",
-      name: "profile",
-      action: "/save",
+      id: "",
+      name: "",
+      action: "",
+      orphan: true,
       fields: [{ label: "Name", type: "text", name: "fullName", id: "full-name" }],
     },
   ]);
@@ -204,23 +206,6 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.equal(forms[0].id, "checkout");
   assert.equal(forms[0].orphan, undefined);
   assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
-});
-
-test("a shadow input whose host sits in a form stays orphaned", () => {
-  const input = h("input", { id: "nick", name: "nick", type: "text", "aria-label": "Nick" });
-  const shadow = h("div", {}, [input]);
-  input.getRootNode = () => shadow;
-  const host = h("span");
-  host.shadowRoot = shadow;
-  shadow.host = host;
-  const root = h("div", {}, [h("form", { id: "outer", name: "outer", action: "/o" }, [host])]);
-  const forms = summarizeSnapshotForms(root, () => true);
-  const orphan = forms.find((form) => form.orphan);
-  assert.ok(orphan.fields.some((field) => field.name === "nick"));
-  assert.equal(
-    forms.some((form) => form.id === "outer" && form.fields.some((field) => field.name === "nick")),
-    false
-  );
 });
 
 test("a shadow control does not join a light-DOM form with the same id", () => {
