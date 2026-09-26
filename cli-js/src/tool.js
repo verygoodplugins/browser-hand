@@ -2015,11 +2015,11 @@ export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root 
   return null;
 }
 
-/** Lowercase a fill key and turn runs of non-alphanumerics into single spaces. */
+/** Lowercase a fill key and turn separators into single spaces. Unicode letters stay. */
 export function normalizeFillKey(raw) {
   return String(raw == null ? "" : raw)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 }
 
@@ -2264,12 +2264,30 @@ export function fillValueStuck(el, value, mode) {
     return false;
   }
   const compact = (raw) => normalizeFillKey(raw).replace(/ /g, "");
+  const caseFold = (raw) => String(raw == null ? "" : raw).toLowerCase().replace(/\s+/g, " ").trim();
+  // Phone and numeric masks insert punctuation. Ordinary text, including
+  // passwords and emails, must not treat "a-b" as "ab".
+  const foldsPunctuation = () => {
+    const type = String((el && el.type) || "").toLowerCase();
+    if (type === "tel" || type === "number") return true;
+    try {
+      if (typeof el.getAttribute !== "function") return false;
+      const inputmode = String(el.getAttribute("inputmode") || "").toLowerCase();
+      const autocomplete = String(el.getAttribute("autocomplete") || "").toLowerCase();
+      if (inputmode === "tel" || inputmode === "numeric" || inputmode === "decimal") return true;
+      if (autocomplete === "tel" || autocomplete.startsWith("tel-")) return true;
+    } catch {
+      return false;
+    }
+    return false;
+  };
   const stuckText = (got) => {
     if (got === expected) return true;
     if (expected === "") return got === "";
+    if (caseFold(got) === caseFold(expected)) return true;
+    if (!foldsPunctuation()) return false;
     const gotKey = compact(got);
     const wantKey = compact(expected);
-    // "-" or "東京" do not survive ASCII folding. Compare the original string.
     if (!wantKey) return false;
     return gotKey === wantKey;
   };
