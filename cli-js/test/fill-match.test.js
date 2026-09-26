@@ -213,6 +213,20 @@ test("fillValueStuck follows checkbox, radio, select, contenteditable, and combo
     ),
     true
   );
+  assert.equal(
+    fillValueStuck(
+      {
+        value: "New York",
+        getAttribute: (name) => (name === "aria-expanded" ? "false" : null),
+      },
+      "New York",
+      {
+        mode: "combobox",
+        option: { textContent: "JFK · New York John F. Kennedy", getAttribute: () => null },
+      }
+    ),
+    true
+  );
 });
 
 test("fill expression serializes match helpers and drops reverse substring", () => {

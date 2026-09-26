@@ -2247,6 +2247,9 @@ export function fillValueStuck(el, value, mode) {
     // Challenge 20 writes the IATA code and closes the list. The typed query
     // alone, while the popup is still open, must not count.
     if (got && first && got === first && expanded === "false") return true;
+    // List closed and the input holds exactly what was requested, even when
+    // the option text is longer ("New York" from "JFK · New York …").
+    if (expanded === "false" && (gotRaw === expected || (got && normalizeFillKey(expected) === got))) return true;
     if (!got && first && expanded !== "true") {
       let around = "";
       try {
