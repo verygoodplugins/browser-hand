@@ -1455,7 +1455,7 @@ async function runCurrentOperation(input, timeoutMs) {
       const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
       return redactSensitiveObject(
         {
-          success: true,
+          success: fillFieldsSucceeded(result),
           mode: "current",
           operation,
           target: compactTarget(selected),
