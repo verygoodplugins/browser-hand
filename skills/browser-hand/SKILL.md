@@ -102,6 +102,7 @@ Full reference: `references/extension-cli.md`.
 - To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`. Do **not** use `doctor` as a tab list — it is a health check.
 - Use `tabs --query <text>` or `snapshot --query <text>` instead of grepping a dumped doctor file.
 - **Do not** request window focus for ordinary fill/click/snapshot. Only use `focus --focus window --reason "…"` when a human must act (2FA, captcha, confirm).
+- Fill from `snapshot.forms` (label, type, name). `controls` with `region: "nav"` are menus, not fields.
 - Snapshot or screenshot **before and after** writes; verify with evaluate when critical.
 - On username/password manager weirdness, soft recovery is built in — retry evaluate/fill; re-open the named page if screenshot still fails.
 

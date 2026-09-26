@@ -32,7 +32,7 @@ browser-hand snapshot --page-name smoke
 browser-hand snapshot --target-url github.com
 ```
 
-Returns URL, title, controls (with labels), headings, links, text; pierces open shadow roots and same-origin iframes.
+Returns URL, title, `forms` (each form's fields: label, type, name), controls (with labels), headings, links, text; pierces open shadow roots and same-origin iframes. `controls[].region` is "nav", "form", or "control". Fill from `forms`, not from nav controls.
 
 Always snapshot before a write when the active tab is ambiguous.
 
