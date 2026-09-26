@@ -1640,7 +1640,121 @@ async function runCurrentOperation(input, timeoutMs) {
 }
 
 
-function buildSnapshotExpression(maxTextChars) {
+export function snapshotControlRegion(el) {
+  let role = "";
+  try {
+    role = (el && typeof el.getAttribute === "function" && el.getAttribute("role")) || "";
+  } catch {
+    role = "";
+  }
+  const hit = (sel) => {
+    try {
+      return !!(el && typeof el.closest === "function" && el.closest(sel));
+    } catch {
+      return false;
+    }
+  };
+  if (role === "menuitem" || hit("nav") || hit('[role="navigation"]') || hit('[role="menu"]')) {
+    return "nav";
+  }
+  if (hit("form")) return "form";
+  return "control";
+}
+
+export function summarizeSnapshotForms(root, visible) {
+  const isVisible = typeof visible === "function" ? visible : () => true;
+  const norm = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const short = (value) => norm(value).slice(0, 240);
+  const fieldSel = 'input, textarea, select, [contenteditable="true"], [role="textbox"]';
+  const skipTypes = new Set(["hidden", "submit", "button", "reset", "image"]);
+  const attr = (el, name) => {
+    try {
+      if (!el || typeof el.getAttribute !== "function") return "";
+      const value = el.getAttribute(name);
+      return value == null ? "" : String(value);
+    } catch {
+      return "";
+    }
+  };
+  const labelFor = (el) => {
+    const parts = [];
+    if (el && el.id && root && typeof root.querySelectorAll === "function") {
+      try {
+        const labels = Array.from(root.querySelectorAll("label[for]")).filter((label) => {
+          const forId = label.htmlFor || attr(label, "for");
+          return forId === el.id;
+        });
+        parts.push(...labels.map((label) => label.innerText));
+      } catch {}
+    }
+    try {
+      const wrapping = el && typeof el.closest === "function" ? el.closest("label") : null;
+      if (wrapping) parts.push(wrapping.innerText);
+    } catch {}
+    parts.push(attr(el, "aria-label"), attr(el, "placeholder"));
+    for (const part of parts) {
+      const text = short(part);
+      if (text) return text;
+    }
+    return "";
+  };
+  const fieldType = (el) => {
+    const typed = attr(el, "type").trim();
+    if (typed) return typed;
+    return String((el && el.tagName) || "").toLowerCase();
+  };
+  const shown = (el) => {
+    try {
+      return !!isVisible(el);
+    } catch {
+      return false;
+    }
+  };
+  const include = (el) => shown(el) && !skipTypes.has(attr(el, "type").trim().toLowerCase());
+  const toField = (el) => ({
+    label: labelFor(el),
+    type: fieldType(el),
+    name: attr(el, "name"),
+    id: (el && (el.id || attr(el, "id"))) || "",
+  });
+  const query = (node, sel) => {
+    if (!node || typeof node.querySelectorAll !== "function") return [];
+    try {
+      return Array.from(node.querySelectorAll(sel));
+    } catch {
+      return [];
+    }
+  };
+  const owningForm = (el) => {
+    try {
+      return el && typeof el.closest === "function" ? el.closest("form") : null;
+    } catch {
+      return null;
+    }
+  };
+  const forms = [];
+  for (const form of query(root, "form")) {
+    const fields = query(form, fieldSel)
+      .filter((el) => include(el) && owningForm(el) === form)
+      .map(toField);
+    if (!fields.length) continue;
+    forms.push({
+      id: (form && (form.id || attr(form, "id"))) || "",
+      name: attr(form, "name"),
+      action: attr(form, "action"),
+      fields,
+    });
+  }
+  const orphans = query(root, fieldSel)
+    .filter((el) => include(el) && !owningForm(el))
+    .map(toField);
+  if (orphans.length) {
+    forms.push({ id: "", name: "", action: "", orphan: true, fields: orphans });
+  }
+  return forms;
+}
+
+export function buildSnapshotExpression(maxTextChars) {
   return `(() => {
     const norm = value => String(value || '').replace(/\\s+/g, ' ').trim();
     const short = value => norm(value).slice(0, 240);
@@ -1653,6 +1767,8 @@ function buildSnapshotExpression(maxTextChars) {
         return false;
       }
     };
+    const summarizeSnapshotForms = ${summarizeSnapshotForms.toString()};
+    const snapshotControlRegion = ${snapshotControlRegion.toString()};
     const labelForInRoot = (el, root) => {
       const parts = [];
       if (el.id) {
@@ -1686,6 +1802,7 @@ function buildSnapshotExpression(maxTextChars) {
       name: el.getAttribute('name') || '',
       id: el.id || '',
       label: labelForInRoot(el, ctx.root || document),
+      region: snapshotControlRegion(el),
       ...(ctx.shadow ? { shadow: true } : {}),
       ...(ctx.frame ? { frame: ctx.frame } : {}),
     });
@@ -1742,12 +1859,14 @@ function buildSnapshotExpression(maxTextChars) {
       })
       .slice(0, 20)
       .map(el => short(el.innerText));
+    const forms = summarizeSnapshotForms(document, visible);
     return {
       url: location.href,
       title: document.title,
       focused: document.hasFocus(),
       activeElement: document.activeElement ? describe(document.activeElement, { root: document }) : null,
       headings: Array.from(document.querySelectorAll('h1,h2,h3')).filter(visible).slice(0, 40).map(el => short(el.innerText)),
+      forms,
       controls,
       frames,
       alerts,
