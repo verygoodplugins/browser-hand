@@ -138,6 +138,23 @@ test("fillValueStuck reads a text input back", () => {
   assert.equal(fillValueStuck({ value: "" }, "-"), false);
   assert.equal(fillValueStuck({ value: "大阪" }, "東京"), false);
   assert.equal(fillValueStuck({ value: "東京" }, "東京"), true);
+  assert.equal(fillValueStuck({ value: "Ada Lovelace" }, "Ada"), false);
+  assert.equal(
+    fillValueStuck(
+      { tagName: "SELECT", selectedOptions: [{ value: "大阪", text: "大阪" }] },
+      "東京",
+      "select"
+    ),
+    false
+  );
+  assert.equal(
+    fillValueStuck(
+      { tagName: "SELECT", selectedOptions: [{ value: "東京", text: "東京" }] },
+      "東京",
+      "select"
+    ),
+    true
+  );
 });
 
 test("fillValueStuck follows checkbox, radio, select, contenteditable, and combobox", () => {

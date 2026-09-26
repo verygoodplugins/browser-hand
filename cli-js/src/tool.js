@@ -2206,6 +2206,12 @@ export function fillValueStuck(el, value, mode) {
     const candidates = [option.value, option.text, option.textContent, option.label].map((item) =>
       normalizeFillKey(item)
     );
+    if (!wantedKey) {
+      const raw = [option.value, option.text, option.textContent, option.label].map((item) =>
+        String(item == null ? "" : item)
+      );
+      return raw.some((item) => item === expected);
+    }
     for (let i = 0; i < candidates.length; i += 1) {
       const item = candidates[i];
       if (item === wantedKey) return true;
@@ -2258,7 +2264,7 @@ export function fillValueStuck(el, value, mode) {
     const wantKey = compact(expected);
     // "-" or "東京" do not survive ASCII folding. Compare the original string.
     if (!wantKey) return false;
-    return gotKey === wantKey || gotKey.includes(wantKey);
+    return gotKey === wantKey;
   };
   if (kind === "contenteditable" || fillControlIsEditable(el)) {
     return stuckText(String(el.textContent == null ? "" : el.textContent));
@@ -2367,8 +2373,11 @@ export function buildFillFieldsExpression(fields) {
       if (typeof el.focus === 'function') el.focus();
       if (el.tagName === 'SELECT') {
         const wanted = norm(str);
-        const option = Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
-          || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
+        const exact = item => String(item.textContent || '') === str || String(item.value || '') === str;
+        const option = !wanted
+          ? Array.from(el.options).find(exact)
+          : Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
+            || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
         if (!option) throw new Error('No select option matched');
         el.value = option.value;
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
