@@ -206,6 +206,31 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
 });
 
+test("a hidden iframe is not a form source", () => {
+  const inner = h("div", {}, [
+    h("form", { id: "stale", name: "stale", action: "/old" }, [
+      h("input", { id: "q", name: "q", type: "text", "aria-label": "Query" }),
+    ]),
+  ]);
+  const frame = h("iframe", { id: "stale-frame" });
+  frame.contentDocument = inner;
+  const root = h("div", {}, [frame]);
+  assert.deepEqual(
+    collectSnapshotForms(root, (el) => el !== frame),
+    []
+  );
+});
+
+test("form summaries stop at 120 fields", () => {
+  const inputs = [];
+  for (let i = 0; i < 130; i += 1) {
+    inputs.push(h("input", { id: `f${i}`, name: `f${i}`, type: "text", "aria-label": `F${i}` }));
+  }
+  const root = h("div", {}, [h("form", { id: "grid", name: "grid", action: "/g" }, inputs)]);
+  const forms = summarizeSnapshotForms(root, () => true);
+  assert.equal(forms[0].fields.length, 120);
+});
+
 test("same-origin iframe forms are tagged with the frame", () => {
   const inner = h("div", {}, [
     h("form", { id: "inner", name: "inner", action: "/in" }, [

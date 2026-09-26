@@ -1830,15 +1830,21 @@ export function summarizeSnapshotForms(root, visible) {
       }
     }
   });
-  const claimed = new Set();
+  const MAX_SNAPSHOT_FIELDS = 120;
   const allFields = fieldsUnder(root);
+  const grouped = new Map();
+  for (const form of formNodes) grouped.set(form, []);
+  const orphanEls = [];
+  let counted = 0;
+  for (const el of allFields) {
+    if (counted >= MAX_SNAPSHOT_FIELDS) break;
+    const owner = formFor(el);
+    if (owner && grouped.has(owner)) grouped.get(owner).push(el);
+    else if (!owner) orphanEls.push(el);
+    counted += 1;
+  }
   for (const form of formNodes) {
-    const fields = allFields
-      .filter((el) => formFor(el) === form && !claimed.has(el))
-      .map((el) => {
-        claimed.add(el);
-        return toFieldInScope(el);
-      });
+    const fields = (grouped.get(form) || []).map(toFieldInScope);
     if (!fields.length) continue;
     forms.push({
       id: (form && (form.id || attr(form, "id"))) || "",
@@ -1847,9 +1853,7 @@ export function summarizeSnapshotForms(root, visible) {
       fields,
     });
   }
-  const orphans = allFields
-    .filter((el) => !formFor(el) && !claimed.has(el))
-    .map(toFieldInScope);
+  const orphans = orphanEls.map(toFieldInScope);
   if (orphans.length) {
     forms.push({ id: "", name: "", action: "", orphan: true, fields: orphans });
   }
@@ -1857,6 +1861,7 @@ export function summarizeSnapshotForms(root, visible) {
 }
 
 export function collectSnapshotForms(doc, visible) {
+  const isVisible = typeof visible === "function" ? visible : () => true;
   const forms = summarizeSnapshotForms(doc, visible);
   let frames = [];
   try {
@@ -1865,6 +1870,13 @@ export function collectSnapshotForms(doc, visible) {
     frames = [];
   }
   for (const iframe of frames) {
+    let frameVisible = true;
+    try {
+      frameVisible = !!isVisible(iframe);
+    } catch {
+      frameVisible = false;
+    }
+    if (!frameVisible) continue;
     let child = null;
     try {
       child = iframe.contentDocument;
