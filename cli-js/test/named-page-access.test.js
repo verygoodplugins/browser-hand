@@ -15,6 +15,9 @@ import {
   namedPageNotFoundMessage,
   planCurrentTargetAccess,
   resolveNamedPageInfo,
+  samePageUrl,
+  openNeedsNavigation,
+  doctorSmokeUrl,
 } from "../src/tool.js";
 
 test("open with a pageName is allowed to create a tab", () => {
@@ -134,7 +137,74 @@ test("open resolves through the create-or-adopt endpoint", async () => {
     },
   });
 
-  assert.deepEqual(result, { name: "work", targetId: "tab-point" });
+  assert.deepEqual(result, {
+    name: "work",
+    targetId: "tab-point",
+    url: "https://point.me/search",
+  });
+});
+
+test("open forwards the caller timeout into page bootstrap", async () => {
+  const plan = planCurrentTargetAccess({ operation: "open", pageName: "work" });
+  const result = await resolveNamedPageInfo({
+    plan,
+    pageName: "work",
+    url: "https://example.com/new",
+    timeoutMs: 1000,
+    targets: [],
+    openPage: async (name, options) => ({ name, ...options }),
+    lookupPage: async () => {
+      assert.fail("open must use the create-or-adopt endpoint");
+    },
+  });
+
+  assert.equal(result.timeoutMs, 1000);
+  assert.equal(result.url, "https://example.com/new");
+});
+
+test("open does not navigate again when the tab is already on that URL", () => {
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      currentUrl: "https://example.com/a",
+      requestedUrl: "https://example.com/a/",
+    }),
+    false
+  );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      currentUrl: "about:blank",
+      requestedUrl: "https://example.com/a",
+    }),
+    true
+  );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "goto",
+      currentUrl: "https://example.com/a",
+      requestedUrl: "https://example.com/a",
+    }),
+    true
+  );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      created: true,
+      currentUrl: "https://example.com/",
+      requestedUrl: "http://example.com/",
+    }),
+    false
+  );
+  assert.equal(
+    openNeedsNavigation({
+      operation: "open",
+      created: true,
+      currentUrl: "about:blank",
+      requestedUrl: "https://example.com/a",
+    }),
+    true
+  );
 });
 
 test("missing named-page errors stay compact and point to the explicit inventory", () => {
@@ -154,15 +224,38 @@ test("findAdoptTarget does not treat prefix-overlapping URLs as the same tab", (
   );
 });
 
-test("findAdoptTarget returns null when two tabs share the exact URL", () => {
-  assert.equal(
-    findAdoptTarget(
-      [
-        { type: "page", targetId: "a", url: "https://point.me/search" },
-        { type: "page", targetId: "b", url: "https://point.me/search" },
-      ],
-      "https://point.me/search"
-    ),
-    null
+test("findAdoptTarget reuses the focused tab when two tabs share the exact URL", () => {
+  const hit = findAdoptTarget(
+    [
+      { type: "page", targetId: "a", url: "https://point.me/search" },
+      { type: "page", targetId: "b", url: "https://point.me/search", focused: true },
+    ],
+    "https://point.me/search"
   );
+  assert.equal(hit.targetId, "b");
+});
+
+test("findAdoptTarget still reuses one tab when none is focused", () => {
+  const hit = findAdoptTarget(
+    [
+      { type: "page", targetId: "b", url: "https://point.me/search" },
+      { type: "page", targetId: "a", url: "https://point.me/search" },
+    ],
+    "https://point.me/search"
+  );
+  assert.equal(hit.targetId, "a");
+});
+
+test("samePageUrl ignores a path slash and keeps a query slash", () => {
+  assert.equal(samePageUrl("https://example.com/a/", "https://example.com/a"), true);
+  assert.equal(samePageUrl("https://example.com/?next=/", "https://example.com/?next="), false);
+  assert.equal(samePageUrl("about:blank", "https://example.com"), false);
+});
+
+test("doctor smoke url is a unique controllable blank probe", () => {
+  const url = doctorSmokeUrl("autohub-doctor-1");
+  assert.equal(url.startsWith("about:blank?browser-hand-doctor="), true);
+  assert.equal(url.startsWith("data:"), false);
+  assert.notEqual(url, "about:blank");
+  assert.notEqual(doctorSmokeUrl("autohub-doctor-1"), doctorSmokeUrl("autohub-doctor-2"));
 });

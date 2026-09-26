@@ -2,6 +2,12 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { WSContext } from "hono/ws";
+import {
+  isBlankPageUrl,
+  pickExistingPageTarget,
+  planBlankNavigation,
+  type AdoptTarget,
+} from "./adopt-existing-tab.js";
 
 export interface RelayOptions {
   port?: number;
@@ -74,6 +80,56 @@ interface CDPEvent {
   params?: Record<string, unknown>;
 }
 
+function adoptedNavigationEvents(
+  sessionId: string | undefined,
+  frameId: string,
+  loaderId: string,
+  url: string,
+  stamp: number,
+  loaded: boolean
+): CDPEvent[] {
+  const frame = {
+    id: frameId,
+    loaderId,
+    url,
+    mimeType: "text/html",
+    securityOrigin: url,
+  };
+  const events: CDPEvent[] = [
+    {
+      method: "Page.frameNavigated",
+      sessionId,
+      params: { frame },
+    },
+    {
+      method: "Page.domContentEventFired",
+      sessionId,
+      params: { timestamp: stamp },
+    },
+  ];
+  if (!loaded) return events;
+  events.push(
+    {
+      method: "Page.loadEventFired",
+      sessionId,
+      params: { timestamp: stamp },
+    },
+    {
+      method: "Page.frameStoppedLoading",
+      sessionId,
+      params: { frameId },
+    }
+  );
+  for (const name of ["DOMContentLoaded", "load", "networkIdle"]) {
+    events.push({
+      method: "Page.lifecycleEvent",
+      sessionId,
+      params: { frameId, loaderId, name, timestamp: stamp },
+    });
+  }
+  return events;
+}
+
 export async function serveRelay(options: RelayOptions = {}): Promise<RelayServer> {
   const port = options.port ?? 9222;
   const host = options.host ?? "127.0.0.1";
@@ -81,8 +137,45 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   const connectedTargets = new Map<string, ConnectedTarget>();
   /** Named page → last known session + target. Prefer targetId rebind when session churns. */
   const namedPages = new Map<string, { sessionId: string; targetId: string }>();
+  /** Blank tab a client opened, rewritten onto the already-open page. */
+  const adoptedBlanks = new Map<
+    string,
+    { clientSessionId: string; clientTargetId: string; liveSessionId: string; liveTargetId: string; ownerClientId?: string }
+  >();
+  const adoptedByTarget = new Map<string, { clientSessionId: string; liveTargetId: string }>();
+  const quietDetach = new Set<string>();
+  const lastFrameId = new Map<string, string>();
+  /** Target ids handed back from createTarget/open that already belonged to the user. */
+  const protectedTargetIds = new Set<string>();
+  /** Tabs this relay created. Blank adoption may close these, not a user's existing blank. */
+  const relayCreatedTargetIds = new Set<string>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
+
+  const deferredCdpEvents: CDPEvent[] = [];
+
+  function clearAdoptionState(): void {
+    adoptedBlanks.clear();
+    adoptedByTarget.clear();
+    quietDetach.clear();
+    lastFrameId.clear();
+    protectedTargetIds.clear();
+    relayCreatedTargetIds.clear();
+  }
+
+  function listedTargets(): AdoptTarget[] {
+    return Array.from(connectedTargets.values()).map((target) => {
+      const info = target.targetInfo as TargetInfo & { focused?: boolean; active?: boolean };
+      return {
+        targetId: target.targetId,
+        sessionId: target.sessionId,
+        url: info.url,
+        type: info.type,
+        focused: info.focused === true,
+        active: info.active === true,
+      };
+    });
+  }
 
   function findTargetById(targetId: string): ConnectedTarget | undefined {
     for (const target of connectedTargets.values()) {
@@ -210,11 +303,110 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     method,
     params,
     sessionId,
+    clientId,
   }: {
     method: string;
     params?: Record<string, unknown>;
     sessionId?: string;
+    clientId?: string;
   }): Promise<unknown> {
+    const clientSessionId = sessionId;
+    const clientTarget = clientSessionId ? connectedTargets.get(clientSessionId) : undefined;
+    if (
+      method === "Page.navigate" &&
+      clientTarget &&
+      isBlankPageUrl(clientTarget.targetInfo.url) &&
+      !adoptedBlanks.has(clientSessionId || "")
+    ) {
+      const plan = planBlankNavigation({
+        currentUrl: clientTarget.targetInfo.url,
+        currentTargetId: clientTarget.targetId,
+        navigateUrl: typeof params?.url === "string" ? params.url : "",
+        targets: listedTargets(),
+      });
+      if (
+        plan.action === "adopt" &&
+        plan.target.sessionId &&
+        plan.target.targetId &&
+        relayCreatedTargetIds.has(clientTarget.targetId)
+      ) {
+        const liveSessionId = plan.target.sessionId;
+        const liveTargetId = plan.target.targetId;
+        adoptedBlanks.set(clientTarget.sessionId, {
+          clientSessionId: clientTarget.sessionId,
+          clientTargetId: clientTarget.targetId,
+          liveSessionId,
+          liveTargetId,
+          ownerClientId: clientId,
+        });
+        adoptedByTarget.set(clientTarget.targetId, {
+          clientSessionId: clientTarget.sessionId,
+          liveTargetId,
+        });
+        protectedTargetIds.add(liveTargetId);
+        for (const [name, entry] of namedPages) {
+          if (entry.targetId === clientTarget.targetId || entry.sessionId === clientTarget.sessionId) {
+            namedPages.set(name, { sessionId: liveSessionId, targetId: liveTargetId });
+          }
+        }
+        quietDetach.add(clientTarget.sessionId);
+        await sendToExtension({
+          method: "forwardCDPCommand",
+          params: {
+            method: "Target.closeTarget",
+            params: { targetId: clientTarget.targetId },
+          },
+        }).catch((err) => log("failed to close blank tab adopted onto an existing page", err));
+        const frameId = lastFrameId.get(clientTarget.sessionId) || clientTarget.targetId;
+        const loaderId = `adopted-${liveTargetId}`;
+        const url = plan.target.url || (typeof params?.url === "string" ? params.url : "");
+        const stamp = Date.now() / 1000;
+        let loaded = false;
+        try {
+          const evaluated = (await sendToExtension({
+            method: "forwardCDPCommand",
+            params: {
+              method: "Runtime.evaluate",
+              params: { expression: "document.readyState", returnByValue: true },
+              sessionId: liveSessionId,
+            },
+          })) as { result?: { value?: string } };
+          loaded = evaluated?.result?.value === "complete";
+        } catch {
+          loaded = false;
+        }
+        deferredCdpEvents.push(
+          ...adoptedNavigationEvents(clientSessionId, frameId, loaderId, url, stamp, loaded)
+        );
+        log(`Adopted blank ${clientTarget.targetId} onto existing tab ${liveTargetId}`);
+        return { frameId, loaderId, isDownload: false };
+      }
+    }
+
+    const adopted = clientSessionId ? adoptedBlanks.get(clientSessionId) : undefined;
+    if (method === "Page.close" && adopted) {
+      log(`Ignoring Page.close for adopted session ${clientSessionId}`);
+      return {};
+    }
+    if (adopted) {
+      if (adopted.ownerClientId && clientId && adopted.ownerClientId !== clientId) {
+        throw new Error(`Session ${clientSessionId} is not owned by this client`);
+      }
+      sessionId = adopted.liveSessionId;
+    }
+    if (method === "Target.closeTarget") {
+      const closingId = typeof params?.targetId === "string" ? params.targetId : "";
+      if (closingId && (protectedTargetIds.has(closingId) || adoptedByTarget.has(closingId))) {
+        log(`Ignoring close of adopted tab ${closingId}`);
+        return { success: true };
+      }
+    } else if (params && typeof params.targetId === "string") {
+      const mapped = adoptedByTarget.get(params.targetId);
+      if (mapped) {
+        params = { ...params, targetId: mapped.liveTargetId };
+      }
+    }
+
     switch (method) {
       case "Browser.getVersion":
         return {
@@ -248,6 +440,11 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         const targetId = params?.targetId as string;
         if (!targetId) {
           throw new Error("targetId is required for Target.attachToTarget");
+        }
+
+        const adoptedTarget = adoptedByTarget.get(targetId);
+        if (adoptedTarget) {
+          return { sessionId: adoptedTarget.clientSessionId };
         }
 
         for (const target of connectedTargets.values()) {
@@ -307,7 +504,24 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         };
       }
 
-      case "Target.createTarget":
+      case "Target.createTarget": {
+        const url = typeof params?.url === "string" ? params.url : "";
+        if (url && !isBlankPageUrl(url)) {
+          const existing = pickExistingPageTarget(listedTargets(), url);
+          if (existing) {
+            protectedTargetIds.add(existing.targetId);
+            log(`Target.createTarget reused ${existing.targetId} for ${url}`);
+            return { targetId: existing.targetId };
+          }
+        }
+        const created = (await sendToExtension({
+          method: "forwardCDPCommand",
+          params: { method, params },
+        })) as { targetId?: string };
+        if (created?.targetId) relayCreatedTargetIds.add(created.targetId);
+        return created;
+      }
+
       case "Target.closeTarget":
         return await sendToExtension({
           method: "forwardCDPCommand",
@@ -388,6 +602,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       !existingUrl || existingUrl === "about:blank" || existingUrl === "about:newtab";
 
     const adoptTargetId = typeof body.targetId === "string" ? body.targetId : "";
+    const requestedUrl = typeof body.url === "string" ? body.url : "";
     if (adoptTargetId && (!existing || existingIsBlank)) {
       const adopt = findTargetById(adoptTargetId);
       if (adopt) {
@@ -395,6 +610,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           sessionId: adopt.sessionId,
           targetId: adopt.targetId,
         });
+        protectedTargetIds.add(adopt.targetId);
         return c.json({
           wsEndpoint: `ws://${host}:${port}/cdp`,
           name,
@@ -404,6 +620,38 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           created: false,
           adopted: true,
         });
+      }
+    }
+
+    if ((!existing || existingIsBlank) && requestedUrl && !isBlankPageUrl(requestedUrl)) {
+      const adopt = pickExistingPageTarget(listedTargets(), requestedUrl, {
+        excludeTargetId: existing?.targetId,
+      });
+      if (adopt?.sessionId) {
+        const live = findTargetById(adopt.targetId);
+        if (live) {
+          namedPages.set(name, { sessionId: live.sessionId, targetId: live.targetId });
+          protectedTargetIds.add(live.targetId);
+          if (existing && existingIsBlank && relayCreatedTargetIds.has(existing.targetId)) {
+            quietDetach.add(existing.sessionId);
+            await sendToExtension({
+              method: "forwardCDPCommand",
+              params: {
+                method: "Target.closeTarget",
+                params: { targetId: existing.targetId },
+              },
+            }).catch((err) => log("failed to close leftover blank named tab", err));
+          }
+          return c.json({
+            wsEndpoint: `ws://${host}:${port}/cdp`,
+            name,
+            targetId: live.targetId,
+            url: live.targetInfo.url,
+            title: live.targetInfo.title,
+            created: false,
+            adopted: true,
+          });
+        }
       }
     }
 
@@ -448,9 +696,21 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         method: "forwardCDPCommand",
         params: {
           method: "Target.createTarget",
-          params: { url: "about:blank" },
+          params: { url: !isBlankPageUrl(requestedUrl) ? requestedUrl : "about:blank" },
         },
       })) as { targetId: string };
+      if (result?.targetId) relayCreatedTargetIds.add(result.targetId);
+
+      if (c.req.raw.signal.aborted) {
+        await sendToExtension({
+          method: "forwardCDPCommand",
+          params: {
+            method: "Target.closeTarget",
+            params: { targetId: result.targetId },
+          },
+        }).catch(() => null);
+        return c.json({ error: "client disconnected before the new tab was ready" }, 408);
+      }
 
       await new Promise((resolve) => setTimeout(resolve, 200));
 
@@ -537,7 +797,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           }
 
           try {
-            const result = await routeCdpCommand({ method, params, sessionId });
+            const result = await routeCdpCommand({ method, params, sessionId, clientId });
 
             if (method === "Target.setAutoAttach" && !sessionId) {
               for (const target of connectedTargets.values()) {
@@ -576,6 +836,10 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             }
 
             sendToPlaywright({ id, sessionId, result }, clientId);
+            while (deferredCdpEvents.length) {
+              const event = deferredCdpEvents.shift();
+              if (event) sendToPlaywright(event, clientId);
+            }
           } catch (e) {
             log("Error handling CDP command:", method, e);
             sendToPlaywright(
@@ -612,6 +876,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
             connectedTargets.clear();
             namedPages.clear();
+            clearAdoptionState();
             for (const pending of extensionPendingRequests.values()) {
               pending.reject(new Error("Extension connection replaced"));
             }
@@ -659,6 +924,21 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             const eventMsg = message as ExtensionEventMessage;
             const { method, params, sessionId } = eventMsg.params;
 
+            if (method === "Page.frameNavigated" && sessionId) {
+              const frame = (params as { frame?: { id?: string } } | undefined)?.frame;
+              if (frame?.id) lastFrameId.set(sessionId, frame.id);
+            }
+
+            const relayExtensionEvent = (event: CDPEvent) => {
+              sendToPlaywright(event);
+              if (!event.sessionId) return;
+              for (const adopted of adoptedBlanks.values()) {
+                if (adopted.liveSessionId === event.sessionId) {
+                  sendToPlaywright({ ...event, sessionId: adopted.clientSessionId });
+                }
+              }
+            };
+
             if (method === "Target.attachedToTarget") {
               const targetParams = params as {
                 sessionId: string;
@@ -688,6 +968,23 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
               sendAttachedToTarget(target);
             } else if (method === "Target.detachedFromTarget") {
               const detachParams = params as { sessionId: string };
+              if (quietDetach.has(detachParams.sessionId)) {
+                const owner = adoptedBlanks.get(detachParams.sessionId)?.ownerClientId;
+                quietDetach.delete(detachParams.sessionId);
+                connectedTargets.delete(detachParams.sessionId);
+                for (const client of playwrightClients.values()) {
+                  if (owner && client.id === owner) continue;
+                  sendToPlaywright(
+                    {
+                      method: "Target.detachedFromTarget",
+                      params: detachParams,
+                    },
+                    client.id
+                  );
+                }
+                log(`Suppressed detach for adopted blank session ${detachParams.sessionId}`);
+                return;
+              }
               const detached = connectedTargets.get(detachParams.sessionId);
               connectedTargets.delete(detachParams.sessionId);
 
@@ -719,6 +1016,36 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
               log(`Target detached: ${detachParams.sessionId}`);
 
+              for (const adopted of [...adoptedBlanks.values()]) {
+                if (
+                  adopted.liveSessionId !== detachParams.sessionId &&
+                  adopted.clientSessionId !== detachParams.sessionId
+                ) {
+                  continue;
+                }
+                const rebound = findTargetById(adopted.liveTargetId);
+                if (rebound && rebound.sessionId !== adopted.liveSessionId) {
+                  adopted.liveSessionId = rebound.sessionId;
+                  log(
+                    `Adopted session ${adopted.clientSessionId} rebound → ${rebound.sessionId}`
+                  );
+                  continue;
+                }
+                if (rebound && adopted.clientSessionId !== detachParams.sessionId) {
+                  continue;
+                }
+                adoptedBlanks.delete(adopted.clientSessionId);
+                adoptedByTarget.delete(adopted.clientTargetId);
+                lastFrameId.delete(adopted.clientSessionId);
+                if (adopted.clientSessionId !== detachParams.sessionId) {
+                  sendToPlaywright({
+                    method: "Target.detachedFromTarget",
+                    params: { sessionId: adopted.clientSessionId },
+                  });
+                }
+                log(`Dropped adopted session ${adopted.clientSessionId}`);
+              }
+
               sendToPlaywright({
                 method: "Target.detachedFromTarget",
                 params: detachParams,
@@ -732,12 +1059,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
                 }
               }
 
-              sendToPlaywright({
+              relayExtensionEvent({
                 method: "Target.targetInfoChanged",
                 params: infoParams,
               });
             } else {
-              sendToPlaywright({
+              relayExtensionEvent({
                 sessionId,
                 method,
                 params,
@@ -762,6 +1089,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           extensionWs = null;
           connectedTargets.clear();
           namedPages.clear();
+          clearAdoptionState();
 
           for (const client of playwrightClients.values()) {
             client.ws.close(1000, "Extension disconnected");

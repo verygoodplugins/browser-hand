@@ -495,13 +495,16 @@ async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   }
 }
 
-async function openNamedRelayPage(pageName, { timeoutMs = 5000, targetId } = {}) {
+async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url } = {}) {
   if (!pageName || typeof pageName !== "string") {
     throw new Error("pageName is required for named-page bootstrap");
   }
   const body = { name: pageName };
   if (typeof targetId === "string" && targetId.trim()) {
     body.targetId = targetId.trim();
+  }
+  if (typeof url === "string" && url.trim() && !isBlankUrl(url)) {
+    body.url = url.trim();
   }
   return await fetchJson(relayPageEndpoint(), {
     method: "POST",
@@ -630,23 +633,64 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   return { source: "existing_target", createsTab: false };
 }
 
+function normalizePageUrl(url) {
+  const raw = String(url || "");
+  try {
+    const parsed = new URL(raw);
+    if (parsed.pathname.length > 1) {
+      parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+    }
+    return parsed.toString();
+  } catch {
+    return raw.replace(/\/$/, "");
+  }
+}
+
+export function samePageUrl(left, right) {
+  const a = normalizePageUrl(left);
+  const b = normalizePageUrl(right);
+  return Boolean(a) && a === b && !isBlankUrl(a);
+}
+
+/** open skips a second navigation when the tab is already on that URL, or when a fresh tab already left about:blank. goto may reload. */
+export function openNeedsNavigation({ operation, created = false, currentUrl, requestedUrl }) {
+  if (operation === "goto") return true;
+  if (operation !== "open") return false;
+  if (created && !isBlankUrl(currentUrl)) return false;
+  return !samePageUrl(currentUrl, requestedUrl);
+}
+
+export function doctorSmokeUrl(pageName) {
+  // about:blank? is controllable and unique. data: URLs are created and then
+  // rejected by the extension, which leaves the tab behind.
+  return `about:blank?browser-hand-doctor=${encodeURIComponent(pageName)}`;
+}
+
 export function findAdoptTarget(targets, url) {
   if (!url || !Array.isArray(targets)) {
     return null;
   }
-  const normalize = (value) => String(value || "").replace(/\/$/, "");
-  const wanted = normalize(url);
-  if (!wanted || wanted === "about:blank" || wanted === "about:newtab") {
+  const wanted = normalizePageUrl(url);
+  if (!wanted || isBlankUrl(wanted)) {
     return null;
   }
   const hits = targets.filter((target) => {
-    const candidate = normalize(target?.url);
-    if (!candidate || candidate === "about:blank" || candidate === "about:newtab") {
+    const candidate = normalizePageUrl(target?.url);
+    if (!candidate || isBlankUrl(candidate)) {
       return false;
     }
     return candidate === wanted;
   });
-  return hits.length === 1 ? hits[0] : null;
+  if (hits.length === 0) return null;
+  // One open tab is enough. Another blank is what agents hit when two tabs
+  // already shared the URL and this returned null.
+  hits.sort((a, b) => {
+    const score = (item) => (item?.focused === true ? 2 : 0) + (item?.active === true ? 1 : 0);
+    const diff = score(b) - score(a);
+    if (diff !== 0) return diff;
+    return String(a?.targetId || "").localeCompare(String(b?.targetId || ""));
+  });
+  return hits[0];
 }
 
 export function namedPageNotFoundMessage(pageName, namedPageCount) {
@@ -663,6 +707,7 @@ export async function resolveNamedPageInfo({
   pageName,
   url,
   targets = [],
+  timeoutMs,
   openPage,
   lookupPage,
 }) {
@@ -671,7 +716,11 @@ export async function resolveNamedPageInfo({
   }
   if (plan.createsTab) {
     const adopt = url ? findAdoptTarget(targets, url) : null;
-    return openPage(pageName, adopt?.targetId ? { targetId: adopt.targetId } : {});
+    return openPage(pageName, {
+      ...(adopt?.targetId ? { targetId: adopt.targetId } : {}),
+      ...(url ? { url } : {}),
+      ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
+    });
   }
   return lookupPage(pageName);
 }
@@ -1139,7 +1188,7 @@ function setCachedNamedPage(pageName, entry) {
   saveNamedPageTargetCache(cache);
 }
 
-async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
+async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeoutMs }) {
   const plan = planCurrentTargetAccess({
     operation,
     pageName: input.pageName,
@@ -1155,6 +1204,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       pageName: plan.pageName,
       url: input.url,
       targets,
+      timeoutMs,
       openPage: (name, options) => openNamedRelayPage(name, options),
       lookupPage: (name) => lookupNamedRelayPage(name),
     });
@@ -1235,6 +1285,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
       plan,
       selected,
       sessionId,
+      created: pageInfo.created === true,
     };
   }
 
@@ -1249,6 +1300,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets }) {
     plan,
     selected,
     sessionId: await attachTarget(cdp, selected.targetId),
+    created: false,
   };
 }
 
@@ -1291,7 +1343,8 @@ async function runCurrentDoctor(timeoutMs) {
 
       try {
         const pageInfo = await openNamedRelayPage(smokeName, {
-          timeoutMs: Math.min(timeoutMs, 5000),
+          timeoutMs: Math.min(timeoutMs, 15000),
+          url: doctorSmokeUrl(smokeName),
         });
         result.smoke = {
           success: true,
@@ -1389,11 +1442,13 @@ async function runCurrentOperation(input, timeoutMs) {
       plan: targetPlan,
       selected,
       sessionId,
+      created: createdTarget,
     } = await selectOrOpenCurrentTarget({
       cdp,
       input,
       operation,
       targets,
+      timeoutMs,
     });
 
     if (operation === "snapshot") {
@@ -1577,9 +1632,64 @@ async function runCurrentOperation(input, timeoutMs) {
       if (!input.url) {
         return { success: false, error: `url is required for ${operation}` };
       }
-      const navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
-      await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
-      selected.url = input.url;
+      const alreadyThere = !openNeedsNavigation({
+        operation,
+        created: createdTarget === true,
+        currentUrl: selected.url,
+        requestedUrl: input.url,
+      });
+      let navResult = null;
+      if (!alreadyThere) {
+        try {
+          navResult = await cdp.send("Page.navigate", { url: input.url }, sessionId);
+        } catch (err) {
+          if (createdTarget && isBlankUrl(selected.url)) {
+            await cdp.send("Target.closeTarget", { targetId: selected.targetId }).catch(() => null);
+          }
+          throw err;
+        }
+        const urlBeforeNav = selected.url;
+        const adopted =
+          typeof navResult?.loaderId === "string" && navResult.loaderId.startsWith("adopted-");
+        if (!adopted) {
+          await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
+        }
+        if (!navResult?.errorText) {
+          selected.url = input.url;
+        } else {
+          selected.url = urlBeforeNav;
+        }
+      } else if (createdTarget === true) {
+        const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
+        let href = "";
+        while (Date.now() < deadline) {
+          href = await evalValue(cdp, sessionId, "location.href").catch(() => "");
+          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "");
+          if (typeof href === "string" && href.startsWith("chrome-error://")) {
+            navResult = { errorText: `navigation failed: ${href}` };
+            break;
+          }
+          if (typeof href === "string" && !isBlankUrl(href) && (ready === "complete" || ready == null)) {
+            selected.url = href;
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!navResult?.errorText && isBlankUrl(typeof href === "string" ? href : "")) {
+          navResult = { errorText: "tab did not leave about:blank before the timeout" };
+        }
+      } else {
+        const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
+        while (Date.now() < deadline) {
+          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "complete");
+          if (ready === "complete" || ready == null) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        const href = await evalValue(cdp, sessionId, "location.href").catch(() => "");
+        if (typeof href === "string" && href.startsWith("chrome-error://")) {
+          navResult = { errorText: `navigation failed: ${href}` };
+        }
+      }
       if (input.pageName && !isBlankUrl(input.url)) {
         setCachedNamedPage(input.pageName, {
           targetId: selected.targetId,
@@ -1588,6 +1698,9 @@ async function runCurrentOperation(input, timeoutMs) {
         });
       }
       const navError = navResult?.errorText || null;
+      if (navError && createdTarget) {
+        await cdp.send("Target.closeTarget", { targetId: selected.targetId }).catch(() => null);
+      }
       const httpStatusCode =
         typeof navResult?.httpStatusCode === "number" ? navResult.httpStatusCode : null;
       let focus = null;
@@ -1601,6 +1714,8 @@ async function runCurrentOperation(input, timeoutMs) {
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
         url: input.url,
+        created: createdTarget === true,
+        reusedExistingTab: alreadyThere && createdTarget !== true,
         ...(httpStatusCode !== null ? { httpStatusCode } : {}),
         ...(navError ? { error: navError } : {}),
         ...(focus ? { focus } : {}),
