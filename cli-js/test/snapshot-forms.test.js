@@ -169,6 +169,43 @@ test("fields inside an open shadow root stay on their form", () => {
   ]);
 });
 
+test("a shadow field keeps its own label when the light DOM reuses the id", () => {
+  const inner = h("input", { id: "email", name: "innerEmail", type: "email" });
+  const shadow = h("div", {}, [
+    h("label", { for: "email", text: "Inner email" }),
+    h("form", { id: "shadow", name: "shadow", action: "/shadow" }, [inner]),
+  ]);
+  inner.getRootNode = () => shadow;
+  const host = h("span", {});
+  host.shadowRoot = shadow;
+  shadow.host = host;
+  const root = h("div", {}, [
+    h("label", { for: "email", text: "Outer email" }),
+    h("form", { id: "light", name: "light", action: "/light" }, [
+      h("input", { id: "email", name: "outerEmail", type: "email" }),
+    ]),
+    host,
+  ]);
+
+  const forms = summarizeSnapshotForms(root, () => true);
+  const byName = Object.fromEntries(forms.flatMap((form) => form.fields.map((field) => [field.name, field.label])));
+  assert.equal(byName.outerEmail, "Outer email");
+  assert.equal(byName.innerEmail, "Inner email");
+});
+
+test("the form attribute groups a control that sits outside the form", () => {
+  const form = h("form", { id: "checkout", name: "checkout", action: "/pay" });
+  const email = h("input", { id: "email", name: "email", type: "email", "aria-label": "Email" });
+  email.form = form;
+  const root = h("div", {}, [form, email]);
+
+  const forms = summarizeSnapshotForms(root, () => true);
+  assert.equal(forms.length, 1);
+  assert.equal(forms[0].id, "checkout");
+  assert.equal(forms[0].orphan, undefined);
+  assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
+});
+
 test("same-origin iframe forms are tagged with the frame", () => {
   const inner = h("div", {}, [
     h("form", { id: "inner", name: "inner", action: "/in" }, [

@@ -1708,6 +1708,23 @@ export function summarizeSnapshotForms(root, visible) {
   // still belongs to the form that contains the host.
   const formFor = (el, depth = 0) => {
     if (!el || depth > 8) return null;
+    // The form attribute (and el.form) associates a control that is not nested.
+    if (el.form) return el.form;
+    const formId = attr(el, "form");
+    if (formId) {
+      const scopes = [];
+      try {
+        if (typeof el.getRootNode === "function") scopes.push(el.getRootNode());
+      } catch {
+        /* detached */
+      }
+      scopes.push(root);
+      for (const scope of scopes) {
+        if (!scope || typeof scope.getElementById !== "function") continue;
+        const named = scope.getElementById(formId);
+        if (named && String(named.tagName || "").toUpperCase() === "FORM") return named;
+      }
+    }
     const direct = owningForm(el);
     if (direct) return direct;
     try {
@@ -1725,31 +1742,50 @@ export function summarizeSnapshotForms(root, visible) {
       if (host && host.shadowRoot) eachRoot(host.shadowRoot, depth + 1, visit);
     }
   };
+  const labelCache = new Map();
+  const labelsById = (scope) => {
+    if (!scope || typeof scope.querySelectorAll !== "function") return new Map();
+    if (labelCache.has(scope)) return labelCache.get(scope);
+    const map = new Map();
+    try {
+      for (const label of query(scope, "label[for]")) {
+        const forId = label.htmlFor || attr(label, "for");
+        if (!forId || map.has(forId)) continue;
+        const text = short(label.innerText);
+        if (text) map.set(forId, text);
+      }
+    } catch {
+      /* scope gone */
+    }
+    labelCache.set(scope, map);
+    return map;
+  };
+  // for/id does not cross a shadow boundary. A field in a shadow root must not
+  // pick up a light-DOM label that happens to reuse the same id.
   const labelRootsFor = (el) => {
     const scopes = [];
     const push = (node) => {
       if (node && !scopes.includes(node)) scopes.push(node);
     };
-    push(root);
+    let own = null;
     try {
-      if (el && typeof el.getRootNode === "function") push(el.getRootNode());
+      own = el && typeof el.getRootNode === "function" ? el.getRootNode() : null;
     } catch {
-      /* detached */
+      own = null;
     }
+    if (own) push(own);
+    if (!own || !own.host) push(root);
     return scopes;
   };
   const labelForInScopes = (el) => {
     const parts = [];
-    for (const scope of labelRootsFor(el)) {
-      if (!(el && el.id) || !scope || typeof scope.querySelectorAll !== "function") continue;
-      try {
-        const labels = Array.from(scope.querySelectorAll("label[for]")).filter((label) => {
-          const forId = label.htmlFor || attr(label, "for");
-          return forId === el.id;
-        });
-        parts.push(...labels.map((label) => label.innerText));
-      } catch {
-        /* scope gone */
+    if (el && el.id) {
+      for (const scope of labelRootsFor(el)) {
+        const text = labelsById(scope).get(el.id);
+        if (text) {
+          parts.push(text);
+          break;
+        }
       }
     }
     try {
@@ -1795,8 +1831,9 @@ export function summarizeSnapshotForms(root, visible) {
     }
   });
   const claimed = new Set();
+  const allFields = fieldsUnder(root);
   for (const form of formNodes) {
-    const fields = fieldsUnder(form)
+    const fields = allFields
       .filter((el) => formFor(el) === form && !claimed.has(el))
       .map((el) => {
         claimed.add(el);
@@ -1810,7 +1847,7 @@ export function summarizeSnapshotForms(root, visible) {
       fields,
     });
   }
-  const orphans = fieldsUnder(root)
+  const orphans = allFields
     .filter((el) => !formFor(el) && !claimed.has(el))
     .map(toFieldInScope);
   if (orphans.length) {
