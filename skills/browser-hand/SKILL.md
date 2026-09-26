@@ -103,6 +103,7 @@ Full reference: `references/extension-cli.md`.
 - Use `tabs --query <text>` or `snapshot --query <text>` instead of grepping a dumped doctor file.
 - **Do not** request window focus for ordinary fill/click/snapshot. Only use `focus --focus window --reason "…"` when a human must act (2FA, captcha, confirm).
 - Snapshot or screenshot **before and after** writes; verify with evaluate when critical.
+- After `fill`, read `result.failed`. `success: true` means every key was written. A visible label is the right key (`"Name"`), not the input's name attribute.
 - On username/password manager weirdness, soft recovery is built in — retry evaluate/fill; re-open the named page if screenshot still fails.
 
 ## Optional headless

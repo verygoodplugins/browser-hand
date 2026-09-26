@@ -1418,13 +1418,14 @@ async function runCurrentOperation(input, timeoutMs) {
         };
       }
       const fields = input.fields && typeof input.fields === "object" ? input.fields : {};
+      const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(fields));
       return {
-        success: true,
+        success: fillFieldsSucceeded(result),
         mode: "current",
         operation,
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evalValue(cdp, sessionId, buildFillFieldsExpression(fields)),
+        result,
       };
     }
 
@@ -2014,6 +2015,193 @@ export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root 
   return null;
 }
 
+/** Lowercase a fill key and turn runs of non-alphanumerics into single spaces. */
+export function normalizeFillKey(raw) {
+  return String(raw == null ? "" : raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Unique normalized labels for one control.
+ * Visible label text (el.labels, label[for], wrapping label), aria-labelledby
+ * text resolved in root, then aria-label, placeholder, name, and id.
+ */
+export function collectFillLabels(el, root) {
+  const labels = [];
+  const push = (raw) => {
+    const value = normalizeFillKey(raw);
+    if (value && labels.indexOf(value) === -1) labels.push(value);
+  };
+  const textOf = (node) => {
+    if (!node) return "";
+    if (typeof node.innerText === "string") return node.innerText;
+    if (typeof node.textContent === "string") return node.textContent;
+    return "";
+  };
+  if (!el) return labels;
+  try {
+    const associated = el.labels;
+    if (associated && typeof associated.length === "number") {
+      for (let i = 0; i < associated.length; i += 1) push(textOf(associated[i]));
+    }
+  } catch {
+    /* el.labels is missing on non-form controls */
+  }
+  try {
+    if (el.id && root && typeof root.querySelectorAll === "function") {
+      const nodes = root.querySelectorAll("label");
+      const list = nodes && typeof nodes.length === "number" ? nodes : [];
+      for (let i = 0; i < list.length; i += 1) {
+        const label = list[i];
+        if (!label) continue;
+        let forId = label.htmlFor || "";
+        if (!forId && typeof label.getAttribute === "function") forId = label.getAttribute("for") || "";
+        if (forId === el.id) push(textOf(label));
+      }
+    }
+  } catch {
+    /* label[for] lookup failed */
+  }
+  try {
+    if (typeof el.closest === "function") {
+      const wrapping = el.closest("label");
+      if (wrapping) push(textOf(wrapping));
+    }
+  } catch {
+    /* closest is missing */
+  }
+  try {
+    const labelledBy = typeof el.getAttribute === "function" ? el.getAttribute("aria-labelledby") : "";
+    if (labelledBy && root && typeof root.getElementById === "function") {
+      const ids = String(labelledBy).split(/\s+/);
+      for (let i = 0; i < ids.length; i += 1) {
+        if (!ids[i]) continue;
+        const node = root.getElementById(ids[i]);
+        if (node) push(textOf(node));
+      }
+    }
+  } catch {
+    /* aria-labelledby lookup failed */
+  }
+  try {
+    if (typeof el.getAttribute === "function") {
+      push(el.getAttribute("aria-label"));
+      push(el.getAttribute("placeholder"));
+      push(el.getAttribute("name"));
+    }
+  } catch {
+    /* attributes are missing */
+  }
+  try {
+    if (el.id) push(el.id);
+  } catch {
+    /* id is missing */
+  }
+  return labels;
+}
+
+/**
+ * Best fill candidate. Higher score wins; equal scores keep the earlier control.
+ * Score is exact, then prefix, then the candidate containing the query — never
+ * the reverse, so a short id cannot steal a longer key.
+ */
+export function pickFillCandidate(candidates, wantedRaw) {
+  const wanted = normalizeFillKey(wantedRaw);
+  if (!wanted || !candidates || typeof candidates.length !== "number") return null;
+  let best = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i] || {};
+    const rawLabels = candidate.labels;
+    const labels = [];
+    if (rawLabels && typeof rawLabels.length === "number") {
+      for (let j = 0; j < rawLabels.length; j += 1) labels.push(normalizeFillKey(rawLabels[j]));
+    }
+    const score = scoreLabelMatch(labels, wanted);
+    if (score > 0 && (!best || score > best.score)) best = { index: i, score };
+  }
+  return best;
+}
+
+function fillControlIsEditable(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  try {
+    if (typeof el.getAttribute !== "function") return false;
+    const attr = String(el.getAttribute("contenteditable") || "").toLowerCase();
+    return attr !== "" && attr !== "false";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the control still holds the value fill just wrote.
+ * mode is select | checkbox | radio | combobox | contenteditable | text.
+ */
+export function fillValueStuck(el, value, mode) {
+  if (!el) return false;
+  const expected = String(value);
+  let kind = mode || "";
+  if (!kind) {
+    const type = String(el.type || "").toLowerCase();
+    if (type === "checkbox") kind = "checkbox";
+    else if (type === "radio") kind = "radio";
+    else if (String(el.tagName || "").toUpperCase() === "SELECT") kind = "select";
+    else if (fillControlIsEditable(el)) kind = "contenteditable";
+    else kind = "text";
+  }
+  if (kind === "checkbox") {
+    return Boolean(el.checked) === /^(true|yes|1|on|checked)$/i.test(expected);
+  }
+  if (kind === "radio") {
+    return Boolean(el.checked);
+  }
+  if (kind === "select") {
+    let option = null;
+    try {
+      if (el.selectedOptions && el.selectedOptions.length > 0) option = el.selectedOptions[0];
+    } catch {
+      /* not a select */
+    }
+    if (!option && el.options && el.selectedIndex >= 0) {
+      try {
+        option = el.options[el.selectedIndex];
+      } catch {
+        /* ignore a hostile options list */
+      }
+    }
+    if (!option) return false;
+    const wantedKey = normalizeFillKey(expected);
+    const candidates = [option.value, option.text, option.textContent, option.label].map((item) =>
+      normalizeFillKey(item)
+    );
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i];
+      if (item === wantedKey) return true;
+      if (wantedKey && item.indexOf(wantedKey) !== -1) return true;
+    }
+    return false;
+  }
+  if (kind === "combobox") {
+    const valueText = String(el.value == null ? "" : el.value);
+    const contentText = String(el.textContent == null ? "" : el.textContent);
+    if (expected === "") return valueText === "" || contentText === "";
+    const needle = expected.toLowerCase();
+    return valueText.toLowerCase().indexOf(needle) !== -1 || contentText.toLowerCase().indexOf(needle) !== -1;
+  }
+  if (kind === "contenteditable" || fillControlIsEditable(el)) {
+    return String(el.textContent == null ? "" : el.textContent) === expected;
+  }
+  return String(el.value) === expected;
+}
+
+/** True only when fill reported an empty failed array. Null and garbage are misses. */
+export function fillFieldsSucceeded(result) {
+  return Boolean(result) && typeof result === "object" && Array.isArray(result.failed) && result.failed.length === 0;
+}
+
 export const FILL_HELPER_SOURCE = [
   dispatchInsertText,
   usesAtomicValueAssign,
@@ -2033,8 +2221,9 @@ export const FILL_HELPER_SOURCE = [
 export function buildFillFieldsExpression(fields) {
   return `(async () => {
     ${FILL_HELPER_SOURCE}
+    ${FILL_MATCH_HELPER_SOURCE}
     const fields = ${JSON.stringify(fields)};
-    const norm = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const norm = normalizeFillKey;
     const visible = el => {
       try {
         const style = window.getComputedStyle(el);
@@ -2068,27 +2257,14 @@ export function buildFillFieldsExpression(fields) {
       }
       return out;
     };
-    const labelsFor = (el, root) => {
-      const labels = [];
-      if (el.id && root && root.querySelectorAll) {
-        labels.push(...Array.from(root.querySelectorAll('label')).filter(label => label.htmlFor === el.id).map(label => label.innerText));
-      }
-      try {
-        const wrappingLabel = el.closest && el.closest('label');
-        if (wrappingLabel) labels.push(wrappingLabel.innerText);
-      } catch {}
-      labels.push(el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.id);
-      return labels.map(norm).filter(Boolean);
-    };
     const findField = label => {
-      const wanted = norm(label);
-      for (const { el, root } of allControls()) {
-        const labels = labelsFor(el, root);
-        if (labels.some(item => item === wanted || item.includes(wanted) || wanted.includes(item))) {
-          return el;
-        }
+      const controls = allControls();
+      const candidates = [];
+      for (let i = 0; i < controls.length; i += 1) {
+        candidates.push({ labels: collectFillLabels(controls[i].el, controls[i].root) });
       }
-      return null;
+      const picked = pickFillCandidate(candidates, label);
+      return picked ? controls[picked.index].el : null;
     };
     const setContentEditable = (el, str) => {
       if (typeof el.focus === 'function') el.focus();
@@ -2157,9 +2333,17 @@ export function buildFillFieldsExpression(fields) {
     for (const [label, value] of Object.entries(fields)) {
       try {
         const el = findField(label);
-        if (!el) throw new Error('field not found');
-        await setValue(el, value, fillDeadline);
-        filled.push(label);
+        if (!el) {
+          failed.push({ label, reason: 'field not found' });
+          continue;
+        }
+        const written = await setValue(el, value, fillDeadline);
+        const mode = written && written.mode;
+        if (!fillValueStuck(el, value, mode)) {
+          failed.push({ label, reason: 'value did not stick', mode });
+        } else {
+          filled.push(label);
+        }
       } catch (err) {
         failed.push({ label, reason: err.message });
       }
@@ -2316,6 +2500,19 @@ export function scoreLabelMatch(labels, wanted) {
   }
   return best;
 }
+
+// Page expression for fill. scoreLabelMatch is shared with click; every name
+// these helpers call has to be in the list or it is undefined in the page.
+export const FILL_MATCH_HELPER_SOURCE = [
+  normalizeFillKey,
+  collectFillLabels,
+  scoreLabelMatch,
+  pickFillCandidate,
+  fillValueStuck,
+  fillControlIsEditable,
+]
+  .map((fn) => fn.toString())
+  .join("\n");
 
 /**
  * Pick the best candidate: visible beats hidden, then higher score, then the
