@@ -2115,15 +2115,15 @@ export function collectFillLabels(el, root) {
  * the reverse, so a short id cannot steal a longer key.
  */
 function queryWordOverlap(labels, wanted) {
+  // The whole candidate label must be one word of the query ("company" for
+  // "company name"). A shared token inside two phrases ("name" in
+  // "first name" and "last name") is not a match.
   const words = new Set(wanted.split(" ").filter((word) => word.length >= 3));
   let best = 0;
   if (!labels || typeof labels.length !== "number") return 0;
   for (let i = 0; i < labels.length; i += 1) {
     const label = labels[i];
-    if (!label) continue;
-    for (const word of label.split(" ")) {
-      if (word.length >= 3 && words.has(word) && word.length > best) best = word.length;
-    }
+    if (label && label.length >= 3 && words.has(label) && label.length > best) best = label.length;
   }
   return best;
 }
@@ -2251,21 +2251,20 @@ export function fillValueStuck(el, value, mode) {
     return false;
   }
   const compact = (raw) => normalizeFillKey(raw).replace(/ /g, "");
-  if (kind === "contenteditable" || fillControlIsEditable(el)) {
-    const got = String(el.textContent == null ? "" : el.textContent);
+  const stuckText = (got) => {
     if (got === expected) return true;
+    if (expected === "") return got === "";
     const gotKey = compact(got);
     const wantKey = compact(expected);
-    if (!wantKey) return gotKey === "";
+    // "-" or "東京" do not survive ASCII folding. Compare the original string.
+    if (!wantKey) return false;
     return gotKey === wantKey || gotKey.includes(wantKey);
+  };
+  if (kind === "contenteditable" || fillControlIsEditable(el)) {
+    return stuckText(String(el.textContent == null ? "" : el.textContent));
   }
-  const gotRaw = String(el.value == null ? "" : el.value);
-  if (gotRaw === expected) return true;
-  const gotKey = compact(gotRaw);
-  const wantKey = compact(expected);
-  if (!wantKey) return gotKey === "";
   // Masks insert punctuation. "(555) 123-4567" still holds 5551234567.
-  return gotKey === wantKey || gotKey.includes(wantKey);
+  return stuckText(String(el.value == null ? "" : el.value));
 }
 
 /** True only when fill reported an empty failed array. Null and garbage are misses. */

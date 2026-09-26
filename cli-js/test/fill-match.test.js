@@ -50,6 +50,11 @@ test("Name does not match a control whose only token is n", () => {
   assert.equal(picked, null);
 });
 
+test("Last name does not fill a field labeled first name", () => {
+  const picked = pickFillCandidate([{ labels: ["first name"] }], "Last name");
+  assert.equal(picked, null);
+});
+
 test("Company name matches a broken for= label and prefers company over name", () => {
   const label = { tagName: "LABEL", innerText: "Company name", htmlFor: "missing-id" };
   const company = {
@@ -130,6 +135,9 @@ test("fillValueStuck reads a text input back", () => {
   assert.equal(fillValueStuck({ value: "" }, null), true);
   assert.equal(fillValueStuck({ value: "(555) 123-4567" }, "5551234567"), true);
   assert.equal(fillValueStuck({ value: "555" }, "5551234567"), false);
+  assert.equal(fillValueStuck({ value: "" }, "-"), false);
+  assert.equal(fillValueStuck({ value: "大阪" }, "東京"), false);
+  assert.equal(fillValueStuck({ value: "東京" }, "東京"), true);
 });
 
 test("fillValueStuck follows checkbox, radio, select, contenteditable, and combobox", () => {
