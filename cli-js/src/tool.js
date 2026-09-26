@@ -1727,6 +1727,8 @@ export function summarizeSnapshotForms(root, visible, limit = 120) {
         const named = scope.getElementById(formId);
         if (named && String(named.tagName || "").toUpperCase() === "FORM") return named;
       }
+      // form="missing" disassociates the control. Do not fall through to the ancestor.
+      return null;
     }
     const direct = owningForm(el);
     if (direct) return direct;
