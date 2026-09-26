@@ -206,6 +206,23 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
 });
 
+test("a shadow input whose host sits in a form stays orphaned", () => {
+  const input = h("input", { id: "nick", name: "nick", type: "text", "aria-label": "Nick" });
+  const shadow = h("div", {}, [input]);
+  input.getRootNode = () => shadow;
+  const host = h("span");
+  host.shadowRoot = shadow;
+  shadow.host = host;
+  const root = h("div", {}, [h("form", { id: "outer", name: "outer", action: "/o" }, [host])]);
+  const forms = summarizeSnapshotForms(root, () => true);
+  const orphan = forms.find((form) => form.orphan);
+  assert.ok(orphan.fields.some((field) => field.name === "nick"));
+  assert.equal(
+    forms.some((form) => form.id === "outer" && form.fields.some((field) => field.name === "nick")),
+    false
+  );
+});
+
 test("a shadow control does not join a light-DOM form with the same id", () => {
   const light = h("form", { id: "checkout", name: "checkout", action: "/pay" }, [
     h("input", { id: "in-form", name: "note", type: "text", "aria-label": "Note" }),

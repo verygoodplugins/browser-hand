@@ -1730,12 +1730,8 @@ export function summarizeSnapshotForms(root, visible, limit = 120) {
     }
     const direct = owningForm(el);
     if (direct) return direct;
-    try {
-      const scope = typeof el.getRootNode === "function" ? el.getRootNode() : null;
-      if (scope && scope.host) return formFor(scope.host, depth + 1);
-    } catch {
-      /* detached */
-    }
+    // A shadow input is not submitted with the light-DOM form that contains
+    // its host. input.form stays null, so do not walk out of the shadow tree.
     return null;
   };
   const eachRoot = (node, depth, visit) => {
