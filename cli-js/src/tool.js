@@ -1418,13 +1418,14 @@ async function runCurrentOperation(input, timeoutMs) {
         };
       }
       const fields = input.fields && typeof input.fields === "object" ? input.fields : {};
+      const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(fields));
       return {
-        success: true,
+        success: fillFieldsSucceeded(result),
         mode: "current",
         operation,
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evalValue(cdp, sessionId, buildFillFieldsExpression(fields)),
+        result,
       };
     }
 
@@ -1454,7 +1455,7 @@ async function runCurrentOperation(input, timeoutMs) {
       const result = await evalValue(cdp, sessionId, buildFillFieldsExpression(sub.vars || {}));
       return redactSensitiveObject(
         {
-          success: true,
+          success: fillFieldsSucceeded(result),
           mode: "current",
           operation,
           target: compactTarget(selected),
@@ -2277,6 +2278,276 @@ export async function waitForComboboxOption(el, query, { timeoutMs = 1500, root 
   return null;
 }
 
+/** Lowercase a fill key and turn runs of non-alphanumerics into single spaces. */
+export function normalizeFillKey(raw) {
+  return String(raw == null ? "" : raw)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Unique normalized labels for one control.
+ * Visible label text (el.labels, label[for], wrapping label), aria-labelledby
+ * text resolved in root, then aria-label, placeholder, name, and id.
+ */
+export function collectFillLabels(el, root) {
+  const labels = [];
+  const push = (raw) => {
+    const value = normalizeFillKey(raw);
+    if (value && labels.indexOf(value) === -1) labels.push(value);
+  };
+  const textOf = (node) => {
+    if (!node) return "";
+    if (typeof node.innerText === "string") return node.innerText;
+    if (typeof node.textContent === "string") return node.textContent;
+    return "";
+  };
+  if (!el) return labels;
+  try {
+    const associated = el.labels;
+    if (associated && typeof associated.length === "number") {
+      for (let i = 0; i < associated.length; i += 1) push(textOf(associated[i]));
+    }
+  } catch {
+    /* el.labels is missing on non-form controls */
+  }
+  try {
+    if (el.id && root && typeof root.querySelectorAll === "function") {
+      const nodes = root.querySelectorAll("label");
+      const list = nodes && typeof nodes.length === "number" ? nodes : [];
+      for (let i = 0; i < list.length; i += 1) {
+        const label = list[i];
+        if (!label) continue;
+        let forId = label.htmlFor || "";
+        if (!forId && typeof label.getAttribute === "function") forId = label.getAttribute("for") || "";
+        if (forId === el.id) push(textOf(label));
+      }
+    }
+  } catch {
+    /* label[for] lookup failed */
+  }
+  try {
+    if (typeof el.closest === "function") {
+      const wrapping = el.closest("label");
+      if (wrapping) push(textOf(wrapping));
+    }
+  } catch {
+    /* closest is missing */
+  }
+  // Gym 02 puts the visible label in the previous sibling with a broken `for`.
+  try {
+    const prev = el.previousElementSibling;
+    if (prev && String(prev.tagName || "").toUpperCase() === "LABEL") push(textOf(prev));
+  } catch {
+    /* no sibling walk */
+  }
+  try {
+    const labelledBy = typeof el.getAttribute === "function" ? el.getAttribute("aria-labelledby") : "";
+    if (labelledBy && root && typeof root.getElementById === "function") {
+      const ids = String(labelledBy).split(/\s+/);
+      for (let i = 0; i < ids.length; i += 1) {
+        if (!ids[i]) continue;
+        const node = root.getElementById(ids[i]);
+        if (node) push(textOf(node));
+      }
+    }
+  } catch {
+    /* aria-labelledby lookup failed */
+  }
+  try {
+    if (typeof el.getAttribute === "function") {
+      push(el.getAttribute("aria-label"));
+      push(el.getAttribute("placeholder"));
+      push(el.getAttribute("name"));
+    }
+  } catch {
+    /* attributes are missing */
+  }
+  try {
+    if (el.id) push(el.id);
+  } catch {
+    /* id is missing */
+  }
+  return labels;
+}
+
+/**
+ * Best fill candidate. Higher score wins; equal scores keep the earlier control.
+ * Score is exact, then prefix, then the candidate containing the query — never
+ * the reverse, so a short id cannot steal a longer key.
+ */
+function queryWordOverlap(labels, wanted) {
+  // The whole candidate label must be one word of the query ("company" for
+  // "company name"). A shared token inside two phrases ("name" in
+  // "first name" and "last name") is not a match.
+  const words = new Set(wanted.split(" ").filter((word) => word.length >= 3));
+  let best = 0;
+  if (!labels || typeof labels.length !== "number") return 0;
+  for (let i = 0; i < labels.length; i += 1) {
+    const label = labels[i];
+    if (label && label.length >= 3 && words.has(label) && label.length > best) best = label.length;
+  }
+  return best;
+}
+
+export function pickFillCandidate(candidates, wantedRaw) {
+  const wanted = normalizeFillKey(wantedRaw);
+  if (!wanted || !candidates || typeof candidates.length !== "number") return null;
+  let best = null;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = candidates[i] || {};
+    const rawLabels = candidate.labels;
+    const labels = [];
+    if (rawLabels && typeof rawLabels.length === "number") {
+      for (let j = 0; j < rawLabels.length; j += 1) labels.push(normalizeFillKey(rawLabels[j]));
+    }
+    const scored = scoreLabelMatch(labels, wanted);
+    const overlap = queryWordOverlap(labels, wanted);
+    // A whole word of the query ("company" inside "company name") still matches.
+    // A shorter token such as id "n" does not, because words shorter than 3 are ignored.
+    const score = scored || (overlap >= 3 ? 1 : 0);
+    if (score <= 0) continue;
+    if (!best || score > best.score || (score === best.score && overlap > best.overlap)) {
+      best = { index: i, score, overlap };
+    }
+  }
+  return best ? { index: best.index, score: best.score } : null;
+}
+
+function fillControlIsEditable(el) {
+  if (!el) return false;
+  if (el.isContentEditable) return true;
+  try {
+    if (typeof el.getAttribute !== "function") return false;
+    const attr = String(el.getAttribute("contenteditable") || "").toLowerCase();
+    return attr !== "" && attr !== "false";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when the control still holds the value fill just wrote.
+ * mode is select | checkbox | radio | combobox | contenteditable | text.
+ */
+export function fillValueStuck(el, value, mode) {
+  if (!el) return false;
+  const written = mode && typeof mode === "object" ? mode : null;
+  const expected = value == null ? "" : String(value);
+  let kind = written ? written.mode : mode || "";
+  if (!kind) {
+    const type = String(el.type || "").toLowerCase();
+    if (type === "checkbox") kind = "checkbox";
+    else if (type === "radio") kind = "radio";
+    else if (String(el.tagName || "").toUpperCase() === "SELECT") kind = "select";
+    else if (fillControlIsEditable(el)) kind = "contenteditable";
+    else kind = "text";
+  }
+  if (kind === "checkbox") {
+    return Boolean(el.checked) === /^(true|yes|1|on|checked)$/i.test(expected);
+  }
+  if (kind === "radio") {
+    return Boolean(el.checked);
+  }
+  if (kind === "select") {
+    let option = null;
+    try {
+      if (el.selectedOptions && el.selectedOptions.length > 0) option = el.selectedOptions[0];
+    } catch {
+      /* not a select */
+    }
+    if (!option && el.options && el.selectedIndex >= 0) {
+      try {
+        option = el.options[el.selectedIndex];
+      } catch {
+        /* ignore a hostile options list */
+      }
+    }
+    if (!option) return false;
+    const wantedKey = normalizeFillKey(expected);
+    const candidates = [option.value, option.text, option.textContent, option.label].map((item) =>
+      normalizeFillKey(item)
+    );
+    if (!wantedKey) {
+      const raw = [option.value, option.text, option.textContent, option.label].map((item) =>
+        String(item == null ? "" : item)
+      );
+      return raw.some((item) => item === expected);
+    }
+    for (let i = 0; i < candidates.length; i += 1) {
+      const item = candidates[i];
+      if (item === wantedKey) return true;
+      if (wantedKey && item.indexOf(wantedKey) !== -1) return true;
+    }
+    return false;
+  }
+  if (kind === "combobox") {
+    const option = written && written.option;
+    const optionRaw = String((option && (option.textContent || option.innerText)) || "");
+    const optionText = normalizeFillKey(optionRaw);
+    const first = optionText.split(" ").filter(Boolean)[0] || "";
+    const gotRaw = String(el.value == null ? "" : el.value);
+    const got = normalizeFillKey(gotRaw);
+    let expanded = null;
+    try {
+      expanded = typeof el.getAttribute === "function" ? el.getAttribute("aria-expanded") : null;
+    } catch {
+      expanded = null;
+    }
+    // The list is still open, so the click did not commit.
+    if (expanded === "true") return false;
+    let selected = false;
+    try {
+      selected = !!(option && typeof option.getAttribute === "function" && option.getAttribute("aria-selected") === "true");
+    } catch {
+      selected = false;
+    }
+    if (selected) return true;
+    // 東京 folds to nothing. Compare the raw committed text before giving up.
+    if (!optionText && optionRaw && gotRaw === optionRaw) return true;
+    if (got && optionText && (got === optionText || got.includes(optionText))) return true;
+    // Challenge 20 writes the IATA code and closes the list. The typed query
+    // alone, while the popup is still open, must not count.
+    if (got && first && got === first && expanded === "false") return true;
+    // List closed and the input holds exactly what was requested, even when
+    // the option text is longer ("New York" from "JFK · New York …").
+    if (expanded === "false" && (gotRaw === expected || (got && normalizeFillKey(expected) === got))) return true;
+    if (!got && first && expanded !== "true") {
+      let around = "";
+      try {
+        const scope =
+          (typeof el.closest === "function" && el.closest("[role='combobox']")) || el.parentElement;
+        around = normalizeFillKey(scope && (scope.innerText || scope.textContent));
+      } catch {
+        around = "";
+      }
+      if (around.includes(first)) return true;
+    }
+    return false;
+  }
+  const compact = (raw) => normalizeFillKey(raw).replace(/ /g, "");
+  const stuckText = (got) => {
+    if (got === expected) return true;
+    if (expected === "") return got === "";
+    const gotKey = compact(got);
+    const wantKey = compact(expected);
+    // "-" or "東京" do not survive ASCII folding. Compare the original string.
+    if (!wantKey) return false;
+    return gotKey === wantKey;
+  };
+  if (kind === "contenteditable" || fillControlIsEditable(el)) {
+    return stuckText(String(el.textContent == null ? "" : el.textContent));
+  }
+  // Masks insert punctuation. "(555) 123-4567" still holds 5551234567.
+  return stuckText(String(el.value == null ? "" : el.value));
+}
+
+/** True only when fill reported an empty failed array. Null and garbage are misses. */
+export function fillFieldsSucceeded(result) {
+  return Boolean(result) && typeof result === "object" && Array.isArray(result.failed) && result.failed.length === 0;
+}
+
 export const FILL_HELPER_SOURCE = [
   dispatchInsertText,
   usesAtomicValueAssign,
@@ -2296,8 +2567,9 @@ export const FILL_HELPER_SOURCE = [
 export function buildFillFieldsExpression(fields) {
   return `(async () => {
     ${FILL_HELPER_SOURCE}
+    ${FILL_MATCH_HELPER_SOURCE}
     const fields = ${JSON.stringify(fields)};
-    const norm = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const norm = normalizeFillKey;
     const visible = el => {
       try {
         const style = window.getComputedStyle(el);
@@ -2331,27 +2603,14 @@ export function buildFillFieldsExpression(fields) {
       }
       return out;
     };
-    const labelsFor = (el, root) => {
-      const labels = [];
-      if (el.id && root && root.querySelectorAll) {
-        labels.push(...Array.from(root.querySelectorAll('label')).filter(label => label.htmlFor === el.id).map(label => label.innerText));
-      }
-      try {
-        const wrappingLabel = el.closest && el.closest('label');
-        if (wrappingLabel) labels.push(wrappingLabel.innerText);
-      } catch {}
-      labels.push(el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.id);
-      return labels.map(norm).filter(Boolean);
-    };
     const findField = label => {
-      const wanted = norm(label);
-      for (const { el, root } of allControls()) {
-        const labels = labelsFor(el, root);
-        if (labels.some(item => item === wanted || item.includes(wanted) || wanted.includes(item))) {
-          return el;
-        }
+      const controls = allControls();
+      const candidates = [];
+      for (let i = 0; i < controls.length; i += 1) {
+        candidates.push({ labels: collectFillLabels(controls[i].el, controls[i].root) });
       }
-      return null;
+      const picked = pickFillCandidate(candidates, label);
+      return picked ? controls[picked.index].el : null;
     };
     const setContentEditable = (el, str) => {
       if (typeof el.focus === 'function') el.focus();
@@ -2384,8 +2643,11 @@ export function buildFillFieldsExpression(fields) {
       if (typeof el.focus === 'function') el.focus();
       if (el.tagName === 'SELECT') {
         const wanted = norm(str);
-        const option = Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
-          || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
+        const exact = item => String(item.textContent || '') === str || String(item.value || '') === str;
+        const option = !wanted
+          ? Array.from(el.options).find(exact)
+          : Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
+            || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
         if (!option) throw new Error('No select option matched');
         el.value = option.value;
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
@@ -2409,7 +2671,7 @@ export function buildFillFieldsExpression(fields) {
         const option = await waitForComboboxOption(el, str, { timeoutMs: 1500 });
         if (!option) throw new Error('combobox option not found');
         dispatchOptionPointer(option);
-        return { mode: 'combobox', selected: true };
+        return { mode: 'combobox', selected: true, option };
       }
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       return { mode: 'text' };
@@ -2420,9 +2682,17 @@ export function buildFillFieldsExpression(fields) {
     for (const [label, value] of Object.entries(fields)) {
       try {
         const el = findField(label);
-        if (!el) throw new Error('field not found');
-        await setValue(el, value, fillDeadline);
-        filled.push(label);
+        if (!el) {
+          failed.push({ label, reason: 'field not found' });
+          continue;
+        }
+        const written = await setValue(el, value, fillDeadline);
+        const mode = written && written.mode;
+        if (!fillValueStuck(el, value, written)) {
+          failed.push({ label, reason: 'value did not stick', mode });
+        } else {
+          filled.push(label);
+        }
       } catch (err) {
         failed.push({ label, reason: err.message });
       }
@@ -2579,6 +2849,20 @@ export function scoreLabelMatch(labels, wanted) {
   }
   return best;
 }
+
+// Page expression for fill. scoreLabelMatch is shared with click; every name
+// these helpers call has to be in the list or it is undefined in the page.
+export const FILL_MATCH_HELPER_SOURCE = [
+  normalizeFillKey,
+  collectFillLabels,
+  scoreLabelMatch,
+  queryWordOverlap,
+  pickFillCandidate,
+  fillValueStuck,
+  fillControlIsEditable,
+]
+  .map((fn) => fn.toString())
+  .join("\n");
 
 /**
  * Pick the best candidate: visible beats hidden, then higher score, then the

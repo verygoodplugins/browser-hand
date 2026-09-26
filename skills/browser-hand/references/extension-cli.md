@@ -49,6 +49,8 @@ browser-hand goto --page-name smoke --url https://example.com/next
 ```
 
 - `--fields` must be a **JSON object** of label → value.
+- Keys match the visible label, aria-label, placeholder, name, or id. An exact label beats a substring of the name attribute.
+- The process exits 1 when any key is unmatched or the value does not stick. Read `result.filled` and `result.failed`. `success: true` means every requested field was written.
 - Click uses a full pointer sequence (not bare `el.click()`).
 - Type/fill on contenteditable fire `beforeinput` + `input` for editors like Lexical.
 - Screenshots land under `~/.browser-hand/screenshots/` (override with `BROWSER_HAND_SCREENSHOT_DIR`).
