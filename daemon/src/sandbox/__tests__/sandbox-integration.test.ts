@@ -85,7 +85,7 @@ describe.sequential("QuickJS sandbox integration", () => {
       `
         const page = await browser.getPage("locator");
         await page.goto("https://example.com");
-        console.log(await page.locator("h1").textContent());
+        console.log(await page.locator("body").textContent());
       `,
       manager,
       "default",

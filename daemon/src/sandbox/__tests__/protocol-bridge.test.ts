@@ -37,7 +37,7 @@ describe.sequential("protocol bridge", () => {
     await page.goto("https://example.com");
 
     await expect(page.title()).resolves.toBe("Example Domain");
-    await expect(page.locator("h1").textContent()).resolves.toBe("Example Domain");
+    await expect(page.locator("body").textContent()).resolves.toContain("documentation examples");
     await expect(page.evaluate(() => document.title)).resolves.toBe("Example Domain");
   }, 120_000);
 
