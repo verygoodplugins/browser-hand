@@ -18,9 +18,7 @@
         "playwright",
         "automation"
       ],
-      "skills": [
-        "./skills/browser-hand"
-      ]
+      "skills": ["./skills/browser-hand"]
     }
   ],
   "metadata": {
