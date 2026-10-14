@@ -1432,6 +1432,7 @@ async function runCurrentTabs(input = {}, timeoutMs) {
 }
 
 async function runCurrentOperation(input, timeoutMs) {
+  const deadlineAt = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 0);
   const operation = input.operation;
   if (operation === "doctor") {
     return await runCurrentDoctor(timeoutMs, input);
@@ -1596,7 +1597,7 @@ async function runCurrentOperation(input, timeoutMs) {
           );
         }
         throw new Error(`Unsupported step ${step.op}`);
-      });
+      }, { deadlineAt });
       return {
         success: ran.success === true,
         mode: "current",
@@ -3603,6 +3604,31 @@ async function substituteForHeadless(vars) {
   });
 }
 
+export function protectStepSources(steps) {
+  const codes = [];
+  if (!Array.isArray(steps)) return { steps, codes };
+  const safe = steps.map((step, index) => {
+    if (!step || typeof step !== "object") return step;
+    const op = step.op || step.operation;
+    if (op === "evaluate" && typeof step.code === "string") {
+      codes.push([index, step.code]);
+      return { ...step, code: "" };
+    }
+    return step;
+  });
+  return { steps: safe, codes };
+}
+
+export function restoreStepSources(steps, codes) {
+  if (!Array.isArray(steps)) return steps;
+  for (const [index, code] of codes || []) {
+    if (steps[index] && typeof steps[index] === "object") {
+      steps[index] = { ...steps[index], code };
+    }
+  }
+  return steps;
+}
+
 export function currentPlaceholderTree(args = {}) {
   const safeVars =
     args.vars && typeof args.vars === "object" && !Array.isArray(args.vars) ? args.vars : {};
@@ -3625,13 +3651,21 @@ export function currentPlaceholderTree(args = {}) {
 }
 
 async function substituteForCurrent(args) {
-  return await substitutePlaceholders(currentPlaceholderTree(args), {
-    autofill: autofillData,
-    getSecret: readKeychainSecret,
-    getSecure: readProfileSecret,
-    secretCache,
-    secureCache,
-  });
+  const guarded = protectStepSources(args.steps);
+  const sub = await substitutePlaceholders(
+    currentPlaceholderTree({ ...args, steps: guarded.steps }),
+    {
+      autofill: autofillData,
+      getSecret: readKeychainSecret,
+      getSecure: readProfileSecret,
+      secretCache,
+      secureCache,
+    }
+  );
+  if (sub.vars && Array.isArray(sub.vars.steps)) {
+    restoreStepSources(sub.vars.steps, guarded.codes);
+  }
+  return sub;
 }
 
 async function substituteAutofillProfileFields(fields) {

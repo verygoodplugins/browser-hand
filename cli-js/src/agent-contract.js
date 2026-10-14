@@ -584,9 +584,9 @@ export function normalizeSteps(raw) {
 }
 
 function slimStepValue(step, value) {
-  // Evaluate returns the caller's object. url/title there are the oracle, not
-  // the operation wrapper those keys are on click and fill results.
-  if (step && step.op === "evaluate") return value;
+  // Evaluate returns the caller's object, and a snapshot's url/title are the
+  // page that was captured. Those keys are wrappers only on click and fill.
+  if (step && (step.op === "evaluate" || step.op === "snapshot")) return value;
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const drop = new Set(["url", "title", "mode", "operation", "target"]);
   const out = {};
@@ -638,13 +638,32 @@ export function snapshotPageHelpersSource() {
     .join("\n");
 }
 
-export async function runStepList(steps, evalFn) {
+function delayReject(ms, message) {
+  return new Promise((_, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+}
+
+export async function runStepList(steps, evalFn, options = {}) {
+  const deadlineAt = Number.isFinite(options.deadlineAt) ? options.deadlineAt : null;
   const results = [];
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];
+    if (deadlineAt != null && Date.now() >= deadlineAt) {
+      const error = "steps timed out";
+      results.push({ index, op: step.op, success: false, error });
+      return { success: false, failedAt: index, error, steps: results };
+    }
     let value;
     try {
-      value = await evalFn(step, index);
+      const pending = evalFn(step, index);
+      if (deadlineAt == null) {
+        value = await pending;
+      } else {
+        const remaining = Math.max(0, deadlineAt - Date.now());
+        value = await Promise.race([pending, delayReject(remaining, "steps timed out")]);
+      }
     } catch (err) {
       const error = err && err.message ? err.message : String(err);
       results.push({ index, op: step.op, success: false, error });

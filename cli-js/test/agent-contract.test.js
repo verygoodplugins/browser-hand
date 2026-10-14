@@ -12,7 +12,7 @@ import test from "node:test";
 
 import { buildHandlerInput, slimCliResult } from "../src/cli.js";
 import { substitutePlaceholders } from "../src/autofill.js";
-import { buildClickExpression, currentPlaceholderTree, summarizeTabInventory } from "../src/tool.js";
+import { buildClickExpression, currentPlaceholderTree, protectStepSources, restoreStepSources, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
@@ -562,6 +562,53 @@ test("evaluate step results keep caller url and title fields", async () => {
   assert.equal(ran.steps[0].result.url, "https://dash.example/dns");
   assert.equal(ran.steps[0].result.title, "DNS");
   assert.equal(ran.steps[0].result.ok, true);
+
+  const snap = await runStepList([{ op: "snapshot" }], async () => ({
+    url: "https://example.com/next",
+    title: "Next",
+    nodes: [],
+  }));
+  assert.equal(snap.steps[0].result.url, "https://example.com/next");
+  assert.equal(snap.steps[0].result.title, "Next");
+});
+
+test("steps stop at the shared command deadline", async () => {
+  let calls = 0;
+  const spent = await runStepList(
+    [{ op: "evaluate", code: "1" }],
+    async () => {
+      calls += 1;
+      return { ok: true };
+    },
+    { deadlineAt: Date.now() - 5 }
+  );
+  assert.equal(spent.success, false);
+  assert.equal(calls, 0);
+  assert.match(spent.error, /timed out/);
+
+  const hung = await runStepList(
+    [{ op: "evaluate", code: "hang" }],
+    () => new Promise(() => {}),
+    { deadlineAt: Date.now() + 40 }
+  );
+  assert.equal(hung.success, false);
+  assert.match(hung.error, /timed out/);
+});
+
+test("evaluate step source is not placeholder-substituted", async () => {
+  const original = "({['{secure:TOKEN}']: true})";
+  const guarded = protectStepSources([
+    { op: "fill", fields: { Email: "{me:EMAIL}" } },
+    { op: "evaluate", code: original },
+  ]);
+  const sub = await substitutePlaceholders(currentPlaceholderTree({ steps: guarded.steps }), {
+    autofill: { EMAIL: "a@b.c" },
+    getSecure: async () => "o'hare",
+  });
+  restoreStepSources(sub.vars.steps, guarded.codes);
+  assert.equal(sub.vars.steps[0].fields.Email, "a@b.c");
+  assert.equal(sub.vars.steps[1].code, original);
+  assert.equal(JSON.stringify(sub.vars.steps[1]).includes("o'hare"), false);
 });
 
 test("step fill and type placeholders are substituted and redacted", async () => {
