@@ -4,11 +4,8 @@
 
 import type { Logger } from "../utils/logger";
 import type { TabManager } from "./TabManager";
-import type {
-  ExtensionCommandMessage,
-  FocusPolicy,
-  TabInfo,
-} from "../utils/types";
+import { normalizeGroupTitle, pickTabGroupColor, planTabGroup } from "./tab-group";
+import type { ExtensionCommandMessage, FocusPolicy, TabInfo } from "../utils/types";
 
 export interface CDPRouterDeps {
   logger: Logger;
@@ -35,6 +32,7 @@ export class CDPRouter {
   private setFocusOverride?: CDPRouterDeps["setFocusOverride"];
   private clearFocusOverride?: () => Promise<void> | void;
   private browserHandGroupId: number | null = null;
+  private browserHandGroupTitle: string | null = null;
 
   constructor(deps: CDPRouterDeps) {
     this.logger = deps.logger;
@@ -62,17 +60,11 @@ export class CDPRouter {
   private async applyFocusPolicy(targetTabId: number): Promise<void> {
     const policy = await this.resolveFocusPolicy();
     if (policy === "background") {
-      this.logger.debug(
-        "Skipping tab/window focus (focusPolicy=background) for tab:",
-        targetTabId
-      );
+      this.logger.debug("Skipping tab/window focus (focusPolicy=background) for tab:", targetTabId);
       return;
     }
 
-    this.logger.log(
-      `Applying focusPolicy=${policy} for tab:`,
-      targetTabId
-    );
+    this.logger.log(`Applying focusPolicy=${policy} for tab:`, targetTabId);
     const tab = await chrome.tabs.get(targetTabId);
     await chrome.tabs.update(targetTabId, { active: true });
     if (policy === "window" && tab.windowId) {
@@ -86,29 +78,51 @@ export class CDPRouter {
   }
 
   /**
-   * Gets or creates the "Browser Hand" tab group, returning its ID.
+   * Join the current session's tab group, or start one.
+   * A groupTitle that differs from the current group starts a new session.
+   * No title joins the current group. The first group is titled "Browser Hand".
    */
-  private async getOrCreateBrowserHandGroup(tabId: number): Promise<number> {
-    // If we have a cached group ID, verify it still exists
+  private async getOrCreateBrowserHandGroup(
+    tabId: number,
+    requestedTitle?: string | null
+  ): Promise<number> {
+    const requested = normalizeGroupTitle(requestedTitle);
+    let currentTitle = this.browserHandGroupTitle;
     if (this.browserHandGroupId !== null) {
       try {
-        await chrome.tabGroups.get(this.browserHandGroupId);
-        // Group exists, add tab to it
-        await chrome.tabs.group({ tabIds: [tabId], groupId: this.browserHandGroupId });
-        return this.browserHandGroupId;
+        const group = await chrome.tabGroups.get(this.browserHandGroupId);
+        if (typeof group.title === "string" && group.title.trim()) {
+          currentTitle = group.title.trim();
+        }
       } catch {
-        // Group no longer exists, reset cache
         this.browserHandGroupId = null;
+        currentTitle = null;
       }
     }
 
-    // Create a new group with this tab
+    const plan = planTabGroup(currentTitle, requested);
+    if (plan.reuse && this.browserHandGroupId !== null) {
+      const cachedGroupId = this.browserHandGroupId;
+      try {
+        await chrome.tabs.group({ tabIds: [tabId], groupId: cachedGroupId });
+        this.browserHandGroupTitle = plan.title;
+        return cachedGroupId;
+      } catch (err) {
+        // get() can succeed and group() still reject: the group vanished, or
+        // the new tab is in a window that cannot reuse this group id.
+        this.logger.debug("Cached tab group cannot be reused; creating a replacement", err);
+        this.browserHandGroupId = null;
+        this.browserHandGroupTitle = null;
+      }
+    }
+
     const groupId = await chrome.tabs.group({ tabIds: [tabId] });
     await chrome.tabGroups.update(groupId, {
-      title: "Browser Hand",
-      color: "blue",
+      title: plan.title,
+      color: pickTabGroupColor(),
     });
     this.browserHandGroupId = groupId;
+    this.browserHandGroupTitle = plan.title;
     return groupId;
   }
 
@@ -182,11 +196,7 @@ export class CDPRouter {
           ttlMs: params.ttlMs,
           consumeOnUse: params.consumeOnUse,
         });
-        this.logger.log(
-          "Focus override set:",
-          params.policy,
-          params.reason || ""
-        );
+        this.logger.log("Focus override set:", params.policy, params.reason || "");
         return result ?? { ok: true, policy: params.policy };
       }
 
@@ -222,11 +232,7 @@ export class CDPRouter {
           }
         }
         try {
-          return await chrome.debugger.sendCommand(
-            debuggee,
-            msg.params.method,
-            msg.params.params
-          );
+          return await chrome.debugger.sendCommand(debuggee, msg.params.method, msg.params.params);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (/chrome-extension:\/\//i.test(message) || /Cannot access/i.test(message)) {
@@ -261,9 +267,7 @@ export class CDPRouter {
         }
         await this.tabManager.ensureDebuggerAttached(targetTabId);
         const expression =
-          typeof msg.params.params?.expression === "string"
-            ? msg.params.params.expression
-            : "";
+          typeof msg.params.params?.expression === "string" ? msg.params.params.expression : "";
         if (this.tabManager.usesScriptingFallback(targetTabId)) {
           this.logger.debug("Runtime.evaluate via scripting fallback", targetTabId);
           return await this.tabManager.evaluateViaScripting(targetTabId, expression);
@@ -271,9 +275,7 @@ export class CDPRouter {
         const evalSession: chrome.debugger.DebuggerSession = {
           ...debuggee,
           sessionId:
-            msg.params.sessionId !== targetTab.sessionId
-              ? msg.params.sessionId
-              : undefined,
+            msg.params.sessionId !== targetTab.sessionId ? msg.params.sessionId : undefined,
         };
         try {
           return await chrome.debugger.sendCommand(
@@ -284,15 +286,9 @@ export class CDPRouter {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (/chrome-extension:\/\//i.test(message) || /Cannot access/i.test(message)) {
-            this.logger.debug(
-              "Runtime.evaluate wedged; scripting fallback",
-              targetTabId
-            );
+            this.logger.debug("Runtime.evaluate wedged; scripting fallback", targetTabId);
             this.tabManager.markScriptingFallback(targetTabId, message);
-            return await this.tabManager.evaluateViaScripting(
-              targetTabId,
-              expression
-            );
+            return await this.tabManager.evaluateViaScripting(targetTabId, expression);
           }
           throw err;
         }
@@ -305,8 +301,10 @@ export class CDPRouter {
         if (!tab.id) throw new Error("Failed to create tab");
 
         try {
-          // Add tab to "Browser Hand" group
-          await this.getOrCreateBrowserHandGroup(tab.id);
+          await this.getOrCreateBrowserHandGroup(
+            tab.id,
+            msg.params.params?.groupTitle as string | undefined
+          );
 
           await new Promise((resolve) => setTimeout(resolve, 100));
           const registered = await this.tabManager.register(tab);
@@ -380,9 +378,7 @@ export class CDPRouter {
       // for other CDP methods so agents can re-open / re-navigate.
       if (msg.params.method === "Runtime.evaluate") {
         const expression =
-          typeof msg.params.params?.expression === "string"
-            ? msg.params.params.expression
-            : "";
+          typeof msg.params.params?.expression === "string" ? msg.params.params.expression : "";
         return await this.tabManager.evaluateViaScripting(targetTabId, expression);
       }
       throw new Error(
@@ -409,9 +405,7 @@ export class CDPRouter {
       ) {
         this.tabManager.markScriptingFallback(targetTabId, message);
         const expression =
-          typeof msg.params.params?.expression === "string"
-            ? msg.params.params.expression
-            : "";
+          typeof msg.params.params?.expression === "string" ? msg.params.params.expression : "";
         return await this.tabManager.evaluateViaScripting(targetTabId, expression);
       }
       throw err;
@@ -431,10 +425,7 @@ export class CDPRouter {
   ): Promise<{ data: string }> {
     await this.tabManager.ensureDebuggerAttached(tabId);
 
-    const format =
-      params.format === "jpeg" || params.format === "png"
-        ? params.format
-        : "png";
+    const format = params.format === "jpeg" || params.format === "png" ? params.format : "png";
 
     if (!this.tabManager.usesScriptingFallback(tabId)) {
       try {
@@ -450,16 +441,9 @@ export class CDPRouter {
           cdpParams.captureBeyondViewport = true;
         }
         const result = (await Promise.race([
-          chrome.debugger.sendCommand(
-            debuggee,
-            "Page.captureScreenshot",
-            cdpParams
-          ),
+          chrome.debugger.sendCommand(debuggee, "Page.captureScreenshot", cdpParams),
           new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Page.captureScreenshot timed out")),
-              8000
-            )
+            setTimeout(() => reject(new Error("Page.captureScreenshot timed out")), 8000)
           ),
         ])) as { data?: string } | undefined;
         if (result?.data) {
@@ -501,11 +485,7 @@ export class CDPRouter {
       }
       return { data };
     } finally {
-      if (
-        previousActiveId &&
-        previousActiveId !== tabId &&
-        typeof previousActiveId === "number"
-      ) {
+      if (previousActiveId && previousActiveId !== tabId && typeof previousActiveId === "number") {
         try {
           await chrome.tabs.update(previousActiveId, { active: true });
         } catch {

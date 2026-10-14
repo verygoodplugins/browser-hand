@@ -9,6 +9,11 @@ import type { ExtensionCommandMessage } from "../utils/types";
 const mockDebuggerSendCommand = vi.fn();
 const mockTabsUpdate = vi.fn();
 const mockTabsGet = vi.fn();
+const mockTabsCreate = vi.fn();
+const mockTabsGroup = vi.fn();
+const mockTabsRemove = vi.fn();
+const mockTabGroupsGet = vi.fn();
+const mockTabGroupsUpdate = vi.fn();
 const mockWindowsUpdate = vi.fn();
 
 vi.stubGlobal("chrome", {
@@ -25,6 +30,13 @@ vi.stubGlobal("chrome", {
     ...fakeBrowser.tabs,
     update: mockTabsUpdate,
     get: mockTabsGet,
+    create: mockTabsCreate,
+    group: mockTabsGroup,
+    remove: mockTabsRemove,
+  },
+  tabGroups: {
+    get: mockTabGroupsGet,
+    update: mockTabGroupsUpdate,
   },
   windows: {
     ...fakeBrowser.windows,
@@ -44,6 +56,11 @@ describe("CDPRouter", () => {
     mockDebuggerSendCommand.mockReset();
     mockTabsUpdate.mockReset();
     mockTabsGet.mockReset();
+    mockTabsCreate.mockReset();
+    mockTabsGroup.mockReset();
+    mockTabsRemove.mockReset();
+    mockTabGroupsGet.mockReset();
+    mockTabGroupsUpdate.mockReset();
     mockWindowsUpdate.mockReset();
     focusPolicy = "background";
 
@@ -184,6 +201,62 @@ describe("CDPRouter", () => {
         "Runtime.evaluate",
         undefined
       );
+    });
+
+    it("creates a replacement group when a cached group cannot be reused", async () => {
+      mockTabsCreate
+        .mockResolvedValueOnce({ id: 41, url: "https://example.com/a" })
+        .mockResolvedValueOnce({ id: 42, url: "https://example.com/b" })
+        .mockResolvedValueOnce({ id: 43, url: "https://example.com/c" });
+      mockTabsGroup.mockImplementation(async (options: { tabIds: number[]; groupId?: number }) => {
+        if (options.groupId === 7) {
+          throw new Error("No tab group with id: 7.");
+        }
+        if (options.groupId != null) return options.groupId;
+        return options.tabIds[0] === 41 ? 7 : 8;
+      });
+      mockTabGroupsGet.mockImplementation(async (groupId: number) => ({
+        id: groupId,
+        title: "Browser Hand",
+      }));
+      mockTabGroupsUpdate.mockResolvedValue({});
+      vi.spyOn(tabManager, "register").mockImplementation(async (tab) => ({
+        targetId: `tab-${tab.id}`,
+        type: "page",
+        title: "",
+        url: tab.url ?? "",
+        attached: false,
+      }));
+      vi.spyOn(tabManager, "attach").mockImplementation(async (tabId) => ({
+        targetId: `tab-${tabId}`,
+        type: "page",
+        title: "",
+        url: "",
+        attached: true,
+      }));
+
+      const open = (url: string) =>
+        cdpRouter.handleCommand({
+          id: 1,
+          method: "forwardCDPCommand",
+          params: { method: "Target.createTarget", params: { url } },
+        });
+
+      await expect(open("https://example.com/a")).resolves.toEqual({ targetId: "tab-41" });
+      await expect(open("https://example.com/b")).resolves.toEqual({ targetId: "tab-42" });
+      await expect(open("https://example.com/c")).resolves.toEqual({ targetId: "tab-43" });
+
+      expect(mockTabGroupsGet).toHaveBeenCalledWith(7);
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(1, { tabIds: [41] });
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(2, { tabIds: [42], groupId: 7 });
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(3, { tabIds: [42] });
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(4, { tabIds: [43], groupId: 8 });
+      expect(mockTabGroupsUpdate).toHaveBeenNthCalledWith(
+        2,
+        8,
+        expect.objectContaining({ title: "Browser Hand" })
+      );
+      expect(mockTabsRemove).not.toHaveBeenCalled();
     });
   });
 

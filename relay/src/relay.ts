@@ -140,7 +140,13 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   /** Blank tab a client opened, rewritten onto the already-open page. */
   const adoptedBlanks = new Map<
     string,
-    { clientSessionId: string; clientTargetId: string; liveSessionId: string; liveTargetId: string; ownerClientId?: string }
+    {
+      clientSessionId: string;
+      clientTargetId: string;
+      liveSessionId: string;
+      liveTargetId: string;
+      ownerClientId?: string;
+    }
   >();
   const adoptedByTarget = new Map<string, { clientSessionId: string; liveTargetId: string }>();
   const quietDetach = new Set<string>();
@@ -345,7 +351,10 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
         });
         protectedTargetIds.add(liveTargetId);
         for (const [name, entry] of namedPages) {
-          if (entry.targetId === clientTarget.targetId || entry.sessionId === clientTarget.sessionId) {
+          if (
+            entry.targetId === clientTarget.targetId ||
+            entry.sessionId === clientTarget.sessionId
+          ) {
             namedPages.set(name, { sessionId: liveSessionId, targetId: liveTargetId });
           }
         }
@@ -692,11 +701,15 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     }
 
     try {
+      const groupTitle = typeof body.groupTitle === "string" ? body.groupTitle.trim() : "";
       const result = (await sendToExtension({
         method: "forwardCDPCommand",
         params: {
           method: "Target.createTarget",
-          params: { url: !isBlankPageUrl(requestedUrl) ? requestedUrl : "about:blank" },
+          params: {
+            url: !isBlankPageUrl(requestedUrl) ? requestedUrl : "about:blank",
+            ...(groupTitle ? { groupTitle } : {}),
+          },
         },
       })) as { targetId: string };
       if (result?.targetId) relayCreatedTargetIds.add(result.targetId);
@@ -1026,9 +1039,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
                 const rebound = findTargetById(adopted.liveTargetId);
                 if (rebound && rebound.sessionId !== adopted.liveSessionId) {
                   adopted.liveSessionId = rebound.sessionId;
-                  log(
-                    `Adopted session ${adopted.clientSessionId} rebound → ${rebound.sessionId}`
-                  );
+                  log(`Adopted session ${adopted.clientSessionId} rebound → ${rebound.sessionId}`);
                   continue;
                 }
                 if (rebound && adopted.clientSessionId !== detachParams.sessionId) {
