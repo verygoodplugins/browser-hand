@@ -656,6 +656,17 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   return { source: "existing_target", createsTab: false };
 }
 
+export function existingTargetGroupCommand({ operation, source, groupTitle, targetId } = {}) {
+  if (source !== "existing_target") return null;
+  if (operation !== "goto" && operation !== "open") return null;
+  const title = typeof groupTitle === "string" ? groupTitle.trim() : "";
+  if (!title || !targetId) return null;
+  return {
+    method: "DevBrowser.groupTarget",
+    params: { targetId, groupTitle: title },
+  };
+}
+
 function normalizePageUrl(url) {
   const raw = String(url || "");
   try {
@@ -1324,10 +1335,20 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
       return Boolean(await evalValue(cdp, sessionId, "(() => document.hasFocus())()"));
     },
   });
+  const sessionId = await attachTarget(cdp, selected.targetId);
+  const groupCommand = existingTargetGroupCommand({
+    operation,
+    source: plan.source,
+    groupTitle: input.groupTitle,
+    targetId: selected.targetId,
+  });
+  if (groupCommand) {
+    await cdp.send(groupCommand.method, groupCommand.params);
+  }
   return {
     plan,
     selected,
-    sessionId: await attachTarget(cdp, selected.targetId),
+    sessionId,
     created: false,
   };
 }

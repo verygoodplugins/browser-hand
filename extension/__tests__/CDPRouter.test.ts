@@ -415,5 +415,90 @@ describe("CDPRouter", () => {
 
       expect(sendMessage).not.toHaveBeenCalled();
     });
+
+    it("groups an existing target under the requested title", async () => {
+      tabManager.set(123, {
+        sessionId: "session-1",
+        targetId: "target-1",
+        state: "connected",
+      });
+      const group = vi.fn(async () => 11);
+      const update = vi.fn(async () => ({}));
+      const get = vi.fn(async () => {
+        throw new Error("No tab group");
+      });
+      const tabs = chrome.tabs as typeof chrome.tabs & { group?: typeof group };
+      const previousGroup = tabs.group;
+      const previousTabGroups = (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups;
+      tabs.group = group;
+      (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = { get, update };
+      try {
+        const result = await cdpRouter.handleCommand({
+          id: 1,
+          method: "forwardCDPCommand",
+          params: {
+            method: "DevBrowser.groupTarget",
+            params: { targetId: "target-1", groupTitle: "DNS records" },
+          },
+        });
+        expect(result).toEqual({ groupId: 11 });
+        expect(group).toHaveBeenCalledWith({
+          tabIds: [123],
+          createProperties: { windowId: 9 },
+        });
+        expect(update).toHaveBeenCalledWith(
+          11,
+          expect.objectContaining({ title: "DNS records" })
+        );
+      } finally {
+        tabs.group = previousGroup;
+        (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = previousTabGroups;
+      }
+    });
+
+    it("reuses a stored group title after the worker restarts", async () => {
+      tabManager.set(123, {
+        sessionId: "session-1",
+        targetId: "target-1",
+        state: "connected",
+      });
+      const known = new Map<number, string>();
+      const group = vi.fn(async (opts: { groupId?: number }) => opts.groupId ?? 11);
+      const update = vi.fn(async (id: number, info: { title?: string }) => {
+        if (info?.title) known.set(id, info.title);
+      });
+      const get = vi.fn(async (id: number) => {
+        const title = known.get(id);
+        if (!title) throw new Error("No tab group");
+        return { id, title };
+      });
+      const tabs = chrome.tabs as typeof chrome.tabs & { group?: typeof group };
+      const previousGroup = tabs.group;
+      const previousTabGroups = (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups;
+      tabs.group = group;
+      (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = { get, update };
+      const command = {
+        id: 1,
+        method: "forwardCDPCommand" as const,
+        params: {
+          method: "DevBrowser.groupTarget",
+          params: { targetId: "target-1", groupTitle: "DNS records" },
+        },
+      };
+      try {
+        await cdpRouter.handleCommand(command);
+        const restarted = new CDPRouter({
+          logger: mockLogger,
+          tabManager,
+          getFocusPolicy: () => focusPolicy,
+        });
+        const result = await restarted.handleCommand({ ...command, id: 2 });
+        expect(result).toEqual({ groupId: 11 });
+        expect(group).toHaveBeenLastCalledWith({ tabIds: [123], groupId: 11 });
+      } finally {
+        tabs.group = previousGroup;
+        (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = previousTabGroups;
+      }
+    });
   });
 });

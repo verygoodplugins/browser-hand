@@ -7,6 +7,8 @@ import type { TabManager } from "./TabManager";
 import { normalizeGroupTitle, pickTabGroupColor, planTabGroup } from "./tab-group";
 import type { ExtensionCommandMessage, FocusPolicy, TabInfo } from "../utils/types";
 
+const GROUP_STORAGE_KEY = "browserHandTabGroup";
+
 export interface CDPRouterDeps {
   logger: Logger;
   tabManager: TabManager;
@@ -82,11 +84,56 @@ export class CDPRouter {
    * A groupTitle that differs from the current group starts a new session.
    * No title joins the current group. The first group is titled "Browser Hand".
    */
+  private groupStorage(): chrome.storage.StorageArea | null {
+    try {
+      return chrome.storage?.session || chrome.storage?.local || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async recallGroup(): Promise<void> {
+    if (this.browserHandGroupId !== null) return;
+    const area = this.groupStorage();
+    if (!area) return;
+    let stored: { groupId?: unknown; title?: unknown } | undefined;
+    try {
+      const bag = await area.get(GROUP_STORAGE_KEY);
+      stored = bag?.[GROUP_STORAGE_KEY] as { groupId?: unknown; title?: unknown } | undefined;
+    } catch {
+      return;
+    }
+    if (!stored || typeof stored.groupId !== "number" || typeof stored.title !== "string") return;
+    try {
+      const group = await chrome.tabGroups.get(stored.groupId);
+      const liveTitle =
+        typeof group.title === "string" && group.title.trim() ? group.title.trim() : stored.title;
+      this.browserHandGroupId = stored.groupId;
+      this.browserHandGroupTitle = liveTitle;
+    } catch {
+      this.browserHandGroupId = null;
+      this.browserHandGroupTitle = null;
+    }
+  }
+
+  private async rememberGroup(groupId: number, title: string): Promise<void> {
+    this.browserHandGroupId = groupId;
+    this.browserHandGroupTitle = title;
+    const area = this.groupStorage();
+    if (!area) return;
+    try {
+      await area.set({ [GROUP_STORAGE_KEY]: { groupId, title } });
+    } catch {
+      /* storage is optional in unit tests */
+    }
+  }
+
   private async getOrCreateBrowserHandGroup(
     tabId: number,
     requestedTitle?: string | null
   ): Promise<number> {
     const requested = normalizeGroupTitle(requestedTitle);
+    await this.recallGroup();
     let currentTitle = this.browserHandGroupTitle;
     if (this.browserHandGroupId !== null) {
       try {
@@ -105,7 +152,7 @@ export class CDPRouter {
       const cachedGroupId = this.browserHandGroupId;
       try {
         await chrome.tabs.group({ tabIds: [tabId], groupId: cachedGroupId });
-        this.browserHandGroupTitle = plan.title;
+        await this.rememberGroup(cachedGroupId, plan.title);
         return cachedGroupId;
       } catch (err) {
         // get() can succeed and group() still reject: the group vanished, or
@@ -116,14 +163,35 @@ export class CDPRouter {
       }
     }
 
-    const groupId = await chrome.tabs.group({ tabIds: [tabId] });
+    let windowId: number | undefined;
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (typeof tab.windowId === "number") windowId = tab.windowId;
+    } catch {
+      windowId = undefined;
+    }
+    const groupId = await chrome.tabs.group({
+      tabIds: [tabId],
+      ...(windowId != null ? { createProperties: { windowId } } : {}),
+    });
     await chrome.tabGroups.update(groupId, {
       title: plan.title,
       color: pickTabGroupColor(),
     });
-    this.browserHandGroupId = groupId;
-    this.browserHandGroupTitle = plan.title;
+    await this.rememberGroup(groupId, plan.title);
     return groupId;
+  }
+
+  /**
+   * Group a tab that already exists. A title that differs from the current
+   * group starts a new one. Reuse failures fall through to that new group
+   * instead of failing the goto.
+   */
+  private async groupExistingTarget(
+    tabId: number,
+    requestedTitle?: string | null
+  ): Promise<number> {
+    return this.getOrCreateBrowserHandGroup(tabId, requestedTitle);
   }
 
   /**
@@ -208,6 +276,17 @@ export class CDPRouter {
       case "DevBrowser.listTargets": {
         const targetInfos = await this.tabManager.listTargets();
         return { targetInfos };
+      }
+
+      case "DevBrowser.groupTarget": {
+        const params = (msg.params.params || {}) as { targetId?: string; groupTitle?: string };
+        const targetId = typeof params.targetId === "string" ? params.targetId : "";
+        const found = targetId ? this.tabManager.getByTargetId(targetId) : undefined;
+        if (!found?.tabId) {
+          throw new Error(`No tab for group target ${targetId}`);
+        }
+        const groupId = await this.groupExistingTarget(found.tabId, params.groupTitle);
+        return { groupId };
       }
 
       case "Runtime.enable":

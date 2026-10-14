@@ -14,6 +14,7 @@ import {
   findAdoptTarget,
   namedPageNotFoundMessage,
   planCurrentTargetAccess,
+  existingTargetGroupCommand,
   resolveNamedPageInfo,
   samePageUrl,
   openNeedsNavigation,
@@ -165,6 +166,33 @@ test("open forwards an optional group title and ignores a blank one", async () =
     lookupPage: async () => null,
   });
   assert.equal(plain.groupTitle, undefined);
+});
+
+test("goto without pageName groups the existing http tab", () => {
+  const targets = [{ type: "page", url: "https://dash.example/dns", targetId: "tab-1" }];
+  const plan = planCurrentTargetAccess({ operation: "goto", targets });
+  assert.equal(plan.source, "existing_target");
+  assert.deepEqual(
+    existingTargetGroupCommand({
+      operation: "goto",
+      source: plan.source,
+      groupTitle: "  DNS records  ",
+      targetId: "tab-1",
+    }),
+    {
+      method: "DevBrowser.groupTarget",
+      params: { targetId: "tab-1", groupTitle: "DNS records" },
+    }
+  );
+  assert.equal(
+    existingTargetGroupCommand({
+      operation: "goto",
+      source: plan.source,
+      groupTitle: "   ",
+      targetId: "tab-1",
+    }),
+    null
+  );
 });
 
 test("open forwards the caller timeout into page bootstrap", async () => {
