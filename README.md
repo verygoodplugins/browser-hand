@@ -26,6 +26,7 @@ Browser Hand takes a different route: a small **Chrome extension** bridges your 
 - **Real sessions** — use the Chrome profile you already use (cookies, passkeys, extensions, open tabs).
 - **Background-first** — open and automate tabs without stealing OS focus; optional one-shot focus only when a human must look (2FA, captcha, confirm).
 - **Agent-shaped CLI** — `tabs`, `doctor`, named pages, snapshot, fill, click, type, evaluate, screenshot — JSON out, logs on stderr.
+- **Named tab groups.** `--group-title` puts the tabs for one task in a Chrome group with that name and a color. A different title starts a new group.
 - **Hard pages** — soft recovery when password managers detach the debugger; scripting fallback; shadow DOM / iframe pierce; human-like pointer and contenteditable input.
 - **Agent gym** — local challenge pages under `extension/challenges/` built to exercise agent failure modes (labels, modals, SPA routes, username fields), not just “click the demo button once.”
 - **Optional headless** — upstream sandboxed QuickJS + Playwright CLI when you want CI or a clean browser, not your daily profile.
@@ -76,11 +77,15 @@ Removes legacy skill aliases named `dev-browser` and prints how to remove an old
 browser-hand tabs
 browser-hand snapshot                  # unique-active tab (last-focused when stamped)
 browser-hand snapshot --query stripe
-browser-hand open --url https://example.com --page-name demo
+browser-hand open --url https://example.com --page-name demo --group-title "DNS records"
 browser-hand snapshot --page-name demo
 browser-hand click --page-name demo --text "More information..."
 browser-hand screenshot --page-name demo
 ```
+
+The first `open` of a task can name the Chrome tab group. Later opens with the same title join that group. A different title starts a new group and a new color. Leave the flag off and the group stays named Browser Hand.
+
+![Chrome tab group titled DNS records, holding the Example Domain and Example Domains tabs](docs/img/tab-group-title.png)
 
 Live smoke (uses your real Chrome):
 

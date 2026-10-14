@@ -6,8 +6,30 @@ on:
       - 'v*'
 
 jobs:
+  release-plan:
+    name: Decide publish path
+    runs-on: ubuntu-latest
+    outputs:
+      publish_npm: ${{ steps.check.outputs.publish_npm }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" = "$pkg" ]; then
+            echo "publish_npm=true" >> "$GITHUB_OUTPUT"
+            echo "Tag v$tag matches package.json. Publishing the headless package."
+          else
+            echo "publish_npm=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v$tag does not match package.json $pkg. Skipping the headless npm publish and binary build."
+          fi
+
   build-daemon:
     name: Build Daemon Bundles
+    needs: release-plan
+    if: needs.release-plan.outputs.publish_npm == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
