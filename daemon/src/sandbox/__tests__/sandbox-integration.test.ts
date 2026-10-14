@@ -95,7 +95,7 @@ describe.sequential("QuickJS sandbox integration", () => {
       }
     );
 
-    expect(output.stdout.join("")).toContain("Example Domain");
+    expect(output.stdout.join("")).toContain("documentation examples");
   }, 120_000);
 
   it("supports page.evaluate", async () => {
