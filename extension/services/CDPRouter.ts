@@ -102,9 +102,18 @@ export class CDPRouter {
 
     const plan = planTabGroup(currentTitle, requested);
     if (plan.reuse && this.browserHandGroupId !== null) {
-      await chrome.tabs.group({ tabIds: [tabId], groupId: this.browserHandGroupId });
-      this.browserHandGroupTitle = plan.title;
-      return this.browserHandGroupId;
+      const cachedGroupId = this.browserHandGroupId;
+      try {
+        await chrome.tabs.group({ tabIds: [tabId], groupId: cachedGroupId });
+        this.browserHandGroupTitle = plan.title;
+        return cachedGroupId;
+      } catch (err) {
+        // get() can succeed and group() still reject: the group vanished, or
+        // the new tab is in a window that cannot reuse this group id.
+        this.logger.debug("Cached tab group cannot be reused; creating a replacement", err);
+        this.browserHandGroupId = null;
+        this.browserHandGroupTitle = null;
+      }
     }
 
     const groupId = await chrome.tabs.group({ tabIds: [tabId] });
