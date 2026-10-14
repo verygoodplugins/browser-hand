@@ -27,7 +27,7 @@ Inspired by SM64 cartoon gloves. Not Mario, not Boo, not a Nintendo asset.
 | README / docs mark on light or dark | `derived/mark-transparent-512.png` (or 1024) | alpha PNG |
 | Future / retina | `derived/extension/icon-{256,512}.png` | 256 / 512 |
 
-Toolbar icons follow the Evernote pattern: **PNG with full transparency**, no circular plate, mark filling the square (their elephant is ~84% wide and edge-to-edge tall; corners are `(0,0,0,0)`). Chrome squircle-masks the canvas; the toolbar shows through the alpha. A thin ink outline keeps the bone-white glove readable on a light bar. Active status is a **green dot on the icon** — Chrome badges cannot be a circle.
+Toolbar icons are a **PNG with full transparency**, no circular plate. The crop is the solid glove; the wrist mist and smoke are left out so the glove fills the square. Chrome squircle-masks the canvas; the toolbar shows through the alpha. A thin ink outline keeps the bone-white glove readable on a light bar. Active status is a **green dot painted over the corner** — Chrome badges cannot be a circle.
 
 Not selling, so no Chrome Web Store promo tiles (440×280 / 1400×560). Re-derive from masters if that ever changes.
 
