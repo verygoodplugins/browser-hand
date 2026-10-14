@@ -107,6 +107,7 @@ function matches(node, sel) {
   if (sel === '[role="navigation"]') return node.getAttribute("role") === "navigation";
   if (sel === "h1, h2, h3" || sel === "h1,h2,h3") return ["H1", "H2", "H3"].includes(node.tagName);
   if (sel === "label") return node.tagName === "LABEL";
+  if (sel === "*") return true;
   const simple = sel.match(/^[a-z]+$/);
   return Boolean(simple) && node.tagName === sel.toUpperCase();
 }
@@ -338,6 +339,9 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   const button = el("button", { text: "Save" });
   assert.equal(controlStateChanged(readControlState(button), readControlState(button)), null);
   assert.equal(implicitAriaRole(el("input", { type: "checkbox" })), "checkbox");
+  assert.equal(implicitAriaRole(el("input", { type: "range" })), "slider");
+  assert.equal(implicitAriaRole(el("input", { type: "number" })), "spinbutton");
+  assert.equal(implicitAriaRole(el("select", { multiple: "" })), "listbox");
 
   const secret = el("input", {
     type: "password",
@@ -347,6 +351,25 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   const hidden = readControlState(secret);
   assert.equal(hidden.value, undefined);
   assert.equal(JSON.stringify(hidden).includes("test-only-secret"), false);
+});
+
+test("shadow controls inside nav stay out of the default snapshot", () => {
+  const inbox = el("button", { text: "Inbox" });
+  const host = el("x-nav", {});
+  host.shadowRoot = { querySelectorAll: () => [inbox] };
+  inbox.parent = host;
+  const body = el("body", {}, [el("nav", {}, [host]), el("button", { text: "Save" })]);
+  const doc = {
+    body,
+    title: "App",
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.equal(
+    payload.nodes.some((node) => node.name === "Inbox"),
+    false
+  );
+  assert.ok(payload.nodes.some((node) => node.name === "Save"));
 });
 
 test("injected snapshot helpers define the selectors they close over", () => {

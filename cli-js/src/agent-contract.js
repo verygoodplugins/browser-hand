@@ -98,7 +98,18 @@ export function implicitAriaRole(el) {
   if (tag === "button" || tag === "summary") return "button";
   if (tag === "a") return attr(el, "href") ? "link" : "";
   if (tag === "textarea") return "textbox";
-  if (tag === "select") return "combobox";
+  if (tag === "select") {
+    let multiple = false;
+    try {
+      if (el && typeof el.hasAttribute === "function") multiple = el.hasAttribute("multiple");
+      else if (el && typeof el.getAttribute === "function") multiple = el.getAttribute("multiple") != null;
+    } catch {
+      multiple = false;
+    }
+    const size = Number(attr(el, "size"));
+    if (multiple || (Number.isFinite(size) && size > 1)) return "listbox";
+    return "combobox";
+  }
   if (tag === "option") return "option";
   if (attr(el, "contenteditable") === "true") return "textbox";
   if (tag === "input") {
@@ -108,6 +119,8 @@ export function implicitAriaRole(el) {
     if (type === "radio") return "radio";
     if (type === "button" || type === "submit" || type === "reset") return "button";
     if (type === "search") return "searchbox";
+    if (type === "range") return "slider";
+    if (type === "number") return "spinbutton";
     return "textbox";
   }
   return "";
@@ -244,7 +257,9 @@ function pushEntry(out, seen, el, root, includeNav, refOffset = 0) {
   if (!el || seen.has(el) || out.length >= MAX_SNAPSHOT_NODES) return;
   if (!includeNav && inNavigation(el)) return;
   const role = implicitAriaRole(el);
-  if (!role || role === "listbox" || role === "menu" || role === "navigation") return;
+  const tag = String((el && el.tagName) || "").toLowerCase();
+  if (!role || role === "navigation") return;
+  if ((role === "listbox" || role === "menu") && tag !== "select") return;
   seen.add(el);
   const name = snapshotAccessibleName(el, root);
   const state = readControlState(el);
@@ -305,7 +320,12 @@ export function collectSnapshotEntries(doc, options = {}) {
       hosts = [];
     }
     for (const host of hosts) {
-      if (host && host.shadowRoot) walk(host.shadowRoot, depth + 1);
+      if (host && host.shadowRoot) {
+        // closest() stops at the shadow boundary, so a control inside a
+        // nav's web component would otherwise look like page content.
+        if (!includeNav && inNavigation(host)) continue;
+        walk(host.shadowRoot, depth + 1);
+      }
     }
     let frames = [];
     try {
