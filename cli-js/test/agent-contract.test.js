@@ -342,7 +342,9 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   assert.equal(implicitAriaRole(el("input", { type: "checkbox" })), "checkbox");
   assert.equal(implicitAriaRole(el("input", { type: "range" })), "slider");
   assert.equal(implicitAriaRole(el("input", { type: "number" })), "spinbutton");
+  assert.equal(implicitAriaRole(el("select")), "combobox");
   assert.equal(implicitAriaRole(el("select", { multiple: "" })), "listbox");
+  assert.equal(implicitAriaRole(el("select", { size: "4" })), "listbox");
 
   const secret = el("input", {
     type: "password",
@@ -469,6 +471,24 @@ test("shadow controls inside nav stay out of the default snapshot", () => {
   assert.ok(payload.nodes.some((node) => node.name === "Save"));
 });
 
+test("native listbox and slider controls stay in the snapshot", () => {
+  const many = el("select", { multiple: "", "aria-label": "Many" });
+  const volume = el("input", { type: "range", "aria-label": "Volume" });
+  const body = el("main", {}, [many, volume, el("div", { role: "listbox" }, [el("div", { role: "option", text: "A" })])]);
+  const doc = {
+    body,
+    title: "Form",
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.equal(payload.nodes.find((node) => node.name === "Many").role, "listbox");
+  assert.equal(payload.nodes.find((node) => node.name === "Volume").role, "slider");
+  assert.equal(
+    payload.nodes.some((node) => node.role === "listbox" && node.name !== "Many"),
+    false
+  );
+});
+
 test("injected snapshot helpers define the selectors they close over", () => {
   const context = vm.createContext({
     document: {
@@ -528,4 +548,42 @@ test("role and ref clicks use the default snapshot refs", () => {
   assert.match(byRef, call);
   assert.doesNotMatch(byRole, /collectSnapshotEntries\(document, \{ includeNav: true/);
   assert.doesNotMatch(byRef, /collectSnapshotEntries\(document, \{ includeNav: true/);
+  assert.match(byRole, /visibleIn\(el, frameOk\)/);
+  assert.match(byRef, /visibleIn\(el, frameOk\)/);
+});
+
+test("role and ref clicks refuse a control elementIsVisible accepts under an overlay", () => {
+  const save = el("button", { text: "Save" });
+  save.getBoundingClientRect = () => ({ left: 10, top: 10, width: 40, height: 20 });
+  save.checkVisibility = () => false;
+  save.dispatchEvent = () => {
+    throw new Error("dispatched through the overlay");
+  };
+  save.scrollIntoView = () => {};
+  const body = el("main", {}, [save]);
+  const view = {
+    innerWidth: 800,
+    innerHeight: 600,
+    frameElement: null,
+    getComputedStyle: () => ({
+      display: "block",
+      visibility: "visible",
+      pointerEvents: "auto",
+      opacity: "1",
+    }),
+  };
+  const doc = {
+    body,
+    title: "Form",
+    visibilityState: "visible",
+    defaultView: view,
+    elementFromPoint: () => save,
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  save.ownerDocument = doc;
+  const context = vm.createContext({ document: doc, window: view });
+  const result = vm.runInContext(buildClickExpression({ role: "button", name: "Save" }), context);
+  assert.equal(result.found, false);
+  assert.equal(result.candidateCount, 1);
+  assert.equal(result.query, "button Save");
 });

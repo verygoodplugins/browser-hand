@@ -3185,6 +3185,27 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
           documentHidden: document.visibilityState === "hidden",
         };
       }
+      // elementIsVisible only checks this node's display and box, so a control
+      // under an overlay or inside a hidden iframe still gets collected. Text
+      // clicks already refuse those via visibleIn; role/ref must do the same
+      // before dispatchEvent, which fires by reference through the cover.
+      if (el) {
+        let frameOk = true;
+        try {
+          const frame = el.ownerDocument && el.ownerDocument.defaultView && el.ownerDocument.defaultView.frameElement;
+          if (frame) frameOk = visibleIn(frame, true);
+        } catch (err) {
+          frameOk = false;
+        }
+        if (!visibleIn(el, frameOk)) {
+          return {
+            found: false,
+            query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
+            candidateCount: 1,
+            documentHidden: document.visibilityState === "hidden",
+          };
+        }
+      }
     }
     if (!el && selector) {
       for (const entry of roots) {

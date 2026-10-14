@@ -286,6 +286,8 @@ function pushEntry(out, seen, el, root, includeNav, refOffset = 0) {
   const role = implicitAriaRole(el);
   const tag = String((el && el.tagName) || "").toLowerCase();
   if (!role || role === "navigation") return;
+  // Skip listbox/menu containers so their options are the click targets.
+  // A native <select multiple> is itself the listbox and must stay.
   if ((role === "listbox" || role === "menu") && tag !== "select") return;
   seen.add(el);
   const name = snapshotAccessibleName(el, root);
