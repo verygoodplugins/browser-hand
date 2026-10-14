@@ -107,6 +107,45 @@ def glove_bbox(
     return (min_x, min_y, max_x, max_y)
 
 
+def is_cyan_mist(r: int, g: int, b: int, a: int) -> bool:
+    """Wrist mist is cyan. The bone glove is not.
+
+    Green and blue both sit above red. Cool glove highlights lift blue
+    while green stays near red, so those pixels stay. Dark tendrils and
+    faint specks keep the same bias with smaller gaps.
+    """
+    if a < 8 or g < r or b <= r:
+        return False
+    gap_g = g - r
+    gap_b = b - r
+    lum = (r + g + b) / 3
+    if gap_g >= 18 and gap_b >= 24:
+        return True
+    if lum < 130 and gap_g >= 6 and gap_b >= 10:
+        if gap_g / max(r, 1) >= 0.15 and gap_b / max(r, 1) >= 0.22:
+            return True
+    if lum < 55 and gap_g >= 4 and gap_b >= 6:
+        return True
+    return False
+
+
+def clear_mist_in_bbox(im: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
+    """Drop cyan mist that overlaps the glove rectangle.
+
+    The rectangle still contains mist wrapped around the cuff. Leaving
+    those pixels in the crop enlarges them into a wrist trail.
+    """
+    out = im.copy()
+    px = out.load()
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            r, g, b, a = px[x, y]
+            if is_cyan_mist(r, g, b, a):
+                px[x, y] = (0, 0, 0, 0)
+    return out
+
+
 def with_outline(src: Image.Image, width: int) -> Image.Image:
     """Dark silhouette ring so a bone-white mark reads on a light toolbar."""
     if width <= 0:
@@ -142,7 +181,8 @@ def add_status_dot(icon: Image.Image, size: int) -> Image.Image:
 
 def transparent_icon(glove: Image.Image, size: int, status_dot: bool) -> Image.Image:
     """Glove fills the square. The status dot is painted on top and may cover it."""
-    cropped = glove.crop(glove_bbox(glove))
+    box = glove_bbox(glove)
+    cropped = clear_mist_in_bbox(glove, box).crop(box)
     long_side = max(cropped.width, cropped.height)
     scale = size / long_side
     new_w = max(1, round(cropped.width * scale))
