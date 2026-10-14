@@ -689,6 +689,20 @@ test("cli accepts snapshot scope, doctor verbose, and click handles", () => {
     steps: JSON.stringify([{ op: "click", role: "button", name: "Save" }]),
   });
   assert.equal(steps.steps[0].name, "Save");
+
+  const titled = buildHandlerInput("open", {
+    url: "https://example.com/dns",
+    "page-name": "dns",
+    "group-title": "  DNS records  ",
+  });
+  assert.equal(titled.groupTitle, "DNS records");
+  const plain = buildHandlerInput("open", { url: "https://example.com" });
+  assert.equal(plain.groupTitle, undefined);
+  const blank = buildHandlerInput("goto", {
+    url: "https://example.com/next",
+    "group-title": "   ",
+  });
+  assert.equal(blank.groupTitle, undefined);
 });
 
 test("quiet snapshot drops the repeated page wrapper", () => {

@@ -514,7 +514,7 @@ async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   }
 }
 
-async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url } = {}) {
+async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url, groupTitle } = {}) {
   if (!pageName || typeof pageName !== "string") {
     throw new Error("pageName is required for named-page bootstrap");
   }
@@ -524,6 +524,9 @@ async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url }
   }
   if (typeof url === "string" && url.trim() && !isBlankUrl(url)) {
     body.url = url.trim();
+  }
+  if (typeof groupTitle === "string" && groupTitle.trim()) {
+    body.groupTitle = groupTitle.trim();
   }
   return await fetchJson(relayPageEndpoint(), {
     method: "POST",
@@ -653,6 +656,17 @@ export function planCurrentTargetAccess({ operation, pageName, targets = [] }) {
   return { source: "existing_target", createsTab: false };
 }
 
+export function existingTargetGroupCommand({ operation, source, groupTitle, targetId } = {}) {
+  if (source !== "existing_target") return null;
+  if (operation !== "goto" && operation !== "open") return null;
+  const title = typeof groupTitle === "string" ? groupTitle.trim() : "";
+  if (!title || !targetId) return null;
+  return {
+    method: "DevBrowser.groupTarget",
+    params: { targetId, groupTitle: title },
+  };
+}
+
 function normalizePageUrl(url) {
   const raw = String(url || "");
   try {
@@ -726,6 +740,7 @@ export async function resolveNamedPageInfo({
   plan,
   pageName,
   url,
+  groupTitle,
   targets = [],
   timeoutMs,
   openPage,
@@ -739,6 +754,9 @@ export async function resolveNamedPageInfo({
     return openPage(pageName, {
       ...(adopt?.targetId ? { targetId: adopt.targetId } : {}),
       ...(url ? { url } : {}),
+      ...(typeof groupTitle === "string" && groupTitle.trim()
+        ? { groupTitle: groupTitle.trim() }
+        : {}),
       ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
     });
   }
@@ -1223,6 +1241,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
       plan,
       pageName: plan.pageName,
       url: input.url,
+      groupTitle: input.groupTitle,
       targets,
       timeoutMs,
       openPage: (name, options) => openNamedRelayPage(name, options),
@@ -1316,10 +1335,20 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
       return Boolean(await evalValue(cdp, sessionId, "(() => document.hasFocus())()"));
     },
   });
+  const sessionId = await attachTarget(cdp, selected.targetId);
+  const groupCommand = existingTargetGroupCommand({
+    operation,
+    source: plan.source,
+    groupTitle: input.groupTitle,
+    targetId: selected.targetId,
+  });
+  if (groupCommand) {
+    await cdp.send(groupCommand.method, groupCommand.params);
+  }
   return {
     plan,
     selected,
-    sessionId: await attachTarget(cdp, selected.targetId),
+    sessionId,
     created: false,
   };
 }

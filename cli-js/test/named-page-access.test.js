@@ -14,6 +14,7 @@ import {
   findAdoptTarget,
   namedPageNotFoundMessage,
   planCurrentTargetAccess,
+  existingTargetGroupCommand,
   resolveNamedPageInfo,
   samePageUrl,
   openNeedsNavigation,
@@ -142,6 +143,56 @@ test("open resolves through the create-or-adopt endpoint", async () => {
     targetId: "tab-point",
     url: "https://point.me/search",
   });
+});
+
+test("open forwards an optional group title and ignores a blank one", async () => {
+  const plan = planCurrentTargetAccess({ operation: "open", pageName: "dns" });
+  const titled = await resolveNamedPageInfo({
+    plan,
+    pageName: "dns",
+    url: "https://dash.example/dns",
+    groupTitle: "  DNS records  ",
+    openPage: async (_name, options) => options,
+    lookupPage: async () => null,
+  });
+  assert.equal(titled.groupTitle, "DNS records");
+
+  const plain = await resolveNamedPageInfo({
+    plan,
+    pageName: "dns",
+    url: "https://dash.example/dns",
+    groupTitle: "   ",
+    openPage: async (_name, options) => options,
+    lookupPage: async () => null,
+  });
+  assert.equal(plain.groupTitle, undefined);
+});
+
+test("goto without pageName groups the existing http tab", () => {
+  const targets = [{ type: "page", url: "https://dash.example/dns", targetId: "tab-1" }];
+  const plan = planCurrentTargetAccess({ operation: "goto", targets });
+  assert.equal(plan.source, "existing_target");
+  assert.deepEqual(
+    existingTargetGroupCommand({
+      operation: "goto",
+      source: plan.source,
+      groupTitle: "  DNS records  ",
+      targetId: "tab-1",
+    }),
+    {
+      method: "DevBrowser.groupTarget",
+      params: { targetId: "tab-1", groupTitle: "DNS records" },
+    }
+  );
+  assert.equal(
+    existingTargetGroupCommand({
+      operation: "goto",
+      source: plan.source,
+      groupTitle: "   ",
+      targetId: "tab-1",
+    }),
+    null
+  );
 });
 
 test("open forwards the caller timeout into page bootstrap", async () => {
