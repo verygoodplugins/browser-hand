@@ -71,6 +71,42 @@ def opaque_bbox(im: Image.Image, min_alpha: int = 24) -> tuple[int, int, int, in
     return (min_x, min_y, max_x + 1, max_y + 1)
 
 
+def glove_bbox(
+    im: Image.Image,
+    min_lum: int = 140,
+    min_row: int = 40,
+    pad: int = 8,
+) -> tuple[int, int, int, int]:
+    """Bounding box of the solid glove.
+
+    The wrist mist and smoke are faint rows under the cuff. Counting them
+    makes the crop tall, so the glove is scaled down to fit the trail.
+    A row counts only when it has a solid run of bright pixels.
+    """
+    rgba = im.convert("RGBA")
+    px = rgba.load()
+    w, h = rgba.size
+    rows: list[tuple[int, int, int]] = []
+    for y in range(h):
+        xs: list[int] = []
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a < 24:
+                continue
+            if (r + g + b) / 3 < min_lum:
+                continue
+            xs.append(x)
+        if len(xs) >= min_row:
+            rows.append((y, min(xs), max(xs)))
+    if not rows:
+        return opaque_bbox(im)
+    min_x = max(0, min(row[1] for row in rows) - pad)
+    max_x = min(w, max(row[2] for row in rows) + 1 + pad)
+    min_y = max(0, rows[0][0] - pad)
+    max_y = min(h, rows[-1][0] + 1 + pad)
+    return (min_x, min_y, max_x, max_y)
+
+
 def with_outline(src: Image.Image, width: int) -> Image.Image:
     """Dark silhouette ring so a bone-white mark reads on a light toolbar."""
     if width <= 0:
@@ -105,15 +141,16 @@ def add_status_dot(icon: Image.Image, size: int) -> Image.Image:
 
 
 def transparent_icon(glove: Image.Image, size: int, status_dot: bool) -> Image.Image:
-    """Evernote-style: mark only, full alpha, fill the square."""
-    cropped = glove.crop(opaque_bbox(glove))
-    # Evernote 38px fills ~84% width and ~100% height. Match that: fill the
-    # canvas on the long axis, keep a 1px gutter so Chrome's squircle doesn't clip.
-    gutter = 1 if size <= 32 else 2
-    box = max(1, size - 2 * gutter)
-    scale = min(box / cropped.width, box / cropped.height)
-    new_w = max(1, int(cropped.width * scale))
-    new_h = max(1, int(cropped.height * scale))
+    """Glove fills the square. The status dot is painted on top and may cover it."""
+    cropped = glove.crop(glove_bbox(glove))
+    long_side = max(cropped.width, cropped.height)
+    scale = size / long_side
+    new_w = max(1, round(cropped.width * scale))
+    new_h = max(1, round(cropped.height * scale))
+    if cropped.width >= cropped.height:
+        new_w = size
+    else:
+        new_h = size
     fitted = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
     outlined = with_outline(fitted, width=1 if size <= 32 else 2)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
