@@ -109,6 +109,10 @@ function matches(node, sel) {
   if (sel === "h1, h2, h3" || sel === "h1,h2,h3") return ["H1", "H2", "H3"].includes(node.tagName);
   if (sel === "label") return node.tagName === "LABEL";
   if (sel === "*") return true;
+  if (sel.startsWith(".") && !sel.includes(" ")) {
+    const className = String(node.getAttribute("class") || "");
+    return className.split(/\s+/).includes(sel.slice(1));
+  }
   const simple = sel.match(/^[a-z]+$/);
   return Boolean(simple) && node.tagName === sel.toUpperCase();
 }
@@ -487,6 +491,22 @@ test("native listbox and slider controls stay in the snapshot", () => {
     payload.nodes.some((node) => node.role === "listbox" && node.name !== "Many"),
     false
   );
+});
+
+test("scoped snapshot keeps visible alerts", () => {
+  const body = el("main", {}, [
+    el("button", { text: "Save" }),
+    el("div", { role: "alert", text: "Card declined" }),
+    el("p", { class: "error", text: "Name is required" }),
+    el("div", { role: "alert", hidden: "", text: "Hidden" }),
+  ]);
+  const doc = {
+    body,
+    title: "Pay",
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.deepEqual(payload.alerts, ["Card declined", "Name is required"]);
 });
 
 test("injected snapshot helpers define the selectors they close over", () => {
