@@ -12,10 +12,10 @@ license: MIT
 compatibility: Requires local Chrome with the Browser Hand extension and relay.
 category: browser
 tags: [browser, chrome, extension, automation, authenticated-sessions, agent]
-agents: [claude-code, codex, grok]
+agents: [claude-code, codex, grok, cursor]
 metadata:
   author: verygoodplugins
-  version: "0.6.1"
+  version: "0.7.2"
 resources:
   - path: references/setup.md
     type: file
@@ -83,14 +83,14 @@ Details: `references/setup.md`.
 browser-hand doctor
 browser-hand tabs
 browser-hand tabs --query stripe
-browser-hand snapshot
-browser-hand snapshot --query stripe
-browser-hand open --url https://example.com --page-name work
-browser-hand snapshot --page-name work
-browser-hand fill --page-name work --fields '{"Email":"a@b.c"}'
-browser-hand click --page-name work --text "Submit"
+browser-hand open --url https://example.com --page-name work --group-title "DNS records"
+browser-hand snapshot --page-name work --quiet
+browser-hand click --page-name work --role button --name "Submit" --quiet
+browser-hand click --page-name work --ref e12 --quiet
+browser-hand fill --page-name work --fields '{"Email":"a@b.c"}' --quiet
+browser-hand steps --page-name work --quiet --steps '[{"op":"click","role":"combobox","name":"Type"},{"op":"fill","fields":{"Name":"www"}}]'
 browser-hand type --page-name work --label "Bio" --text "Hello"
-browser-hand evaluate --page-name work --code 'document.title'
+browser-hand evaluate --page-name work --code 'document.title' --quiet
 browser-hand screenshot --page-name work
 ```
 
@@ -99,12 +99,18 @@ Full reference: `references/extension-cli.md`.
 ## Agent rules
 
 - Prefer **named pages** (`--page-name`) for multi-step work.
-- To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`. Do **not** use `doctor` as a tab list — it is a health check.
-- Use `tabs --query <text>` or `snapshot --query <text>` instead of grepping a dumped doctor file.
-- **Do not** request window focus for ordinary fill/click/snapshot. Only use `focus --focus window --reason "…"` when a human must act (2FA, captcha, confirm).
-- Fill from `snapshot.forms` (label, type, name). `controls` with `region: "nav"` are menus, not fields.
-- Snapshot or screenshot **before and after** writes; verify with evaluate when critical.
-- After `fill`, read `result.failed`. `success: true` means every key was written. A visible label is the right key (`"Name"`), not the input's name attribute.
+- On the first `open` of a task, pass `--group-title` with a few words ("DNS records", "Invoice review"). That names the Chrome tab group and gives it a color. Later commands in the same task omit it and join that group. A different title starts a new group. Leaving it off keeps the group named Browser Hand.
+- Pass **`--quiet`** on snapshot, click, fill, evaluate, and steps. It drops the repeated `mode` / `target` / `url` / `title` wrapper.
+- `doctor` returns `status`, `tabCount`, and the active tab. It is a health check. Use `tabs` for the inventory. `doctor --verbose` is only for diagnosing target selection.
+- To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`.
+- Default snapshot is the open dialog (and an open listbox or menu) plus the main landmark. Read `snapshot.nodes`: `ref`, `role`, `name`, and `value` / `ariaChecked`. Nav is omitted. `--scope full` adds `nav` and page text. `--scope nav` is the landmark only.
+- Click with `--ref` from that snapshot, or `--role` and `--name` (exact). `--text "A"` is ambiguous when the same string is both a value and a label. `--selector` remains for CSS.
+- A repeated form is one `steps` call: click, fill, click, then evaluate the new row. Stop at the first miss (`failedAt`).
+- Click returns `result.state` and, for toggles and fields, `stateChanged`. `success: true` means the pointer sequence was dispatched. `documentHidden: true` or `stateChanged: false` on a switch means it may not have landed.
+- Click does **not** focus the tab or the window. `focus --focus tab` activates the tab and reports `focus.visibilityState`; that can stay `hidden` while the Chrome window is in the background. Only `focus --focus window --reason "…"` makes the document visible, and only when a person must act (2FA, captcha, confirm).
+- Chrome shows "Browser Hand started debugging this browser" when `chrome.debugger.attach` runs. Cancel or X is detach reason `canceled_by_user`. Browser Hand keeps that tab in the session and does not reattach. Later commands on the tab use the scripting transport, so the bar stays dismissed until the extension is reloaded or toggled off and on. Do not focus the window to fight the bar.
+- Fill from `snapshot.nodes` or `snapshot.forms` (label, type, name). A visible label is the right key (`"Name"`), not the input's name attribute.
+- After `fill`, read `result.failed`. `success: true` means every key was written.
 - On username/password manager weirdness, soft recovery is built in — retry evaluate/fill; re-open the named page if screenshot still fails.
 
 ## Optional headless
