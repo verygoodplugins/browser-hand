@@ -583,7 +583,10 @@ export function normalizeSteps(raw) {
   });
 }
 
-function slimStepValue(value) {
+function slimStepValue(step, value) {
+  // Evaluate returns the caller's object. url/title there are the oracle, not
+  // the operation wrapper those keys are on click and fill results.
+  if (step && step.op === "evaluate") return value;
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const drop = new Set(["url", "title", "mode", "operation", "target"]);
   const out = {};
@@ -664,7 +667,7 @@ export async function runStepList(steps, evalFn) {
       op: step.op,
       success: !failed,
       ...(error ? { error } : {}),
-      result: slimStepValue(value),
+      result: slimStepValue(step, value),
     });
     if (failed) {
       return { success: false, failedAt: index, error, steps: results };

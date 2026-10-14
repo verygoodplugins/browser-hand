@@ -3603,32 +3603,35 @@ async function substituteForHeadless(vars) {
   });
 }
 
-async function substituteForCurrent(args) {
+export function currentPlaceholderTree(args = {}) {
   const safeVars =
     args.vars && typeof args.vars === "object" && !Array.isArray(args.vars) ? args.vars : {};
   const safeFields =
     args.fields && typeof args.fields === "object" && !Array.isArray(args.fields)
       ? args.fields
       : {};
-  return await substitutePlaceholders(
-    {
-      vars: safeVars,
-      fields: safeFields,
-      target: args.target || {},
-      selector: args.selector || "",
-      label: args.label || "",
-      text: args.text || "",
-      value: args.value || "",
-      url: args.url || "",
-    },
-    {
-      autofill: autofillData,
-      getSecret: readKeychainSecret,
-      getSecure: readProfileSecret,
-      secretCache,
-      secureCache,
-    }
-  );
+  const tree = {
+    vars: safeVars,
+    fields: safeFields,
+    target: args.target || {},
+    selector: args.selector || "",
+    label: args.label || "",
+    text: args.text || "",
+    value: args.value || "",
+    url: args.url || "",
+  };
+  if (Array.isArray(args.steps)) tree.steps = args.steps;
+  return tree;
+}
+
+async function substituteForCurrent(args) {
+  return await substitutePlaceholders(currentPlaceholderTree(args), {
+    autofill: autofillData,
+    getSecret: readKeychainSecret,
+    getSecure: readProfileSecret,
+    secretCache,
+    secureCache,
+  });
 }
 
 async function substituteAutofillProfileFields(fields) {

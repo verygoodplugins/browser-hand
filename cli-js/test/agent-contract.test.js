@@ -11,7 +11,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildHandlerInput, slimCliResult } from "../src/cli.js";
-import { buildClickExpression, summarizeTabInventory } from "../src/tool.js";
+import { substitutePlaceholders } from "../src/autofill.js";
+import { buildClickExpression, currentPlaceholderTree, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
@@ -550,6 +551,34 @@ test("steps run in one invocation and stop on the first miss", async () => {
   assert.equal(ran.steps[0].result.state.value, "A");
   assert.equal(ran.steps[0].result.url, undefined);
   assert.equal(JSON.stringify(ran).includes("https://dash.example/dns"), false);
+});
+
+test("evaluate step results keep caller url and title fields", async () => {
+  const ran = await runStepList(
+    [{ op: "evaluate", code: "({url: location.href, title: document.title})" }],
+    async () => ({ url: "https://dash.example/dns", title: "DNS", ok: true })
+  );
+  assert.equal(ran.success, true);
+  assert.equal(ran.steps[0].result.url, "https://dash.example/dns");
+  assert.equal(ran.steps[0].result.title, "DNS");
+  assert.equal(ran.steps[0].result.ok, true);
+});
+
+test("step fill and type placeholders are substituted and redacted", async () => {
+  const tree = currentPlaceholderTree({
+    steps: [
+      { op: "fill", fields: { Email: "{me:EMAIL}" } },
+      { op: "type", label: "Card", text: "{secure:CARD}" },
+    ],
+  });
+  const sub = await substitutePlaceholders(tree, {
+    autofill: { EMAIL: "a@b.c" },
+    getSecure: async () => "4242",
+  });
+  assert.equal(sub.vars.steps[0].fields.Email, "a@b.c");
+  assert.equal(sub.vars.steps[1].text, "4242");
+  assert.ok(sub.redactions.includes("a@b.c"));
+  assert.ok(sub.redactions.includes("4242"));
 });
 
 test("normalizeSteps rejects a click that still has no stable handle", () => {
