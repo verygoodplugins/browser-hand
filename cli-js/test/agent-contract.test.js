@@ -12,7 +12,7 @@ import test from "node:test";
 
 import { buildHandlerInput, slimCliResult } from "../src/cli.js";
 import { substitutePlaceholders } from "../src/autofill.js";
-import { buildClickExpression, currentPlaceholderTree, protectStepSources, restoreStepSources, summarizeTabInventory } from "../src/tool.js";
+import { buildClickExpression, currentPlaceholderTree, protectStepSources, redactSensitiveText, restoreStepSources, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
@@ -609,6 +609,23 @@ test("evaluate step source is not placeholder-substituted", async () => {
   assert.equal(sub.vars.steps[0].fields.Email, "a@b.c");
   assert.equal(sub.vars.steps[1].code, original);
   assert.equal(JSON.stringify(sub.vars.steps[1]).includes("o'hare"), false);
+
+  const spaced = "fetch('/log?x={secure:TOKEN}')";
+  const padded = protectStepSources([{ op: " evaluate ", code: spaced }]);
+  const paddedSub = await substitutePlaceholders(currentPlaceholderTree({ steps: padded.steps }), {
+    getSecure: async () => "sekrit-value",
+  });
+  restoreStepSources(paddedSub.vars.steps, padded.codes);
+  assert.equal(paddedSub.vars.steps[0].code, spaced);
+  assert.equal(JSON.stringify(paddedSub.vars.steps[0]).includes("sekrit-value"), false);
+});
+
+test("a later snapshot does not echo a formatted secret", () => {
+  const secret = "4242424242424242";
+  const shown = redactSensitiveText("4242 4242 4242 4242", [secret]);
+  assert.equal(shown.includes("4242"), false);
+  assert.match(shown, /REDACTED/);
+  assert.equal(redactSensitiveText("https://pay.example/checkout", [secret]), "https://pay.example/checkout");
 });
 
 test("step fill and type placeholders are substituted and redacted", async () => {

@@ -92,6 +92,13 @@ export function redactSensitiveText(text, redactions = []) {
     .sort((a, b) => b.length - a.length);
   for (const value of unique) {
     out = out.split(value).join("[REDACTED]");
+    const compact = value.replace(/[^A-Za-z0-9]/g, "");
+    if (compact.length < 6) continue;
+    const pattern = compact
+      .split("")
+      .map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[^A-Za-z0-9]{0,3}");
+    out = out.replace(new RegExp(pattern, "g"), "[REDACTED]");
   }
   return out;
 }
@@ -3609,7 +3616,7 @@ export function protectStepSources(steps) {
   if (!Array.isArray(steps)) return { steps, codes };
   const safe = steps.map((step, index) => {
     if (!step || typeof step !== "object") return step;
-    const op = step.op || step.operation;
+    const op = String(step.op || step.operation || "").trim();
     if (op === "evaluate" && typeof step.code === "string") {
       codes.push([index, step.code]);
       return { ...step, code: "" };
