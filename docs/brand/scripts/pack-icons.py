@@ -71,81 +71,91 @@ def opaque_bbox(im: Image.Image, min_alpha: int = 24) -> tuple[int, int, int, in
     return (min_x, min_y, max_x + 1, max_y + 1)
 
 
-def glove_bbox(
-    im: Image.Image,
-    min_lum: int = 140,
-    min_row: int = 40,
-    pad: int = 8,
-) -> tuple[int, int, int, int]:
-    """Bounding box of the solid glove.
+# Bone of the glove. The cyan plume is bright enough to pass a luminance
+# count, and the inactive smoke is dim. Neither is a solid glove pixel.
+SOLID_MIN_ALPHA = 80
+SOLID_MIN_LUMA = 118
+SOLID_MAX_CHROMA = 36
+SOLID_MIN_RUN = 40
+ISLAND_MIN_RUN = 6
+TRAIL_GAP = 2
 
-    The wrist mist and smoke are faint rows under the cuff. Counting them
-    makes the crop tall, so the glove is scaled down to fit the trail.
-    A row counts only when it has a solid run of bright pixels.
+
+def solid_glove_pixel(r: int, g: int, b: int, a: int) -> bool:
+    if a < SOLID_MIN_ALPHA:
+        return False
+    if (r + g + b) / 3 < SOLID_MIN_LUMA:
+        return False
+    if max(r, g, b) - min(r, g, b) > SOLID_MAX_CHROMA:
+        return False
+    return True
+
+
+def glove_rows(im: Image.Image) -> list[tuple[int, list[tuple[int, int]]]]:
+    """Rows of the solid glove, as inclusive-exclusive x runs.
+
+    A row counts when its longest bone run is the glove. A short island
+    in the plume does not count, so it cannot hold the crop open.
     """
     rgba = im.convert("RGBA")
     px = rgba.load()
     w, h = rgba.size
-    rows: list[tuple[int, int, int]] = []
+    found: list[tuple[int, list[tuple[int, int]]]] = []
     for y in range(h):
-        xs: list[int] = []
-        for x in range(w):
-            r, g, b, a = px[x, y]
-            if a < 24:
-                continue
-            if (r + g + b) / 3 < min_lum:
-                continue
-            xs.append(x)
-        if len(xs) >= min_row:
-            rows.append((y, min(xs), max(xs)))
+        spans: list[tuple[int, int]] = []
+        start: int | None = None
+        for x in range(w + 1):
+            bone = x < w and solid_glove_pixel(*px[x, y])
+            if bone and start is None:
+                start = x
+            elif not bone and start is not None:
+                spans.append((start, x))
+                start = None
+        if not spans or max(b - a for a, b in spans) < SOLID_MIN_RUN:
+            continue
+        kept = [span for span in spans if span[1] - span[0] >= ISLAND_MIN_RUN]
+        if kept:
+            found.append((y, kept))
+    return found
+
+
+def glove_bbox(im: Image.Image, pad: int = 8) -> tuple[int, int, int, int]:
+    """Bounding box of the solid glove, so the crop is not stretched by the trail."""
+    rows = glove_rows(im)
     if not rows:
         return opaque_bbox(im)
-    min_x = max(0, min(row[1] for row in rows) - pad)
-    max_x = min(w, max(row[2] for row in rows) + 1 + pad)
-    min_y = max(0, rows[0][0] - pad)
-    max_y = min(h, rows[-1][0] + 1 + pad)
-    return (min_x, min_y, max_x, max_y)
-
-
-def last_solid_row(
-    im: Image.Image,
-    box: tuple[int, int, int, int],
-    min_lum: int = 140,
-    min_row: int = 40,
-) -> int | None:
-    """Lowest row in the crop that is still the solid glove, not the plume."""
-    px = im.load()
-    x0, _y0, x1, y1 = box
-    for y in range(y1 - 1, _y0 - 1, -1):
-        solid = 0
-        for x in range(x0, x1):
-            r, g, b, a = px[x, y]
-            if a < 24:
-                continue
-            if (r + g + b) / 3 < min_lum:
-                continue
-            solid += 1
-            if solid >= min_row:
-                return y
-    return None
+    xs = [x for _y, spans in rows for a, b in spans for x in (a, b - 1)]
+    ys = [y for y, _spans in rows]
+    w, h = im.size
+    return (
+        max(0, min(xs) - pad),
+        max(0, min(ys) - pad),
+        min(w, max(xs) + 1 + pad),
+        min(h, max(ys) + 1 + pad),
+    )
 
 
 def clear_mist_in_bbox(im: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
-    """Drop the plume that hangs below the wrist inside the glove rectangle.
+    """Drop the trail that hangs below the glove in each column.
 
-    Color matching across the whole crop also deletes the cyan rim on the
-    cuff. The rim sits on the solid glove; the mist and the inactive gray
-    smoke sit in the pad under the last solid row.
+    Fingers reach lower than the wrist, so one horizontal floor keeps the
+    plume beside them. The cyan rim on the cuff stays: it sits on the
+    solid row, and columns with no glove are left alone.
     """
-    floor = last_solid_row(im, box)
-    if floor is None:
-        return im
+    last: dict[int, int] = {}
+    for y, spans in glove_rows(im):
+        for a, b in spans:
+            for x in range(a, b):
+                last[x] = y
     out = im.copy()
     px = out.load()
     x0, _y0, x1, y1 = box
-    for y in range(floor + 1, y1):
-        for x in range(x0, x1):
-            if px[x, y][3] > 0:
+    for x in range(x0, x1):
+        floor = last.get(x)
+        if floor is None:
+            continue
+        for y in range(min(y1, floor + TRAIL_GAP), y1):
+            if px[x, y][3] > 8:
                 px[x, y] = (0, 0, 0, 0)
     return out
 
