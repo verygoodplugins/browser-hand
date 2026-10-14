@@ -2062,21 +2062,93 @@ export function collectSnapshotForms(doc, visible) {
   return forms;
 }
 
+/** Ancestor, overlay, and box check already used by text clicks. */
+export function visibleIn(el, frameVisible) {
+  try {
+    if (!frameVisible) return false;
+    const win = el.ownerDocument.defaultView || window;
+    if (typeof el.checkVisibility === "function") {
+      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
+    }
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    // opacity and pointer-events are not inherited, so a control inside a
+    // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
+    for (let node = el, depth = 0; node && depth < 12; depth += 1) {
+      const style = win.getComputedStyle(node);
+      if (!style) break;
+      if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none" || Number(style.opacity) <= 0.01) return false;
+      const parent = node.parentElement;
+      const root = !parent && node.getRootNode ? node.getRootNode() : null;
+      node = parent || (root && root.host ? root.host : null);
+    }
+    // Hit-test: checkVisibility does not do it, so a control under an
+    // overlay still looks visible — and because dispatch is by reference it
+    // would fire straight through the overlay. Ranking only; a target
+    // outside the viewport simply cannot be hit-tested, so it is not
+    // penalised for that.
+    const doc = el.ownerDocument;
+    const r = el.getBoundingClientRect();
+    const px = r.left + r.width / 2;
+    const py = r.top + r.height / 2;
+    if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
+      let hit = doc.elementFromPoint(px, py);
+      for (let d = 0; d < 8; d += 1) {
+        if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== "function") break;
+        const deeper = hit.shadowRoot.elementFromPoint(px, py);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (hit) {
+        const chain = [];
+        for (let node = el, d = 0; node && d < 8; d += 1) {
+          chain.push(node);
+          const root = node.getRootNode ? node.getRootNode() : null;
+          node = root && root.host ? root.host : null;
+        }
+        if (!chain.some((node) => hit === node || node.contains(hit) || hit.contains(node))) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The iframe that embeds el, plus one parent frame. Not a walk to the top. */
+export function frameTreeVisible(frame) {
+  if (!frame) return true;
+  let parentOk = true;
+  try {
+    const parentView = frame.ownerDocument && frame.ownerDocument.defaultView;
+    const parent = parentView && parentView.frameElement;
+    if (parent) parentOk = visibleIn(parent, true);
+  } catch {
+    parentOk = false;
+  }
+  return visibleIn(frame, parentOk);
+}
+
+export function embeddingVisible(el) {
+  try {
+    const view = el && el.ownerDocument && el.ownerDocument.defaultView;
+    const frame = view && view.frameElement;
+    return frameTreeVisible(frame);
+  } catch {
+    return false;
+  }
+}
+
 export function buildSnapshotExpression(maxTextChars, options = {}) {
   const scope =
     typeof options.scope === "string" && options.scope.trim() ? options.scope.trim() : "auto";
   return `(() => {
     ${snapshotPageHelpersSource()}
+    ${visibleIn.toString()}
+    ${frameTreeVisible.toString()}
+    ${embeddingVisible.toString()}
     const summarizeSnapshotForms = ${summarizeSnapshotForms.toString()};
-    const visible = el => {
-      try {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-      } catch {
-        return false;
-      }
-    };
+    const visible = el => visibleIn(el, embeddingVisible(el));
     return buildSnapshotPayload(document, {
       maxTextChars: ${Number(maxTextChars) || 0},
       scope: ${JSON.stringify(scope)},
@@ -3045,6 +3117,9 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
   return `(() => {
     ${CLICK_HELPER_SOURCE}
     ${snapshotPageHelpersSource()}
+    ${visibleIn.toString()}
+    ${frameTreeVisible.toString()}
+    ${embeddingVisible.toString()}
     const selector = ${JSON.stringify(selector || "")};
     const wanted = normalizeLabelText(${JSON.stringify(text || "")});
     const clickRef = ${JSON.stringify(ref || "")};
@@ -3052,59 +3127,6 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
     const clickName = ${JSON.stringify(name || "")};
     const CLICK_SEL = 'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [role="link"], [role="switch"], input[type="button"], input[type="submit"], input[type="reset"], summary';
 
-    // frameVisible: an element can be perfectly visible inside its own document
-    // while the iframe embedding that document is hidden.
-    const visibleIn = (el, frameVisible) => {
-      try {
-        if (!frameVisible) return false;
-        const win = el.ownerDocument.defaultView || window;
-        if (typeof el.checkVisibility === 'function') {
-          if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
-        }
-        const rect = el.getBoundingClientRect();
-        if (!(rect.width > 0 && rect.height > 0)) return false;
-        // opacity and pointer-events are not inherited, so a control inside a
-        // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
-        for (let node = el, depth = 0; node && depth < 12; depth += 1) {
-          const style = win.getComputedStyle(node);
-          if (!style) break;
-          if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) <= 0.01) return false;
-          const parent = node.parentElement;
-          const root = !parent && node.getRootNode ? node.getRootNode() : null;
-          node = parent || (root && root.host ? root.host : null);
-        }
-        // Hit-test: checkVisibility does not do it, so a control under an
-        // overlay still looks visible — and because dispatch is by reference it
-        // would fire straight through the overlay. Ranking only; a target
-        // outside the viewport simply cannot be hit-tested, so it is not
-        // penalised for that.
-        const doc = el.ownerDocument;
-        const r = el.getBoundingClientRect();
-        const px = r.left + r.width / 2;
-        const py = r.top + r.height / 2;
-        if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
-          let hit = doc.elementFromPoint(px, py);
-          for (let d = 0; d < 8; d += 1) {
-            if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
-            const deeper = hit.shadowRoot.elementFromPoint(px, py);
-            if (!deeper || deeper === hit) break;
-            hit = deeper;
-          }
-          if (hit) {
-            const chain = [];
-            for (let node = el, d = 0; node && d < 8; d += 1) {
-              chain.push(node);
-              const root = node.getRootNode ? node.getRootNode() : null;
-              node = root && root.host ? root.host : null;
-            }
-            if (!chain.some(node => hit === node || node.contains(hit) || hit.contains(node))) return false;
-          }
-        }
-        return true;
-      } catch (err) {
-        return false;
-      }
-    };
     // A real user click and el.click() both suppress activation on a disabled
     // control; dispatchEvent does not. Without this, automation could fire a
     // disabled destructive action that the UI does not offer.
@@ -3151,7 +3173,7 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
     for (const frame of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
       try {
         if (frame.contentDocument) {
-          roots.push({ root: frame.contentDocument, frameVisible: visibleIn(frame, true) });
+          roots.push({ root: frame.contentDocument, frameVisible: frameTreeVisible(frame) });
         }
       } catch (err) { /* cross-origin */ }
     }
@@ -3162,7 +3184,7 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
     if (clickRef || clickRole) {
       const entries = collectSnapshotEntries(document, {
         scope: "auto",
-        visible: elementIsVisible,
+        visible: (el) => visibleIn(el, embeddingVisible(el)),
       });
       const resolved = resolveSnapshotClick(entries, { ref: clickRef, role: clickRole, name: clickName });
       if (!resolved.entry) {
@@ -3185,26 +3207,16 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
           documentHidden: document.visibilityState === "hidden",
         };
       }
-      // elementIsVisible only checks this node's display and box, so a control
-      // under an overlay or inside a hidden iframe still gets collected. Text
-      // clicks already refuse those via visibleIn; role/ref must do the same
-      // before dispatchEvent, which fires by reference through the cover.
-      if (el) {
-        let frameOk = true;
-        try {
-          const frame = el.ownerDocument && el.ownerDocument.defaultView && el.ownerDocument.defaultView.frameElement;
-          if (frame) frameOk = visibleIn(frame, true);
-        } catch (err) {
-          frameOk = false;
-        }
-        if (!visibleIn(el, frameOk)) {
-          return {
-            found: false,
-            query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
-            candidateCount: 1,
-            documentHidden: document.visibilityState === "hidden",
-          };
-        }
+      // The ref walk already skips a covered control or one whose frame (or
+      // that frame's parent) is hidden. Refuse again before dispatchEvent,
+      // which would otherwise fire by reference through the cover.
+      if (el && !visibleIn(el, embeddingVisible(el))) {
+        return {
+          found: false,
+          query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
+          candidateCount: 1,
+          documentHidden: document.visibilityState === "hidden",
+        };
       }
     }
     if (!el && selector) {

@@ -563,13 +563,14 @@ test("quiet snapshot drops the repeated page wrapper", () => {
 test("role and ref clicks use the default snapshot refs", () => {
   const byRole = buildClickExpression({ role: "button", name: "Save" });
   const byRef = buildClickExpression({ ref: "e3" });
-  const call = /collectSnapshotEntries\(document, \{\s*scope: "auto",\s*visible: elementIsVisible,\s*\}\)/;
+  const call =
+    /collectSnapshotEntries\(document, \{\s*scope: "auto",\s*visible: \(el\) => visibleIn\(el, embeddingVisible\(el\)\),\s*\}\)/;
   assert.match(byRole, call);
   assert.match(byRef, call);
   assert.doesNotMatch(byRole, /collectSnapshotEntries\(document, \{ includeNav: true/);
   assert.doesNotMatch(byRef, /collectSnapshotEntries\(document, \{ includeNav: true/);
-  assert.match(byRole, /visibleIn\(el, frameOk\)/);
-  assert.match(byRef, /visibleIn\(el, frameOk\)/);
+  assert.match(byRole, /visibleIn\(el, embeddingVisible\(el\)\)/);
+  assert.match(byRef, /visibleIn\(el, embeddingVisible\(el\)\)/);
 });
 
 test("role and ref clicks refuse a control elementIsVisible accepts under an overlay", () => {
@@ -604,6 +605,6 @@ test("role and ref clicks refuse a control elementIsVisible accepts under an ove
   const context = vm.createContext({ document: doc, window: view });
   const result = vm.runInContext(buildClickExpression({ role: "button", name: "Save" }), context);
   assert.equal(result.found, false);
-  assert.equal(result.candidateCount, 1);
+  assert.equal(result.candidateCount, 0);
   assert.equal(result.query, "button Save");
 });
