@@ -51,6 +51,7 @@ Operations:
   fill --fields <json>                  Fill labels from a JSON object.
   click (--ref <eN> | --role <r> --name <n> | --text <s> | --selector <css>)
                                         Click by snapshot ref, role+name, visible text, or CSS.
+  steps --steps <json>                  Run click/fill/type/evaluate/snapshot in one call (max 20).
   type --label <s> --text <s>           Type into an input matched by label.
   evaluate --code <js>                  Evaluate JavaScript in the active tab.
   goto --url <url>                      Navigate the active tab.
@@ -69,11 +70,11 @@ Global flags:
   --target-url <substring>  Pick by URL substring match.
   --target-title <s>        Pick by title substring match.
   --query <text>            Pick by title or URL substring (tabs + snapshot/click/etc).
-  --page-name <name>        Named relay tab. open/goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus attach only.
+  --page-name <name>        Named relay tab. open/goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus/steps attach only.
   --focus window|tab        Per-call focus override (open/goto/focus). Does not change popup default.
   --reason <text>           Why focus is needed (human-in-the-loop audit).
   --timeout-ms <ms>         Hard timeout (1000-120000, default 30000).
-  --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers). Use it on snapshot, click, fill, and evaluate.
+  --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers). Use it on snapshot, click, fill, evaluate, and steps.
   --verbose                 Doctor only: include every tab. Prefer \`browser-hand tabs\` for inventory.
   --scope auto|full|nav     Snapshot scope. Default auto is the open dialog plus main, without nav.
   --ref <eN>                Click the snapshot ref from the default (auto) snapshot.
@@ -92,6 +93,7 @@ Examples:
   browser-hand doctor
   browser-hand click --page-name work --role combobox --name "Type"
   browser-hand click --page-name work --ref e4
+  browser-hand steps --page-name work --quiet --steps '[{"op":"click","role":"button","name":"Save"}]'
   browser-hand fill --fields '{"Email":"a@b.c"}'
   browser-hand autofill-profile --context personal
   browser-hand relay   # keep a persistent relay up; leave running, Ctrl-C to stop
@@ -140,6 +142,7 @@ const QUIET_SLIM_OPS = new Set([
   "open",
   "goto",
   "snapshot",
+  "steps",
 ]);
 const QUIET_RESULT_DROP = new Set(["url", "title"]);
 
@@ -156,6 +159,8 @@ export function slimCliResult(result, { quiet } = {}) {
   if (result.operation) out.operation = result.operation;
   if (result.pageName) out.pageName = result.pageName;
   if (result.snapshot) out.snapshot = result.snapshot;
+  if (result.steps) out.steps = result.steps;
+  if (result.failedAt != null) out.failedAt = result.failedAt;
   if (Object.prototype.hasOwnProperty.call(result, "result")) {
     const payload = result.result;
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -266,6 +271,9 @@ function buildHandlerInput(operation, args) {
         }
         input.scope = scope;
       }
+      break;
+    case "steps":
+      input.steps = parseJsonFlag(args.steps, "steps");
       break;
     case "screenshot":
       if (args.fullPage) {

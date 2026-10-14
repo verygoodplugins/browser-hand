@@ -17,8 +17,10 @@ import {
   collectSnapshotEntries,
   controlStateChanged,
   implicitAriaRole,
+  normalizeSteps,
   readControlState,
   resolveSnapshotClick,
+  runStepList,
   shapeDoctorInventory,
   snapshotPageHelpersSource,
 } from "../src/agent-contract.js";
@@ -509,6 +511,56 @@ test("scoped snapshot keeps visible alerts", () => {
   assert.deepEqual(payload.alerts, ["Card declined", "Name is required"]);
 });
 
+test("steps run in one invocation and stop on the first miss", async () => {
+  const calls = [];
+  const ran = await runStepList(
+    [
+      { op: "click", role: "combobox", name: "Type" },
+      { op: "click", role: "option", name: "CNAME" },
+      { op: "fill", fields: { Name: "www" } },
+      { op: "evaluate", code: "document.querySelector('tr')?.innerText" },
+    ],
+    async (step) => {
+      calls.push(step.op);
+      if (step.op === "click" && step.name === "CNAME") {
+        return {
+          found: false,
+          query: "option CNAME",
+          url: "https://dash.example/dns",
+          title: "DNS",
+        };
+      }
+      if (step.op === "click") {
+        return {
+          found: true,
+          state: { value: "A" },
+          stateChanged: false,
+          documentHidden: false,
+          url: "https://dash.example/dns",
+          title: "DNS",
+        };
+      }
+      return { filled: ["Name"], failed: [], url: "https://dash.example/dns", title: "DNS" };
+    }
+  );
+
+  assert.deepEqual(calls, ["click", "click"]);
+  assert.equal(ran.success, false);
+  assert.equal(ran.failedAt, 1);
+  assert.equal(ran.steps[0].result.state.value, "A");
+  assert.equal(ran.steps[0].result.url, undefined);
+  assert.equal(JSON.stringify(ran).includes("https://dash.example/dns"), false);
+});
+
+test("normalizeSteps rejects a click that still has no stable handle", () => {
+  assert.throws(() => normalizeSteps([{ op: "click", text: "" }]), /role\+name|selector|text|ref/);
+  const steps = normalizeSteps([
+    { op: "click", role: "switch", name: "Proxy" },
+    { operation: "fill", fields: { Name: "www" } },
+  ]);
+  assert.equal(steps[1].op, "fill");
+});
+
 test("injected snapshot helpers define the selectors they close over", () => {
   const context = vm.createContext({
     document: {
@@ -539,6 +591,11 @@ test("cli accepts snapshot scope, doctor verbose, and click handles", () => {
   const doctor = buildHandlerInput("doctor", { verbose: true });
   assert.equal(doctor.verbose, true);
   assert.equal(buildHandlerInput("doctor", {}).verbose, undefined);
+
+  const steps = buildHandlerInput("steps", {
+    steps: JSON.stringify([{ op: "click", role: "button", name: "Save" }]),
+  });
+  assert.equal(steps.steps[0].name, "Save");
 });
 
 test("quiet snapshot drops the repeated page wrapper", () => {
@@ -558,6 +615,21 @@ test("quiet snapshot drops the repeated page wrapper", () => {
   assert.equal(snapshot.mode, undefined);
   assert.equal(snapshot.target, undefined);
   assert.equal(snapshot.snapshot.nodes[0].value, "www");
+
+  const steps = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "steps",
+      target: { title: "DNS", url: "https://dash.example/dns" },
+      steps: [
+        { index: 0, op: "click", success: true, result: { state: { ariaChecked: "false" } } },
+      ],
+    },
+    { quiet: true }
+  );
+  assert.equal(steps.target, undefined);
+  assert.equal(steps.steps[0].result.state.ariaChecked, "false");
 });
 
 test("role and ref clicks use the default snapshot refs", () => {
