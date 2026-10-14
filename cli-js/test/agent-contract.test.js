@@ -220,6 +220,66 @@ test("default snapshot is the dialog and main, not the sidebar three times", () 
     scopedBytes * 2 < fullBytes,
     `scoped snapshot ${scopedBytes}b should be under half of full ${fullBytes}b`
   );
+
+  const contentRefs = new Set(full.nodes.map((node) => node.ref));
+  const navRefs = full.nav.map((node) => node.ref);
+  assert.equal(new Set([...contentRefs, ...navRefs]).size, contentRefs.size + navRefs.length);
+  const maxContent = Math.max(...full.nodes.map((node) => Number(node.ref.slice(1))));
+  const minNav = Math.min(...navRefs.map((ref) => Number(ref.slice(1))));
+  assert.ok(minNav > maxContent, `nav refs restart at ${minNav} after content ${maxContent}`);
+});
+
+test("aria-labelledby resolves on the owning document, including ids outside the snapshot root", () => {
+  const label = el("span", { id: "email-label", text: "Email address" });
+  const input = el("input", { id: "email", type: "email", "aria-labelledby": "email-label" });
+  const main = el("main", {}, [input]);
+  const body = el("body", {}, [label, main]);
+  const doc = {
+    body,
+    title: "Account",
+    getElementById(id) {
+      const found = [];
+      const walk = (node) => {
+        if (!node) return;
+        if (node.id === id) found.push(node);
+        for (const child of node.children || []) walk(child);
+      };
+      walk(body);
+      return found[0] || null;
+    },
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const wire = (node) => {
+    node.ownerDocument = doc;
+    for (const child of node.children || []) wire(child);
+  };
+  wire(body);
+
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  const email = payload.nodes.find((node) => node.role === "textbox");
+  assert.ok(email, "labelled email field should be in the snapshot");
+  assert.equal(email.name, "Email address");
+
+  const shadowLabel = el("span", { id: "vol", text: "Volume" });
+  const shadow = {
+    nodeType: 11,
+    getElementById(id) {
+      return id === "vol" ? shadowLabel : null;
+    },
+  };
+  const slider = el("input", { type: "range", "aria-labelledby": "vol" });
+  slider.getRootNode = () => shadow;
+  const shadowDoc = {
+    body: el("main", {}, [slider]),
+    title: "Player",
+    nodeType: 9,
+    getElementById: () => null,
+    querySelectorAll: (sel) => shadowDoc.body.querySelectorAll(sel),
+  };
+  slider.ownerDocument = shadowDoc;
+  const fromShadow = buildSnapshotPayload(shadowDoc, { scope: "auto" });
+  const volume = fromShadow.nodes.find((node) => node.name === "Volume");
+  assert.ok(volume, "shadow-scoped aria-labelledby should still name the control");
 });
 
 test("role and name click the combobox, not the option whose text is A", () => {
@@ -267,6 +327,13 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   assert.equal(controlStateChanged(before, before), false);
   sw.attrs["aria-checked"] = "false";
   assert.equal(controlStateChanged(before, readControlState(sw)), true);
+
+  const disclosure = el("button", { text: "Advanced", "aria-expanded": "false" });
+  const closed = readControlState(disclosure);
+  assert.equal(closed.ariaExpanded, "false");
+  assert.equal(controlStateChanged(closed, closed), false);
+  disclosure.attrs["aria-expanded"] = "true";
+  assert.equal(controlStateChanged(closed, readControlState(disclosure)), true);
 
   const button = el("button", { text: "Save" });
   assert.equal(controlStateChanged(readControlState(button), readControlState(button)), null);

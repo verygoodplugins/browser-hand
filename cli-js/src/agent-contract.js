@@ -113,15 +113,33 @@ export function implicitAriaRole(el) {
   return "";
 }
 
+function labelledByRoot(el, root) {
+  // Snapshot roots are <main> or a dialog element, which has no getElementById.
+  // IDs resolve on the owning document. A shadow root keeps its own ID scope.
+  try {
+    const own = el && typeof el.getRootNode === "function" ? el.getRootNode() : null;
+    if (own && own.nodeType !== 1 && typeof own.getElementById === "function") return own;
+  } catch {
+    /* detached */
+  }
+  const doc = el && el.ownerDocument;
+  if (doc && typeof doc.getElementById === "function") return doc;
+  if (root && typeof root.getElementById === "function") return root;
+  const rootDoc = root && root.ownerDocument;
+  if (rootDoc && typeof rootDoc.getElementById === "function") return rootDoc;
+  return null;
+}
+
 export function snapshotAccessibleName(el, root) {
   const aria = short(attr(el, "aria-label"));
   if (aria) return aria;
   const labelledBy = attr(el, "aria-labelledby");
-  if (labelledBy && root && typeof root.getElementById === "function") {
+  const lookup = labelledBy ? labelledByRoot(el, root) : null;
+  if (labelledBy && lookup) {
     const parts = [];
     for (const id of labelledBy.split(/\s+/)) {
       if (!id) continue;
-      const node = root.getElementById(id);
+      const node = lookup.getElementById(id);
       const text = short(node && node.innerText);
       if (text) parts.push(text);
     }
@@ -188,7 +206,7 @@ export function readControlState(el) {
 
 export function controlStateChanged(before, after) {
   if (!before || !after) return null;
-  const keys = ["ariaChecked", "checked", "ariaPressed", "value"];
+  const keys = ["ariaChecked", "checked", "ariaPressed", "ariaExpanded", "value"];
   const watched = keys.filter((key) => Object.prototype.hasOwnProperty.call(before, key));
   if (watched.length === 0) return null;
   return watched.some((key) => before[key] !== after[key]);
@@ -222,7 +240,7 @@ export function selectSnapshotRoots(doc, options = {}) {
   return { scope: label, roots, includeNav: false };
 }
 
-function pushEntry(out, seen, el, root, includeNav) {
+function pushEntry(out, seen, el, root, includeNav, refOffset = 0) {
   if (!el || seen.has(el) || out.length >= MAX_SNAPSHOT_NODES) return;
   if (!includeNav && inNavigation(el)) return;
   const role = implicitAriaRole(el);
@@ -234,9 +252,10 @@ function pushEntry(out, seen, el, root, includeNav) {
     const text = short(el.innerText || "");
     if (text && text.toLowerCase() !== name.toLowerCase()) state.value = text;
   }
+  const offset = Number.isFinite(refOffset) && refOffset > 0 ? Math.floor(refOffset) : 0;
   out.push({
     el,
-    ref: `e${out.length + 1}`,
+    ref: `e${offset + out.length + 1}`,
     role,
     name,
     ...state,
@@ -258,6 +277,8 @@ export function collectSnapshotEntries(doc, options = {}) {
   }
   const out = [];
   const seen = new Set();
+  const refOffset =
+    Number.isFinite(options.refOffset) && options.refOffset > 0 ? Math.floor(options.refOffset) : 0;
   const walk = (node, depth) => {
     if (!node || depth > 6 || out.length >= MAX_SNAPSHOT_NODES) return;
     let nodes = [];
@@ -274,7 +295,7 @@ export function collectSnapshotEntries(doc, options = {}) {
         shown = false;
       }
       if (!shown) continue;
-      pushEntry(out, seen, el, node, includeNav);
+      pushEntry(out, seen, el, node, includeNav, refOffset);
       if (out.length >= MAX_SNAPSHOT_NODES) return;
     }
     let hosts = [];
@@ -390,6 +411,7 @@ export function buildSnapshotPayload(doc, options = {}) {
       roots: selectSnapshotRoots(doc, { visible, scope: "nav" }).roots,
       includeNav: true,
       visible,
+      refOffset: entries.length,
     });
     payload.nav = nav.map(toSnapshotNode);
     const text = norm(doc.body && doc.body.innerText);
@@ -449,6 +471,7 @@ export function snapshotPageHelpersSource() {
     elementIsVisible,
     inNavigation,
     implicitAriaRole,
+    labelledByRoot,
     snapshotAccessibleName,
     readControlState,
     controlStateChanged,
