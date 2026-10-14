@@ -107,41 +107,45 @@ def glove_bbox(
     return (min_x, min_y, max_x, max_y)
 
 
-def is_cyan_mist(r: int, g: int, b: int, a: int) -> bool:
-    """Wrist mist is cyan. The bone glove is not.
-
-    Green and blue both sit above red. Cool glove highlights lift blue
-    while green stays near red, so those pixels stay. Dark tendrils and
-    faint specks keep the same bias with smaller gaps.
-    """
-    if a < 8 or g < r or b <= r:
-        return False
-    gap_g = g - r
-    gap_b = b - r
-    lum = (r + g + b) / 3
-    if gap_g >= 18 and gap_b >= 24:
-        return True
-    if lum < 130 and gap_g >= 6 and gap_b >= 10:
-        if gap_g / max(r, 1) >= 0.15 and gap_b / max(r, 1) >= 0.22:
-            return True
-    if lum < 55 and gap_g >= 4 and gap_b >= 6:
-        return True
-    return False
+def last_solid_row(
+    im: Image.Image,
+    box: tuple[int, int, int, int],
+    min_lum: int = 140,
+    min_row: int = 40,
+) -> int | None:
+    """Lowest row in the crop that is still the solid glove, not the plume."""
+    px = im.load()
+    x0, _y0, x1, y1 = box
+    for y in range(y1 - 1, _y0 - 1, -1):
+        solid = 0
+        for x in range(x0, x1):
+            r, g, b, a = px[x, y]
+            if a < 24:
+                continue
+            if (r + g + b) / 3 < min_lum:
+                continue
+            solid += 1
+            if solid >= min_row:
+                return y
+    return None
 
 
 def clear_mist_in_bbox(im: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
-    """Drop cyan mist that overlaps the glove rectangle.
+    """Drop the plume that hangs below the wrist inside the glove rectangle.
 
-    The rectangle still contains mist wrapped around the cuff. Leaving
-    those pixels in the crop enlarges them into a wrist trail.
+    Color matching across the whole crop also deletes the cyan rim on the
+    cuff. The rim sits on the solid glove; the mist and the inactive gray
+    smoke sit in the pad under the last solid row.
     """
+    floor = last_solid_row(im, box)
+    if floor is None:
+        return im
     out = im.copy()
     px = out.load()
-    x0, y0, x1, y1 = box
-    for y in range(y0, y1):
+    x0, _y0, x1, y1 = box
+    for y in range(floor + 1, y1):
         for x in range(x0, x1):
-            r, g, b, a = px[x, y]
-            if is_cyan_mist(r, g, b, a):
+            if px[x, y][3] > 0:
                 px[x, y] = (0, 0, 0, 0)
     return out
 
