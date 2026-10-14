@@ -18,13 +18,11 @@
         "playwright",
         "automation"
       ],
-      "skills": [
-        "./skills/browser-hand"
-      ]
+      "skills": ["./skills/browser-hand"]
     }
   ],
   "metadata": {
     "description": "Marketplace for the Browser Hand skill",
-    "version": "0.2.9"
+    "version": "0.3.0"
   }
 }

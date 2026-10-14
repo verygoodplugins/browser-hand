@@ -7,8 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-10-14
+## [0.3.0] - 2026-10-14
 
+- Chrome extension manifest is 1.1.0.
 - Added `--group-title` on `open` and `goto`. Tabs for one task join a Chrome tab group with that title and a color. The same title keeps joining the group. A different title starts a new group. With no title, the group stays named Browser Hand. If a saved group cannot be reused in that tab's window, Browser Hand opens a replacement group instead of failing the command.
 - Added `steps`, one call for a repeated form (click, fill, type, evaluate, snapshot). The call stops at the first miss, and step snapshots leave formatted secrets out.
 - Added a scoped snapshot (open dialog plus main by default) and clicks by snapshot ref or by role and accessible name. Covered controls are skipped. `doctor` stays a short health check. `tabs` is the inventory.

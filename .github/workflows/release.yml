@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 jobs:
   release-plan:
@@ -15,16 +15,28 @@ jobs:
       - uses: actions/checkout@v4
       - id: check
         shell: bash
+        env:
+          PUBLISH_NPM: ${{ vars.PUBLISH_NPM }}
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
-          if [ "$tag" = "$pkg" ]; then
+          if [ "$tag" = "$pkg" ] && [ "$PUBLISH_NPM" = "true" ]; then
             echo "publish_npm=true" >> "$GITHUB_OUTPUT"
-            echo "Tag v$tag matches package.json. Publishing the headless package."
+            echo "Tag v$tag matches package.json and PUBLISH_NPM=true. Publishing the headless package."
           else
             echo "publish_npm=false" >> "$GITHUB_OUTPUT"
-            echo "Tag v$tag does not match package.json $pkg. Skipping the headless npm publish and binary build."
+            echo "Skipping npm publish and the binary build. Set the PUBLISH_NPM repository variable to true when the package is ready."
           fi
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
 
   build-daemon:
     name: Build Daemon Bundles
@@ -130,7 +142,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
       # Trusted publishing requires npm >= 11.5.1; node 22 ships an older npm.
       - run: npm install -g npm@latest
       - run: cd daemon && pnpm install && pnpm run bundle && pnpm run bundle:sandbox-client
@@ -141,7 +153,13 @@ jobs:
           cp scripts/sync-version.js dist/scripts/ 2>/dev/null || true
           cp daemon/dist/daemon.bundle.mjs dist/daemon/dist/
           cp daemon/dist/sandbox-client.js dist/daemon/dist/
-          cp package.json dist/
+          node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+            delete pkg.private;
+            delete pkg.workspaces;
+            writeFileSync("dist/package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
           cp README.md dist/
           cp LICENSE dist/ 2>/dev/null || true
       # No NODE_AUTH_TOKEN: auth comes from the OIDC trusted publisher config.

@@ -1,7 +1,7 @@
 {
   "name": "browser-hand",
-  "version": "0.2.9",
-  "description": "Browser Hand \u2014 agents control your real logged-in Chrome via a local extension bridge. Fork of SawyerHood/dev-browser.",
+  "version": "0.3.0",
+  "description": "Browser Hand — agents control your real logged-in Chrome via a local extension bridge. Fork of SawyerHood/dev-browser.",
   "type": "module",
   "bin": {
     "browser-hand": "./cli-js/bin/browser-hand.js",
