@@ -44,12 +44,13 @@ const OP_ALIASES = {
 const HELP = `browser-hand — drive your real Chrome via the Browser Hand extension relay.
 
 Operations:
-  snapshot                              Summarize the active/current tab.
+  snapshot [--scope auto|full|nav]      Dialog + main by default (role, name, value, ref). full adds nav and text.
   screenshot [--full-page]              Save a PNG under ~/.browser-hand/screenshots/.
   autofill-profile                      Inspect the form, map fields, fill from ~/.browser-hand/autofill.json (falls back to ~/.autohub/autofill.json).
     [--profile <name>] [--context <hint>]
   fill --fields <json>                  Fill labels from a JSON object.
-  click (--text <s> | --selector <css>) Click by visible text or CSS selector.
+  click (--ref <eN> | --role <r> --name <n> | --text <s> | --selector <css>)
+                                        Click by snapshot ref, role+name, visible text, or CSS.
   type --label <s> --text <s>           Type into an input matched by label.
   evaluate --code <js>                  Evaluate JavaScript in the active tab.
   goto --url <url>                      Navigate the active tab.
@@ -57,7 +58,7 @@ Operations:
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
-  doctor                                Diagnose relay, extension, and tab bootstrap. Not a tab list.
+  doctor [--verbose]                    Health check: status, tabCount, and the active tab. Not a tab list.
   relay                                 Start a persistent extension relay (foreground) so the
                                         Chrome extension has a stable endpoint to connect to.
                                         Run once and leave it up; Ctrl-C to stop. Idempotent —
@@ -72,7 +73,12 @@ Global flags:
   --focus window|tab        Per-call focus override (open/goto/focus). Does not change popup default.
   --reason <text>           Why focus is needed (human-in-the-loop audit).
   --timeout-ms <ms>         Hard timeout (1000-120000, default 30000).
-  --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers).
+  --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers). Use it on snapshot, click, fill, and evaluate.
+  --verbose                 Doctor only: include every tab. Prefer \`browser-hand tabs\` for inventory.
+  --scope auto|full|nav     Snapshot scope. Default auto is the open dialog plus main, without nav.
+  --ref <eN>                Click the snapshot ref from the default (auto) snapshot.
+  --role <role>             Click by ARIA role. Requires --name.
+  --name <name>             Accessible name for --role. Exact match.
   -h, --help                Show this help.
 
 Examples:
@@ -84,6 +90,8 @@ Examples:
   browser-hand tabs --query stripe
   browser-hand snapshot --query stripe
   browser-hand doctor
+  browser-hand click --page-name work --role combobox --name "Type"
+  browser-hand click --page-name work --ref e4
   browser-hand fill --fields '{"Email":"a@b.c"}'
   browser-hand autofill-profile --context personal
   browser-hand relay   # keep a persistent relay up; leave running, Ctrl-C to stop
@@ -131,6 +139,7 @@ const QUIET_SLIM_OPS = new Set([
   "evaluate",
   "open",
   "goto",
+  "snapshot",
 ]);
 const QUIET_RESULT_DROP = new Set(["url", "title"]);
 
@@ -146,6 +155,7 @@ export function slimCliResult(result, { quiet } = {}) {
   if (result.warning) out.warning = result.warning;
   if (result.operation) out.operation = result.operation;
   if (result.pageName) out.pageName = result.pageName;
+  if (result.snapshot) out.snapshot = result.snapshot;
   if (Object.prototype.hasOwnProperty.call(result, "result")) {
     const payload = result.result;
     if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -241,6 +251,7 @@ function buildHandlerInput(operation, args) {
       input.url = args.url;
       break;
     case "doctor":
+      if (args.verbose === true) input.verbose = true;
       break;
     case "tabs":
       if (typeof args.query === "string" && args.query.trim()) {
@@ -248,6 +259,13 @@ function buildHandlerInput(operation, args) {
       }
       break;
     case "snapshot":
+      if (typeof args.scope === "string" && args.scope.trim()) {
+        const scope = args.scope.trim();
+        if (!["auto", "full", "nav"].includes(scope)) {
+          fail("snapshot --scope must be auto, full, or nav");
+        }
+        input.scope = scope;
+      }
       break;
     case "screenshot":
       if (args.fullPage) {
@@ -266,14 +284,16 @@ function buildHandlerInput(operation, args) {
       input.fields = parseJsonFlag(args.fields, "fields");
       break;
     case "click":
-      if (args.selector) {
-        input.selector = args.selector;
+      if (args.selector) input.selector = args.selector;
+      if (typeof args.text === "string") input.text = args.text;
+      if (typeof args.ref === "string" && args.ref.trim()) input.ref = args.ref.trim();
+      if (typeof args.role === "string" && args.role.trim()) input.role = args.role.trim();
+      if (typeof args.name === "string" && args.name.trim()) input.name = args.name.trim();
+      if (input.role && !input.name && !input.ref) {
+        fail("click --role requires --name");
       }
-      if (args.text) {
-        input.text = args.text;
-      }
-      if (!input.selector && !input.text) {
-        fail("click requires --selector or --text");
+      if (!input.selector && !input.text && !input.ref && !(input.role && input.name)) {
+        fail("click requires --selector, --text, --ref, or --role and --name");
       }
       break;
     case "type":

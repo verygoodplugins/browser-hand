@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildHandlerInput, slimCliResult } from "../src/cli.js";
 import { summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
@@ -481,4 +482,40 @@ test("injected snapshot helpers define the selectors they close over", () => {
     context
   );
   assert.equal(context.roots.scope, "document");
+});
+
+test("cli accepts snapshot scope, doctor verbose, and click handles", () => {
+  const click = buildHandlerInput("click", { role: "combobox", name: "Type", "page-name": "dns" });
+  assert.equal(click.role, "combobox");
+  assert.equal(click.name, "Type");
+  assert.equal(click.pageName, "dns");
+
+  const byRef = buildHandlerInput("click", { ref: "e4" });
+  assert.equal(byRef.ref, "e4");
+
+  const snapshot = buildHandlerInput("snapshot", { scope: "full" });
+  assert.equal(snapshot.scope, "full");
+
+  const doctor = buildHandlerInput("doctor", { verbose: true });
+  assert.equal(doctor.verbose, true);
+  assert.equal(buildHandlerInput("doctor", {}).verbose, undefined);
+});
+
+test("quiet snapshot drops the repeated page wrapper", () => {
+  const snapshot = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "snapshot",
+      target: { title: "DNS", url: "https://dash.example/dns" },
+      snapshot: {
+        scope: "dialog+main",
+        nodes: [{ ref: "e1", role: "textbox", name: "Name", value: "www" }],
+      },
+    },
+    { quiet: true }
+  );
+  assert.equal(snapshot.mode, undefined);
+  assert.equal(snapshot.target, undefined);
+  assert.equal(snapshot.snapshot.nodes[0].value, "www");
 });
