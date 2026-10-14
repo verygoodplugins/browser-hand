@@ -237,10 +237,7 @@ export class TabManager {
    * Wait until the tab is load-complete on an http(s) URL (password-manager
    * navigations after username often fire target_closed mid-load).
    */
-  async waitForTabReady(
-    tabId: number,
-    timeoutMs = 5000
-  ): Promise<chrome.tabs.Tab | null> {
+  async waitForTabReady(tabId: number, timeoutMs = 5000): Promise<chrome.tabs.Tab | null> {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
       try {
@@ -273,10 +270,7 @@ export class TabManager {
   markScriptingFallback(tabId: number, reason: string): void {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
-    this.logger.log(
-      `Tab ${tabId} switching to scripting fallback:`,
-      reason
-    );
+    this.logger.log(`Tab ${tabId} switching to scripting fallback:`, reason);
     this.tabs.set(tabId, {
       ...tab,
       debugTransport: "scripting",
@@ -288,7 +282,7 @@ export class TabManager {
 
   clearScriptingFallback(tabId: number): void {
     const tab = this.tabs.get(tabId);
-    if (!tab || tab.debugTransport !== "scripting") return;
+    if (!tab || tab.debugTransport !== "scripting" || tab.debuggerDismissed) return;
     this.tabs.set(tabId, {
       ...tab,
       debugTransport: "debugger",
@@ -314,6 +308,13 @@ export class TabManager {
       throw new Error(`Tab ${tabId} is not registered`);
     }
 
+    if (tab.debuggerDismissed) {
+      if (tab.debugTransport !== "scripting") {
+        this.markScriptingFallback(tabId, "debugger dismissed by user");
+      }
+      return;
+    }
+
     if (tab.debugTransport === "scripting") {
       return;
     }
@@ -325,15 +326,10 @@ export class TabManager {
       const live = await chrome.tabs.get(tabId);
       const liveUrl = live.url || live.pendingUrl || "";
       if (liveUrl && !this.isControllableUrl(liveUrl)) {
-        throw new Error(
-          `Cannot attach debugger to non-page URL: ${liveUrl.slice(0, 120)}`
-        );
+        throw new Error(`Cannot attach debugger to non-page URL: ${liveUrl.slice(0, 120)}`);
       }
     } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message.startsWith("Cannot attach debugger")
-      ) {
+      if (error instanceof Error && error.message.startsWith("Cannot attach debugger")) {
         throw error;
       }
       // tab may have closed; fall through to attach attempt
@@ -362,8 +358,7 @@ export class TabManager {
           try {
             await chrome.debugger.attach(debuggee, "1.3");
           } catch (retryErr) {
-            const retryMsg =
-              retryErr instanceof Error ? retryErr.message : String(retryErr);
+            const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
             this.markScriptingFallback(tabId, retryMsg);
             return;
           }
@@ -402,6 +397,10 @@ export class TabManager {
     }
 
     this.logger.debug("Force re-attaching debugger for tab:", tabId);
+    if (tab.debuggerDismissed) {
+      this.markScriptingFallback(tabId, "debugger dismissed by user");
+      return;
+    }
     this.tabs.set(tabId, {
       ...tab,
       debuggerAttached: false,
@@ -424,7 +423,10 @@ export class TabManager {
   async evaluateViaScripting(
     tabId: number,
     expression: string
-  ): Promise<{ result: { type: string; value?: unknown; description?: string }; exceptionDetails?: { text: string } }> {
+  ): Promise<{
+    result: { type: string; value?: unknown; description?: string };
+    exceptionDetails?: { text: string };
+  }> {
     if (!chrome.scripting?.executeScript) {
       throw new Error("chrome.scripting is unavailable");
     }
@@ -460,12 +462,7 @@ export class TabManager {
       };
     }
     const value = (result as { value?: unknown }).value;
-    const type =
-      value === null
-        ? "object"
-        : value === undefined
-          ? "undefined"
-          : typeof value;
+    const type = value === null ? "object" : value === undefined ? "undefined" : typeof value;
     return { result: { type, value } };
   }
 
@@ -532,6 +529,27 @@ export class TabManager {
       `Debugger detach for tab ${tabId} reason=${reason || "unknown"} tabOpen=${tabStillOpen} hard=${hard}`
     );
 
+    if (!hard && reason === "canceled_by_user") {
+      // The infobar Cancel/X. Keep the named tab in the session and move it
+      // to the scripting transport. Re-attaching here is what makes the bar
+      // reappear immediately.
+      this.tabs.set(tabId, {
+        ...tab,
+        debuggerAttached: false,
+        debuggerDismissed: true,
+        debugTransport: "scripting",
+        state: "connected",
+        errorText: "debugger dismissed by user",
+      });
+      if (tab.sessionId && tab.targetInfo) {
+        this.sendAttached(tab.sessionId, tab.targetInfo);
+      }
+      this.logger.log(
+        `User dismissed the debugger infobar for tab ${tabId}; session stays up without reattach`
+      );
+      return;
+    }
+
     if (!hard) {
       this.tabs.set(tabId, {
         ...tab,
@@ -560,12 +578,8 @@ export class TabManager {
         try {
           await chrome.debugger.sendCommand({ tabId }, "Runtime.enable");
         } catch (probeErr) {
-          const probeMsg =
-            probeErr instanceof Error ? probeErr.message : String(probeErr);
-          this.logger.debug(
-            "Runtime.enable after soft re-attach failed; forceReattach",
-            probeMsg
-          );
+          const probeMsg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+          this.logger.debug("Runtime.enable after soft re-attach failed; forceReattach", probeMsg);
           try {
             await this.forceReattach(tabId);
             if (!this.usesScriptingFallback(tabId)) {
@@ -579,10 +593,7 @@ export class TabManager {
         if (refreshed?.targetInfo) {
           try {
             const again = await chrome.tabs.get(tabId);
-            refreshed.targetInfo = this.targetInfoFromTab(
-              again,
-              refreshed.targetId!
-            );
+            refreshed.targetInfo = this.targetInfoFromTab(again, refreshed.targetId!);
             this.tabs.set(tabId, refreshed);
           } catch {
             // ignore

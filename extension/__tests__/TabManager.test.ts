@@ -6,6 +6,8 @@ import type { Logger } from "../utils/logger";
 const mockTabsQuery = vi.fn();
 const mockTabsGet = vi.fn();
 const mockExecuteScript = vi.fn();
+const mockDebuggerAttach = vi.fn();
+const mockDebuggerDetach = vi.fn();
 
 vi.stubGlobal("chrome", {
   ...fakeBrowser,
@@ -16,6 +18,11 @@ vi.stubGlobal("chrome", {
   },
   scripting: {
     executeScript: mockExecuteScript,
+  },
+  debugger: {
+    attach: mockDebuggerAttach,
+    detach: mockDebuggerDetach,
+    sendCommand: vi.fn(),
   },
 });
 
@@ -47,10 +54,14 @@ describe("TabManager", () => {
     mockTabsQuery.mockReset();
     mockTabsGet.mockReset();
     mockExecuteScript.mockReset();
-    mockExecuteScript.mockImplementation(async ({ args, func }: { args: [string]; func: (expr: string) => unknown }) => {
-      const value = await func(args[0]);
-      return [{ result: value }];
-    });
+    mockDebuggerAttach.mockReset();
+    mockDebuggerDetach.mockReset();
+    mockExecuteScript.mockImplementation(
+      async ({ args, func }: { args: [string]; func: (expr: string) => unknown }) => {
+        const value = await func(args[0]);
+        return [{ result: value }];
+      }
+    );
 
     mockLogger = {
       log: vi.fn(),
@@ -142,6 +153,42 @@ describe("TabManager", () => {
     });
   });
 
+  describe("handleDebuggerDetach", () => {
+    it("keeps the session and does not reattach when the user dismisses the infobar", async () => {
+      mockTabsGet.mockResolvedValue(
+        chromeTab({ id: 123, url: "https://example.com/", status: "complete" })
+      );
+      tabManager.set(123, {
+        sessionId: "session-1",
+        targetId: "target-1",
+        state: "connected",
+        debuggerAttached: true,
+        targetInfo: {
+          targetId: "target-1",
+          type: "page",
+          title: "Example",
+          url: "https://example.com/",
+        },
+      });
+
+      await tabManager.handleDebuggerDetach(123, "canceled_by_user");
+
+      expect(tabManager.has(123)).toBe(true);
+      expect(tabManager.get(123)?.debuggerAttached).toBe(false);
+      expect(tabManager.usesScriptingFallback(123)).toBe(true);
+      expect(mockDebuggerAttach).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({ method: "Target.detachedFromTarget" }),
+        })
+      );
+
+      await tabManager.ensureDebuggerAttached(123);
+      await tabManager.forceReattach(123);
+      expect(mockDebuggerAttach).not.toHaveBeenCalled();
+    });
+  });
+
   describe("detach", () => {
     it("should send detached event and remove tab", () => {
       tabManager.set(123, {
@@ -212,7 +259,13 @@ describe("TabManager", () => {
   describe("listTargets / focused tab", () => {
     it("marks the last-focused window's active tab as focused", async () => {
       const tabs = [
-        chromeTab({ id: 1, title: "Gmail", url: "https://mail.google.com/", active: true, windowId: 1 }),
+        chromeTab({
+          id: 1,
+          title: "Gmail",
+          url: "https://mail.google.com/",
+          active: true,
+          windowId: 1,
+        }),
         chromeTab({
           id: 2,
           title: "Stripe",
@@ -220,7 +273,13 @@ describe("TabManager", () => {
           active: true,
           windowId: 2,
         }),
-        chromeTab({ id: 3, title: "Docs", url: "https://docs.example/", active: false, windowId: 2 }),
+        chromeTab({
+          id: 3,
+          title: "Docs",
+          url: "https://docs.example/",
+          active: false,
+          windowId: 2,
+        }),
       ];
       mockTabsQuery.mockImplementation(async (query: chrome.tabs.QueryInfo = {}) => {
         if (query.lastFocusedWindow && query.active) {

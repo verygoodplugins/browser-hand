@@ -19,6 +19,12 @@ export interface TabInfo {
   targetInfo?: TargetInfo;
   debuggerAttached?: boolean;
   /**
+   * Set when the user dismisses Chrome's "started debugging this browser"
+   * infobar. The tab stays in the session, but we do not call
+   * chrome.debugger.attach again or the bar comes straight back.
+   */
+  debuggerDismissed?: boolean;
+  /**
    * debugger: chrome.debugger CDP (default).
    * scripting: chrome.scripting.executeScript fallback when debugger is wedged
    * after password-manager / username field target_closed churn.
