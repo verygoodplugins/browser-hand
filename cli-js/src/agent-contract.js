@@ -43,6 +43,16 @@ function attr(el, name) {
   }
 }
 
+function hasAttr(el, name) {
+  try {
+    if (el && typeof el.hasAttribute === "function") return el.hasAttribute(name);
+    if (el && typeof el.getAttribute === "function") return el.getAttribute(name) != null;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 function norm(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -96,7 +106,7 @@ export function implicitAriaRole(el) {
   if (explicit) return explicit;
   const tag = String((el && el.tagName) || "").toLowerCase();
   if (tag === "button" || tag === "summary") return "button";
-  if (tag === "a") return attr(el, "href") ? "link" : "";
+  if (tag === "a") return hasAttr(el, "href") ? "link" : "";
   if (tag === "textarea") return "textbox";
   if (tag === "select") {
     let multiple = false;
@@ -128,9 +138,11 @@ export function implicitAriaRole(el) {
 
 function labelledByRoot(el, root) {
   // Snapshot roots are <main> or a dialog element, which has no getElementById.
-  // IDs resolve on the owning document. A shadow root keeps its own ID scope.
+  // IDs and <label for> resolve on that element's document or shadow root.
+  // They do not cross into a different root.
   try {
     const own = el && typeof el.getRootNode === "function" ? el.getRootNode() : null;
+    if (own && own.nodeType === 11) return own;
     if (own && own.nodeType !== 1 && typeof own.getElementById === "function") return own;
   } catch {
     /* detached */
@@ -147,8 +159,8 @@ export function snapshotAccessibleName(el, root) {
   const aria = short(attr(el, "aria-label"));
   if (aria) return aria;
   const labelledBy = attr(el, "aria-labelledby");
-  const lookup = labelledBy ? labelledByRoot(el, root) : null;
-  if (labelledBy && lookup) {
+  const lookup = labelledByRoot(el, root);
+  if (labelledBy && lookup && typeof lookup.getElementById === "function") {
     const parts = [];
     for (const id of labelledBy.split(/\s+/)) {
       if (!id) continue;
@@ -158,8 +170,14 @@ export function snapshotAccessibleName(el, root) {
     }
     if (parts.length) return short(parts.join(" "));
   }
-  if (el && el.id && root && typeof root.querySelectorAll === "function") {
-    for (const label of queryAll(root, "label")) {
+  const labelScope =
+    lookup && typeof lookup.querySelectorAll === "function"
+      ? lookup
+      : lookup && lookup.nodeType === 11
+        ? null
+        : root;
+  if (el && el.id && labelScope && typeof labelScope.querySelectorAll === "function") {
+    for (const label of queryAll(labelScope, "label")) {
       const forId = label.htmlFor || attr(label, "for");
       if (forId && forId === el.id) {
         const text = short(label.innerText);
@@ -243,11 +261,20 @@ export function selectSnapshotRoots(doc, options = {}) {
   }
 
   const popups = query(POPUP_SELECTOR).filter((el) => !inNavigation(el));
-  const main = queryAll(doc, 'main, [role="main"]')[0] || (doc && doc.body) || doc;
+  const shownMain = (el) => {
+    if (hasAttr(el, "hidden") || attr(el, "aria-hidden") === "true") return false;
+    try {
+      return visible(el);
+    } catch {
+      return false;
+    }
+  };
+  const mains = queryAll(doc, 'main, [role="main"]').filter(shownMain);
+  const main = mains[0] || (doc && doc.body) || doc;
   const roots = [];
   for (const popup of popups) roots.push(popup);
   if (main) roots.push(main);
-  const hasMain = queryAll(doc, 'main, [role="main"]').length > 0;
+  const hasMain = mains.length > 0;
   let label = hasMain ? "main" : "document";
   if (popups.length) label = hasMain ? "dialog+main" : "dialog";
   return { scope: label, roots, includeNav: false };
@@ -296,6 +323,10 @@ export function collectSnapshotEntries(doc, options = {}) {
     Number.isFinite(options.refOffset) && options.refOffset > 0 ? Math.floor(options.refOffset) : 0;
   const walk = (node, depth) => {
     if (!node || depth > 6 || out.length >= MAX_SNAPSHOT_NODES) return;
+    // The selected root may itself be the custom-element host.
+    if (node.shadowRoot && node.shadowRoot !== node) {
+      if (includeNav || !inNavigation(node)) walk(node.shadowRoot, depth + 1);
+    }
     let nodes = [];
     try {
       nodes = queryAll(node, NODE_SELECTOR);
@@ -485,6 +516,7 @@ export function snapshotPageHelpersSource() {
     `const POPUP_SELECTOR = ${JSON.stringify(POPUP_SELECTOR)};`,
     `const MAX_SNAPSHOT_NODES = ${MAX_SNAPSHOT_NODES};`,
     attr,
+    hasAttr,
     norm,
     short,
     queryAll,

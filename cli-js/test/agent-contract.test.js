@@ -91,7 +91,7 @@ function el(tag, props = {}, kids = []) {
 }
 
 function matches(node, sel) {
-  if (sel === "a[href]") return node.tagName === "A" && node.getAttribute("href");
+  if (sel === "a[href]") return node.tagName === "A" && node.getAttribute("href") != null;
   if (sel === 'input:not([type="hidden"])') {
     return node.tagName === "INPUT" && node.getAttribute("type") !== "hidden";
   }
@@ -351,6 +351,102 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   const hidden = readControlState(secret);
   assert.equal(hidden.value, undefined);
   assert.equal(JSON.stringify(hidden).includes("test-only-secret"), false);
+});
+
+function docFrom(body, title = "Page") {
+  const doc = {
+    body,
+    title,
+    getElementById(id) {
+      const found = [];
+      const walk = (node) => {
+        if (!node || node.nodeType === 11) return;
+        if (node.id === id) found.push(node);
+        for (const child of node.children || []) walk(child);
+        if (node.shadowRoot) walk(node.shadowRoot);
+      };
+      walk(body);
+      return found[0] || null;
+    },
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const wire = (node) => {
+    if (!node || node.nodeType === 11) {
+      if (node) {
+        for (const child of node.children || []) wire(child);
+      }
+      return;
+    }
+    node.ownerDocument = doc;
+    for (const child of node.children || []) wire(child);
+    if (node.shadowRoot) wire(node.shadowRoot);
+  };
+  wire(body);
+  return doc;
+}
+
+test("empty href is still a link", () => {
+  const doc = docFrom(el("body", {}, [el("main", {}, [el("a", { href: "", text: "Home" })])]));
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  const home = payload.nodes.find((node) => node.name === "Home");
+  assert.ok(home, "empty href should stay in the snapshot");
+  assert.equal(home.role, "link");
+});
+
+test("label outside main names the control, and a shadow root does not see it", () => {
+  const label = el("label", { for: "email", text: "Work email" });
+  const input = el("input", { id: "email", type: "email" });
+  const doc = docFrom(el("body", {}, [label, el("main", {}, [input])]));
+  const named = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.equal(named.nodes.find((node) => node.role === "textbox").name, "Work email");
+
+  const inside = el("input", { id: "email", type: "email" });
+  const shadow = el("div", {}, [inside]);
+  shadow.nodeType = 11;
+  inside.getRootNode = () => shadow;
+  const host = el("app-main", { role: "main" });
+  host.shadowRoot = shadow;
+  const leaked = docFrom(el("body", {}, [el("label", { for: "email", text: "Outside" }), host]));
+  const payload = buildSnapshotPayload(leaked, { scope: "auto" });
+  const field = payload.nodes.find((node) => node.role === "textbox");
+  assert.ok(field, "shadow control should be in the snapshot");
+  assert.equal(field.name, "");
+});
+
+test("a hidden main is not the snapshot root", () => {
+  const doc = docFrom(
+    el("body", {}, [
+      el("main", { hidden: "" }, [el("button", { text: "Stale" })]),
+      el("main", {}, [el("button", { text: "Current" })]),
+    ])
+  );
+  const visible = (node) => {
+    let cur = node;
+    while (cur) {
+      if (cur.getAttribute && cur.getAttribute("hidden") != null) return false;
+      cur = cur.parent;
+    }
+    return true;
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto", visible });
+  assert.equal(payload.scope, "main");
+  assert.equal(
+    payload.nodes.some((node) => node.name === "Stale"),
+    false
+  );
+  assert.ok(payload.nodes.some((node) => node.name === "Current"));
+});
+
+test("a custom-element main walks its own shadow root", () => {
+  const host = el("app-main", { role: "main" });
+  host.shadowRoot = el("div", {}, [el("button", { text: "Save" })]);
+  const dialog = el("app-dialog", { role: "dialog" });
+  dialog.shadowRoot = el("div", {}, [el("button", { text: "Confirm" })]);
+  const doc = docFrom(el("body", {}, [dialog, host]));
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  const names = payload.nodes.map((node) => node.name);
+  assert.ok(names.includes("Confirm"));
+  assert.ok(names.includes("Save"));
 });
 
 test("shadow controls inside nav stay out of the default snapshot", () => {
