@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildHandlerInput, slimCliResult } from "../src/cli.js";
-import { summarizeTabInventory } from "../src/tool.js";
+import { buildClickExpression, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
@@ -518,4 +518,14 @@ test("quiet snapshot drops the repeated page wrapper", () => {
   assert.equal(snapshot.mode, undefined);
   assert.equal(snapshot.target, undefined);
   assert.equal(snapshot.snapshot.nodes[0].value, "www");
+});
+
+test("role and ref clicks use the default snapshot refs", () => {
+  const byRole = buildClickExpression({ role: "button", name: "Save" });
+  const byRef = buildClickExpression({ ref: "e3" });
+  const call = /collectSnapshotEntries\(document, \{\s*scope: "auto",\s*visible: elementIsVisible,\s*\}\)/;
+  assert.match(byRole, call);
+  assert.match(byRef, call);
+  assert.doesNotMatch(byRole, /collectSnapshotEntries\(document, \{ includeNav: true/);
+  assert.doesNotMatch(byRef, /collectSnapshotEntries\(document, \{ includeNav: true/);
 });

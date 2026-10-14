@@ -3160,9 +3160,10 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
     let pick = null;
     let frameVisible = true;
     if (clickRef || clickRole) {
-      const entries = clickRef
-        ? collectSnapshotEntries(document, { scope: "auto", visible: elementIsVisible })
-        : collectSnapshotEntries(document, { includeNav: true, visible: elementIsVisible });
+      const entries = collectSnapshotEntries(document, {
+        scope: "auto",
+        visible: elementIsVisible,
+      });
       const resolved = resolveSnapshotClick(entries, { ref: clickRef, role: clickRole, name: clickName });
       if (!resolved.entry) {
         return {
