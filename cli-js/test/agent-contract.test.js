@@ -11,14 +11,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildHandlerInput, slimCliResult } from "../src/cli.js";
-import { buildClickExpression, summarizeTabInventory } from "../src/tool.js";
+import { substitutePlaceholders } from "../src/autofill.js";
+import { buildClickExpression, currentPlaceholderTree, protectStepSources, redactSensitiveText, restoreStepSources, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
   controlStateChanged,
   implicitAriaRole,
+  normalizeSteps,
   readControlState,
   resolveSnapshotClick,
+  runStepList,
   shapeDoctorInventory,
   snapshotPageHelpersSource,
 } from "../src/agent-contract.js";
@@ -509,6 +512,148 @@ test("scoped snapshot keeps visible alerts", () => {
   assert.deepEqual(payload.alerts, ["Card declined", "Name is required"]);
 });
 
+test("steps run in one invocation and stop on the first miss", async () => {
+  const calls = [];
+  const ran = await runStepList(
+    [
+      { op: "click", role: "combobox", name: "Type" },
+      { op: "click", role: "option", name: "CNAME" },
+      { op: "fill", fields: { Name: "www" } },
+      { op: "evaluate", code: "document.querySelector('tr')?.innerText" },
+    ],
+    async (step) => {
+      calls.push(step.op);
+      if (step.op === "click" && step.name === "CNAME") {
+        return {
+          found: false,
+          query: "option CNAME",
+          url: "https://dash.example/dns",
+          title: "DNS",
+        };
+      }
+      if (step.op === "click") {
+        return {
+          found: true,
+          state: { value: "A" },
+          stateChanged: false,
+          documentHidden: false,
+          url: "https://dash.example/dns",
+          title: "DNS",
+        };
+      }
+      return { filled: ["Name"], failed: [], url: "https://dash.example/dns", title: "DNS" };
+    }
+  );
+
+  assert.deepEqual(calls, ["click", "click"]);
+  assert.equal(ran.success, false);
+  assert.equal(ran.failedAt, 1);
+  assert.equal(ran.steps[0].result.state.value, "A");
+  assert.equal(ran.steps[0].result.url, undefined);
+  assert.equal(JSON.stringify(ran).includes("https://dash.example/dns"), false);
+});
+
+test("evaluate step results keep caller url and title fields", async () => {
+  const ran = await runStepList(
+    [{ op: "evaluate", code: "({url: location.href, title: document.title})" }],
+    async () => ({ url: "https://dash.example/dns", title: "DNS", ok: true })
+  );
+  assert.equal(ran.success, true);
+  assert.equal(ran.steps[0].result.url, "https://dash.example/dns");
+  assert.equal(ran.steps[0].result.title, "DNS");
+  assert.equal(ran.steps[0].result.ok, true);
+
+  const snap = await runStepList([{ op: "snapshot" }], async () => ({
+    url: "https://example.com/next",
+    title: "Next",
+    nodes: [],
+  }));
+  assert.equal(snap.steps[0].result.url, "https://example.com/next");
+  assert.equal(snap.steps[0].result.title, "Next");
+});
+
+test("steps stop at the shared command deadline", async () => {
+  let calls = 0;
+  const spent = await runStepList(
+    [{ op: "evaluate", code: "1" }],
+    async () => {
+      calls += 1;
+      return { ok: true };
+    },
+    { deadlineAt: Date.now() - 5 }
+  );
+  assert.equal(spent.success, false);
+  assert.equal(calls, 0);
+  assert.match(spent.error, /timed out/);
+
+  const hung = await runStepList(
+    [{ op: "evaluate", code: "hang" }],
+    () => new Promise(() => {}),
+    { deadlineAt: Date.now() + 40 }
+  );
+  assert.equal(hung.success, false);
+  assert.match(hung.error, /timed out/);
+});
+
+test("evaluate step source is not placeholder-substituted", async () => {
+  const original = "({['{secure:TOKEN}']: true})";
+  const guarded = protectStepSources([
+    { op: "fill", fields: { Email: "{me:EMAIL}" } },
+    { op: "evaluate", code: original },
+  ]);
+  const sub = await substitutePlaceholders(currentPlaceholderTree({ steps: guarded.steps }), {
+    autofill: { EMAIL: "a@b.c" },
+    getSecure: async () => "o'hare",
+  });
+  restoreStepSources(sub.vars.steps, guarded.codes);
+  assert.equal(sub.vars.steps[0].fields.Email, "a@b.c");
+  assert.equal(sub.vars.steps[1].code, original);
+  assert.equal(JSON.stringify(sub.vars.steps[1]).includes("o'hare"), false);
+
+  const spaced = "fetch('/log?x={secure:TOKEN}')";
+  const padded = protectStepSources([{ op: " evaluate ", code: spaced }]);
+  const paddedSub = await substitutePlaceholders(currentPlaceholderTree({ steps: padded.steps }), {
+    getSecure: async () => "sekrit-value",
+  });
+  restoreStepSources(paddedSub.vars.steps, padded.codes);
+  assert.equal(paddedSub.vars.steps[0].code, spaced);
+  assert.equal(JSON.stringify(paddedSub.vars.steps[0]).includes("sekrit-value"), false);
+});
+
+test("a later snapshot does not echo a formatted secret", () => {
+  const secret = "4242424242424242";
+  const shown = redactSensitiveText("4242 4242 4242 4242", [secret]);
+  assert.equal(shown.includes("4242"), false);
+  assert.match(shown, /REDACTED/);
+  assert.equal(redactSensitiveText("https://pay.example/checkout", [secret]), "https://pay.example/checkout");
+});
+
+test("step fill and type placeholders are substituted and redacted", async () => {
+  const tree = currentPlaceholderTree({
+    steps: [
+      { op: "fill", fields: { Email: "{me:EMAIL}" } },
+      { op: "type", label: "Card", text: "{secure:CARD}" },
+    ],
+  });
+  const sub = await substitutePlaceholders(tree, {
+    autofill: { EMAIL: "a@b.c" },
+    getSecure: async () => "4242",
+  });
+  assert.equal(sub.vars.steps[0].fields.Email, "a@b.c");
+  assert.equal(sub.vars.steps[1].text, "4242");
+  assert.ok(sub.redactions.includes("a@b.c"));
+  assert.ok(sub.redactions.includes("4242"));
+});
+
+test("normalizeSteps rejects a click that still has no stable handle", () => {
+  assert.throws(() => normalizeSteps([{ op: "click", text: "" }]), /role\+name|selector|text|ref/);
+  const steps = normalizeSteps([
+    { op: "click", role: "switch", name: "Proxy" },
+    { operation: "fill", fields: { Name: "www" } },
+  ]);
+  assert.equal(steps[1].op, "fill");
+});
+
 test("injected snapshot helpers define the selectors they close over", () => {
   const context = vm.createContext({
     document: {
@@ -539,6 +684,11 @@ test("cli accepts snapshot scope, doctor verbose, and click handles", () => {
   const doctor = buildHandlerInput("doctor", { verbose: true });
   assert.equal(doctor.verbose, true);
   assert.equal(buildHandlerInput("doctor", {}).verbose, undefined);
+
+  const steps = buildHandlerInput("steps", {
+    steps: JSON.stringify([{ op: "click", role: "button", name: "Save" }]),
+  });
+  assert.equal(steps.steps[0].name, "Save");
 });
 
 test("quiet snapshot drops the repeated page wrapper", () => {
@@ -558,6 +708,21 @@ test("quiet snapshot drops the repeated page wrapper", () => {
   assert.equal(snapshot.mode, undefined);
   assert.equal(snapshot.target, undefined);
   assert.equal(snapshot.snapshot.nodes[0].value, "www");
+
+  const steps = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "steps",
+      target: { title: "DNS", url: "https://dash.example/dns" },
+      steps: [
+        { index: 0, op: "click", success: true, result: { state: { ariaChecked: "false" } } },
+      ],
+    },
+    { quiet: true }
+  );
+  assert.equal(steps.target, undefined);
+  assert.equal(steps.steps[0].result.state.ariaChecked, "false");
 });
 
 test("role and ref clicks use the default snapshot refs", () => {

@@ -69,7 +69,7 @@ test("goto with a pageName still creates or reuses a named tab", () => {
 });
 
 test("fill/click/type with a pageName stay attach-only", () => {
-  for (const operation of ["fill_fields", "click", "type", "focus", "autofill_profile"]) {
+  for (const operation of ["fill_fields", "click", "type", "focus", "autofill_profile", "steps"]) {
     const plan = planCurrentTargetAccess({ operation, pageName: "work" });
     assert.equal(plan.createsTab, false, `${operation} must not mint a tab`);
   }

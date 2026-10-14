@@ -23,7 +23,12 @@ import { ContextLogger } from "./logger.js";
 import { substitutePlaceholders } from "./autofill.js";
 import { buildAutofillProfilePlan } from "./autofill-profile.js";
 import { loadAutofillFile, readKeychainSecret, readProfileSecret } from "./autofill-io.js";
-import { shapeDoctorInventory, snapshotPageHelpersSource } from "./agent-contract.js";
+import {
+  normalizeSteps,
+  runStepList,
+  shapeDoctorInventory,
+  snapshotPageHelpersSource,
+} from "./agent-contract.js";
 
 const cl = new ContextLogger("browser-hand");
 
@@ -87,6 +92,13 @@ export function redactSensitiveText(text, redactions = []) {
     .sort((a, b) => b.length - a.length);
   for (const value of unique) {
     out = out.split(value).join("[REDACTED]");
+    const compact = value.replace(/[^A-Za-z0-9]/g, "");
+    if (compact.length < 6) continue;
+    const pattern = compact
+      .split("")
+      .map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[^A-Za-z0-9]{0,3}");
+    out = out.replace(new RegExp(pattern, "g"), "[REDACTED]");
   }
   return out;
 }
@@ -564,6 +576,7 @@ const PAGE_NAME_ATTACH_ONLY_OPERATIONS = new Set([
   "type",
   "autofill_profile",
   "focus",
+  "steps",
 ]);
 
 const FOCUS_POLICIES = new Set(["background", "tab", "window"]);
@@ -1426,6 +1439,7 @@ async function runCurrentTabs(input = {}, timeoutMs) {
 }
 
 async function runCurrentOperation(input, timeoutMs) {
+  const deadlineAt = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 0);
   const operation = input.operation;
   if (operation === "doctor") {
     return await runCurrentDoctor(timeoutMs, input);
@@ -1536,6 +1550,71 @@ async function runCurrentOperation(input, timeoutMs) {
         },
         sub.redactions
       );
+    }
+
+    if (operation === "steps") {
+      let steps;
+      try {
+        steps = normalizeSteps(input.steps);
+      } catch (err) {
+        return {
+          success: false,
+          mode: "current",
+          operation,
+          ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+          error: err.message,
+        };
+      }
+      const ran = await runStepList(steps, async (step) => {
+        if (step.op === "click") {
+          return evalValue(
+            cdp,
+            sessionId,
+            buildClickExpression({
+              selector: step.selector,
+              text: step.text,
+              ref: step.ref,
+              role: step.role,
+              name: step.name,
+            })
+          );
+        }
+        if (step.op === "fill") {
+          return evalValue(cdp, sessionId, buildFillFieldsExpression(step.fields));
+        }
+        if (step.op === "type") {
+          return evalValue(
+            cdp,
+            sessionId,
+            buildTypeExpression({
+              selector: step.selector,
+              label: step.label,
+              text: step.text || "",
+            })
+          );
+        }
+        if (step.op === "evaluate") {
+          return evaluateUserCode(cdp, sessionId, step.code);
+        }
+        if (step.op === "snapshot") {
+          return evalValue(
+            cdp,
+            sessionId,
+            buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS, { scope: step.scope || "auto" })
+          );
+        }
+        throw new Error(`Unsupported step ${step.op}`);
+      }, { deadlineAt });
+      return {
+        success: ran.success === true,
+        mode: "current",
+        operation,
+        target: compactTarget(selected),
+        ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
+        ...(ran.error ? { error: ran.error } : {}),
+        ...(ran.failedAt != null ? { failedAt: ran.failedAt } : {}),
+        steps: ran.steps,
+      };
     }
 
     if (operation === "click") {
@@ -3532,24 +3611,56 @@ async function substituteForHeadless(vars) {
   });
 }
 
-async function substituteForCurrent(args) {
+export function protectStepSources(steps) {
+  const codes = [];
+  if (!Array.isArray(steps)) return { steps, codes };
+  const safe = steps.map((step, index) => {
+    if (!step || typeof step !== "object") return step;
+    const op = String(step.op || step.operation || "").trim();
+    if (op === "evaluate" && typeof step.code === "string") {
+      codes.push([index, step.code]);
+      return { ...step, code: "" };
+    }
+    return step;
+  });
+  return { steps: safe, codes };
+}
+
+export function restoreStepSources(steps, codes) {
+  if (!Array.isArray(steps)) return steps;
+  for (const [index, code] of codes || []) {
+    if (steps[index] && typeof steps[index] === "object") {
+      steps[index] = { ...steps[index], code };
+    }
+  }
+  return steps;
+}
+
+export function currentPlaceholderTree(args = {}) {
   const safeVars =
     args.vars && typeof args.vars === "object" && !Array.isArray(args.vars) ? args.vars : {};
   const safeFields =
     args.fields && typeof args.fields === "object" && !Array.isArray(args.fields)
       ? args.fields
       : {};
-  return await substitutePlaceholders(
-    {
-      vars: safeVars,
-      fields: safeFields,
-      target: args.target || {},
-      selector: args.selector || "",
-      label: args.label || "",
-      text: args.text || "",
-      value: args.value || "",
-      url: args.url || "",
-    },
+  const tree = {
+    vars: safeVars,
+    fields: safeFields,
+    target: args.target || {},
+    selector: args.selector || "",
+    label: args.label || "",
+    text: args.text || "",
+    value: args.value || "",
+    url: args.url || "",
+  };
+  if (Array.isArray(args.steps)) tree.steps = args.steps;
+  return tree;
+}
+
+async function substituteForCurrent(args) {
+  const guarded = protectStepSources(args.steps);
+  const sub = await substitutePlaceholders(
+    currentPlaceholderTree({ ...args, steps: guarded.steps }),
     {
       autofill: autofillData,
       getSecret: readKeychainSecret,
@@ -3558,6 +3669,10 @@ async function substituteForCurrent(args) {
       secureCache,
     }
   );
+  if (sub.vars && Array.isArray(sub.vars.steps)) {
+    restoreStepSources(sub.vars.steps, guarded.codes);
+  }
+  return sub;
 }
 
 async function substituteAutofillProfileFields(fields) {
@@ -3597,6 +3712,7 @@ const operations = [
   "focus",
   "doctor",
   "tabs",
+  "steps",
   "run_script",
 ];
 
@@ -3615,6 +3731,7 @@ Current-mode operations:
 - fill_fields: fill labels/placeholders/names from fields.
 - autofill_profile: inspect the active form, map common fields to the local autofill profile, resolve placeholders locally, and fill them in one call.
 - click: click by ref, role+name, selector, or visible text. Returns the control state. Does not focus the window.
+- steps: run click/fill/type/evaluate/snapshot in one call. Pass --quiet.
 - type: type into a selector or label.
 - screenshot: save a PNG under ~/.autohub/browser-screenshots.
 - evaluate: evaluate JavaScript in the selected tab.
@@ -3626,7 +3743,7 @@ Current-mode operations:
 Targeting:
 - target defaults to { strategy: "active" }.
 - Optional target fields: id, url, title, name, query, strategy:"first".
-- pageName: open/goto create-or-reuse a named relay tab; snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus attach only.
+- pageName: open/goto create-or-reuse a named relay tab; snapshot/screenshot/evaluate/fill_fields/click/type/autofill_profile/focus/steps attach only.
 - focusPolicy/focus: optional per-call override for open/goto/focus — "window" brings Chrome forward for human input; "tab" activates only; default remains background. Pass reason for audit.
 
 Autofill placeholders:
@@ -3654,7 +3771,7 @@ Resolved placeholder values are redacted from tool output.`,
       pageName: {
         type: "string",
         description:
-          "Named extension-relay tab. open and goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus attach to an existing name and fail if it is missing.",
+          "Named extension-relay tab. open and goto create-or-reuse; snapshot/screenshot/evaluate/fill/click/type/focus/steps attach to an existing name and fail if it is missing.",
       },
       target: {
         type: "object",
@@ -3704,6 +3821,12 @@ Resolved placeholder values are redacted from tool output.`,
         enum: ["auto", "full", "nav"],
         description:
           "Snapshot scope. auto (default) is the open dialog plus main, without nav or body text. full adds nav and text. nav is the navigation landmark only.",
+      },
+      steps: {
+        type: "array",
+        description:
+          'For operation "steps": ordered click/fill/type/evaluate/snapshot objects. Click steps use ref or role+name. At most 20.',
+        items: { type: "object", additionalProperties: true },
       },
       verbose: {
         type: "boolean",
