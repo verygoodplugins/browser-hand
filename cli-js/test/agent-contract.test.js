@@ -271,6 +271,15 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   const button = el("button", { text: "Save" });
   assert.equal(controlStateChanged(readControlState(button), readControlState(button)), null);
   assert.equal(implicitAriaRole(el("input", { type: "checkbox" })), "checkbox");
+
+  const secret = el("input", {
+    type: "password",
+    value: "test-only-secret",
+    "aria-label": "Password",
+  });
+  const hidden = readControlState(secret);
+  assert.equal(hidden.value, undefined);
+  assert.equal(JSON.stringify(hidden).includes("test-only-secret"), false);
 });
 
 test("injected snapshot helpers define the selectors they close over", () => {

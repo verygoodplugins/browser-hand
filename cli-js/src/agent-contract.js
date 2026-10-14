@@ -177,7 +177,10 @@ export function readControlState(el) {
   const tag = String(el.tagName || "").toUpperCase();
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
     if (role !== "checkbox" && role !== "radio" && role !== "button" && role !== "switch") {
-      state.value = el.value == null ? "" : String(el.value);
+      const type = attr(el, "type").trim().toLowerCase();
+      if (type !== "password") {
+        state.value = el.value == null ? "" : String(el.value);
+      }
     }
   }
   return state;
