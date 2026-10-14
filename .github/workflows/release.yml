@@ -15,16 +15,28 @@ jobs:
       - uses: actions/checkout@v4
       - id: check
         shell: bash
+        env:
+          PUBLISH_NPM: ${{ vars.PUBLISH_NPM }}
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
-          if [ "$tag" = "$pkg" ]; then
+          if [ "$tag" = "$pkg" ] && [ "$PUBLISH_NPM" = "true" ]; then
             echo "publish_npm=true" >> "$GITHUB_OUTPUT"
-            echo "Tag v$tag matches package.json. Publishing the headless package."
+            echo "Tag v$tag matches package.json and PUBLISH_NPM=true. Publishing the headless package."
           else
             echo "publish_npm=false" >> "$GITHUB_OUTPUT"
-            echo "Tag v$tag does not match package.json $pkg. Skipping the headless npm publish and binary build."
+            echo "Skipping npm publish and the binary build. Set the PUBLISH_NPM repository variable to true when the package is ready."
           fi
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
 
   build-daemon:
     name: Build Daemon Bundles
