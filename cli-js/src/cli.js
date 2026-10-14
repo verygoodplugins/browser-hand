@@ -55,7 +55,9 @@ Operations:
   type --label <s> --text <s>           Type into an input matched by label.
   evaluate --code <js>                  Evaluate JavaScript in the active tab.
   goto --url <url>                      Navigate the active tab.
-  open --url <url> [--page-name <name>] Create/get a named relay tab and navigate it.
+  open --url <url> [--page-name <name>] [--group-title <text>]
+                                        Create/get a named relay tab and navigate it.
+                                        --group-title names the Chrome tab group for this session.
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
@@ -80,11 +82,12 @@ Global flags:
   --ref <eN>                Click the snapshot ref from the default (auto) snapshot.
   --role <role>             Click by ARIA role. Requires --name.
   --name <name>             Accessible name for --role. Exact match.
+  --group-title <text>      Optional tab-group label for open/goto. A new title starts a new group.
   -h, --help                Show this help.
 
 Examples:
   browser-hand snapshot --target-url localhost:5174
-  browser-hand open --url https://example.com --page-name smoke
+  browser-hand open --url https://example.com --page-name smoke --group-title "DNS records"
   browser-hand focus --page-name smoke --focus window --reason "2fa"
   browser-hand open --url https://example.com --page-name smoke --focus window --reason "confirm"
   browser-hand tabs
@@ -254,6 +257,9 @@ function buildHandlerInput(operation, args) {
         fail("open requires --url");
       }
       input.url = args.url;
+      if (typeof args["group-title"] === "string" && args["group-title"].trim()) {
+        input.groupTitle = args["group-title"].trim();
+      }
       break;
     case "doctor":
       if (args.verbose === true) input.verbose = true;
@@ -327,6 +333,9 @@ function buildHandlerInput(operation, args) {
         fail("goto requires --url");
       }
       input.url = args.url;
+      if (typeof args["group-title"] === "string" && args["group-title"].trim()) {
+        input.groupTitle = args["group-title"].trim();
+      }
       break;
     case "focus":
       // Defaults to window so `focus --page-name X --reason 2fa` is enough.

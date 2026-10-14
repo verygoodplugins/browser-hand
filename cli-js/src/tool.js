@@ -514,7 +514,7 @@ async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   }
 }
 
-async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url } = {}) {
+async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url, groupTitle } = {}) {
   if (!pageName || typeof pageName !== "string") {
     throw new Error("pageName is required for named-page bootstrap");
   }
@@ -524,6 +524,9 @@ async function openNamedRelayPage(pageName, { timeoutMs = 15000, targetId, url }
   }
   if (typeof url === "string" && url.trim() && !isBlankUrl(url)) {
     body.url = url.trim();
+  }
+  if (typeof groupTitle === "string" && groupTitle.trim()) {
+    body.groupTitle = groupTitle.trim();
   }
   return await fetchJson(relayPageEndpoint(), {
     method: "POST",
@@ -726,6 +729,7 @@ export async function resolveNamedPageInfo({
   plan,
   pageName,
   url,
+  groupTitle,
   targets = [],
   timeoutMs,
   openPage,
@@ -739,6 +743,9 @@ export async function resolveNamedPageInfo({
     return openPage(pageName, {
       ...(adopt?.targetId ? { targetId: adopt.targetId } : {}),
       ...(url ? { url } : {}),
+      ...(typeof groupTitle === "string" && groupTitle.trim()
+        ? { groupTitle: groupTitle.trim() }
+        : {}),
       ...(Number.isFinite(timeoutMs) && timeoutMs > 0 ? { timeoutMs } : {}),
     });
   }
@@ -1223,6 +1230,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
       plan,
       pageName: plan.pageName,
       url: input.url,
+      groupTitle: input.groupTitle,
       targets,
       timeoutMs,
       openPage: (name, options) => openNamedRelayPage(name, options),

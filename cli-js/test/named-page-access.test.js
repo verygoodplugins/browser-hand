@@ -144,6 +144,29 @@ test("open resolves through the create-or-adopt endpoint", async () => {
   });
 });
 
+test("open forwards an optional group title and ignores a blank one", async () => {
+  const plan = planCurrentTargetAccess({ operation: "open", pageName: "dns" });
+  const titled = await resolveNamedPageInfo({
+    plan,
+    pageName: "dns",
+    url: "https://dash.example/dns",
+    groupTitle: "  DNS records  ",
+    openPage: async (_name, options) => options,
+    lookupPage: async () => null,
+  });
+  assert.equal(titled.groupTitle, "DNS records");
+
+  const plain = await resolveNamedPageInfo({
+    plan,
+    pageName: "dns",
+    url: "https://dash.example/dns",
+    groupTitle: "   ",
+    openPage: async (_name, options) => options,
+    lookupPage: async () => null,
+  });
+  assert.equal(plain.groupTitle, undefined);
+});
+
 test("open forwards the caller timeout into page bootstrap", async () => {
   const plan = planCurrentTargetAccess({ operation: "open", pageName: "work" });
   const result = await resolveNamedPageInfo({
