@@ -247,9 +247,15 @@ describe("CDPRouter", () => {
       await expect(open("https://example.com/c")).resolves.toEqual({ targetId: "tab-43" });
 
       expect(mockTabGroupsGet).toHaveBeenCalledWith(7);
-      expect(mockTabsGroup).toHaveBeenNthCalledWith(1, { tabIds: [41] });
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(1, {
+        tabIds: [41],
+        createProperties: { windowId: 9 },
+      });
       expect(mockTabsGroup).toHaveBeenNthCalledWith(2, { tabIds: [42], groupId: 7 });
-      expect(mockTabsGroup).toHaveBeenNthCalledWith(3, { tabIds: [42] });
+      expect(mockTabsGroup).toHaveBeenNthCalledWith(3, {
+        tabIds: [42],
+        createProperties: { windowId: 9 },
+      });
       expect(mockTabsGroup).toHaveBeenNthCalledWith(4, { tabIds: [43], groupId: 8 });
       expect(mockTabGroupsUpdate).toHaveBeenNthCalledWith(
         2,
