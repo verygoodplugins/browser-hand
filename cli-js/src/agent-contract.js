@@ -286,6 +286,8 @@ function pushEntry(out, seen, el, root, includeNav, refOffset = 0) {
   const role = implicitAriaRole(el);
   const tag = String((el && el.tagName) || "").toLowerCase();
   if (!role || role === "navigation") return;
+  // Skip listbox/menu containers so their options are the click targets.
+  // A native <select multiple> is itself the listbox and must stay.
   if ((role === "listbox" || role === "menu") && tag !== "select") return;
   seen.add(el);
   const name = snapshotAccessibleName(el, root);
@@ -388,6 +390,32 @@ export function toSnapshotNode(entry) {
   return node;
 }
 
+function alertsIn(roots, visible) {
+  const out = [];
+  const seen = new Set();
+  for (const root of roots || []) {
+    for (const el of queryAll(root, '[role="alert"], .error')) {
+      if (out.length >= 20 || seen.has(el)) continue;
+      if (inNavigation(el)) continue;
+      try {
+        if (el && typeof el.getAttribute === "function" && el.getAttribute("hidden") != null) continue;
+      } catch {
+        continue;
+      }
+      try {
+        if (!visible(el)) continue;
+      } catch {
+        continue;
+      }
+      const text = short(el.innerText);
+      if (!text) continue;
+      seen.add(el);
+      out.push(text);
+    }
+  }
+  return out;
+}
+
 function headingsIn(roots, visible) {
   const out = [];
   for (const root of roots || []) {
@@ -449,6 +477,8 @@ export function buildSnapshotPayload(doc, options = {}) {
   if (payload.focused === undefined) delete payload.focused;
   const headings = headingsIn(formRoots, visible);
   if (headings.length) payload.headings = headings;
+  const alerts = alertsIn(formRoots, visible);
+  if (alerts.length) payload.alerts = alerts;
   if (typeof options.summarizeSnapshotForms === "function") {
     const forms = [];
     for (const root of formRoots) {
@@ -532,6 +562,7 @@ export function snapshotPageHelpersSource() {
     collectSnapshotEntries,
     toSnapshotNode,
     headingsIn,
+    alertsIn,
     buildSnapshotPayload,
     resolveSnapshotClick,
   ]

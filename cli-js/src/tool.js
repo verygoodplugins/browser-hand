@@ -23,6 +23,7 @@ import { ContextLogger } from "./logger.js";
 import { substitutePlaceholders } from "./autofill.js";
 import { buildAutofillProfilePlan } from "./autofill-profile.js";
 import { loadAutofillFile, readKeychainSecret, readProfileSecret } from "./autofill-io.js";
+import { shapeDoctorInventory, snapshotPageHelpersSource } from "./agent-contract.js";
 
 const cl = new ContextLogger("browser-hand");
 
@@ -145,10 +146,18 @@ export function filterTabTargets(targets = [], query = {}) {
     pages = pages.filter((item) => item.targetId === idNeedle || item.id === idNeedle);
   }
   if (urlNeedle) {
-    pages = pages.filter((item) => String(item.url || "").toLowerCase().includes(urlNeedle));
+    pages = pages.filter((item) =>
+      String(item.url || "")
+        .toLowerCase()
+        .includes(urlNeedle)
+    );
   }
   if (titleNeedle) {
-    pages = pages.filter((item) => String(item.title || "").toLowerCase().includes(titleNeedle));
+    pages = pages.filter((item) =>
+      String(item.title || "")
+        .toLowerCase()
+        .includes(titleNeedle)
+    );
   }
   if (textNeedle) {
     pages = pages.filter((item) => {
@@ -200,9 +209,7 @@ export async function selectCurrentTarget(targets = [], opts = {}) {
     throw new Error("No http(s) Chrome tabs are available through Browser Hand");
   }
 
-  const explicit = Boolean(
-    target.id || target.url || target.title || target.name || target.query
-  );
+  const explicit = Boolean(target.id || target.url || target.title || target.name || target.query);
   let candidates = pages;
 
   if (target.id) {
@@ -1304,7 +1311,7 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
   };
 }
 
-async function runCurrentDoctor(timeoutMs) {
+async function runCurrentDoctor(timeoutMs, input = {}) {
   const relayInfo = await probeRelay(1000);
   const logs = await readRecentRelayLogs();
   const recentExtensionDisconnected = /\bExtension disconnected\b/i.test(logs);
@@ -1321,7 +1328,6 @@ async function runCurrentDoctor(timeoutMs) {
     },
     pages,
     targetCount: 0,
-    targets: [],
     smoke: null,
     recentExtensionDisconnected,
   };
@@ -1333,13 +1339,15 @@ async function runCurrentDoctor(timeoutMs) {
       const targetResult = await cdp.send("Target.getTargets");
       const targets = targetResult?.targetInfos || [];
       const inventory = summarizeTabInventory(targets);
-      result.targetCount = inventory.targetCount;
-      result.tabCount = inventory.tabCount;
-      result.active = inventory.active;
-      result.targets = inventory.tabs;
-      result.truncated = inventory.truncated;
-      result.hint =
-        "Doctor is a health check. For a fast full inventory use `browser-hand tabs` or `browser-hand tabs --query stripe`.";
+      const shaped = shapeDoctorInventory(inventory, { verbose: input.verbose === true });
+      result.targetCount = shaped.targetCount;
+      result.tabCount = shaped.tabCount;
+      result.active = shaped.active;
+      result.hint = shaped.hint;
+      if (input.verbose === true) {
+        result.targets = shaped.targets;
+        result.truncated = shaped.truncated;
+      }
 
       try {
         const pageInfo = await openNamedRelayPage(smokeName, {
@@ -1420,7 +1428,7 @@ async function runCurrentTabs(input = {}, timeoutMs) {
 async function runCurrentOperation(input, timeoutMs) {
   const operation = input.operation;
   if (operation === "doctor") {
-    return await runCurrentDoctor(timeoutMs);
+    return await runCurrentDoctor(timeoutMs, input);
   }
   if (operation === "tabs") {
     return await runCurrentTabs(input, timeoutMs);
@@ -1458,7 +1466,11 @@ async function runCurrentOperation(input, timeoutMs) {
         operation,
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        snapshot: await evalValue(cdp, sessionId, buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS)),
+        snapshot: await evalValue(
+          cdp,
+          sessionId,
+          buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS, { scope: input.scope || "auto" })
+        ),
       };
     }
 
@@ -1527,13 +1539,22 @@ async function runCurrentOperation(input, timeoutMs) {
     }
 
     if (operation === "click") {
-      const query = input.selector || input.text || input.value || "";
+      const query =
+        input.ref ||
+        [input.role, input.name].filter(Boolean).join(" ") ||
+        input.selector ||
+        input.text ||
+        input.value ||
+        "";
       const result = await evalValue(
         cdp,
         sessionId,
         buildClickExpression({
           selector: input.selector,
-          text: input.text || input.value,
+          text: input.role || input.ref ? input.text : input.text || input.value,
+          ref: input.ref,
+          role: input.role,
+          name: input.name,
         })
       );
       const base = {
@@ -1543,12 +1564,20 @@ async function runCurrentOperation(input, timeoutMs) {
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
       };
       if (!result || !result.found) {
+        const ambiguous =
+          result?.ambiguous === true &&
+          Array.isArray(result.candidates) &&
+          result.candidates.length > 0
+            ? ` Multiple exact matches: ${result.candidates
+                .map((item) => `${item.role} "${item.name}" (${item.ref})`)
+                .join(", ")}.`
+            : "";
         return {
           success: false,
           ...base,
           error: result?.disabled
             ? `Matched ${JSON.stringify(query)}, but that control is disabled. A real click would do nothing, so this was not dispatched.`
-            : `No clickable element matched ${JSON.stringify(query)}`,
+            : `No clickable element matched ${JSON.stringify(query)}.${ambiguous}`,
           result: result || null,
         };
       }
@@ -1565,7 +1594,7 @@ async function runCurrentOperation(input, timeoutMs) {
         ...(result.documentHidden && !result.interrupted
           ? {
               warning:
-                'Dispatched, but this tab is backgrounded (document.visibilityState is "hidden"). Chrome throttles background tabs and many sites ignore input there, so the click may not have taken effect. Bring the tab to the foreground and repeat if it matters.',
+                'Dispatched, but document.visibilityState is "hidden", so the click may not have landed. See result.state. This call does not focus the window.',
             }
           : {}),
         result: {
@@ -1576,6 +1605,10 @@ async function runCurrentOperation(input, timeoutMs) {
           ...(result.runnersUp && result.runnersUp.length ? { runnersUp: result.runnersUp } : {}),
           visible: result.visible,
           ...(result.interrupted ? { interrupted: result.interrupted } : {}),
+          ...(result.state && Object.keys(result.state).length ? { state: result.state } : {}),
+          ...(typeof result.stateChanged === "boolean"
+            ? { stateChanged: result.stateChanged }
+            : {}),
           documentHidden: result.documentHidden,
           url: result.url,
         },
@@ -1618,13 +1651,19 @@ async function runCurrentOperation(input, timeoutMs) {
         focusReason: input.focusReason || input.reason,
         focusTtlMs: input.focusTtlMs,
       });
+      let visibilityState = null;
+      try {
+        visibilityState = await evalValue(cdp, sessionId, "document.visibilityState");
+      } catch {
+        visibilityState = null;
+      }
       return {
         success: true,
         mode: "current",
         operation,
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        focus,
+        focus: { ...focus, visibilityState },
       };
     }
 
@@ -1669,7 +1708,11 @@ async function runCurrentOperation(input, timeoutMs) {
             navResult = { errorText: `navigation failed: ${href}` };
             break;
           }
-          if (typeof href === "string" && !isBlankUrl(href) && (ready === "complete" || ready == null)) {
+          if (
+            typeof href === "string" &&
+            !isBlankUrl(href) &&
+            (ready === "complete" || ready == null)
+          ) {
             selected.url = href;
             break;
           }
@@ -1681,7 +1724,9 @@ async function runCurrentOperation(input, timeoutMs) {
       } else {
         const deadline = Date.now() + Math.min(timeoutMs || 15000, 15000);
         while (Date.now() < deadline) {
-          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(() => "complete");
+          const ready = await evalValue(cdp, sessionId, "document.readyState").catch(
+            () => "complete"
+          );
           if (ready === "complete" || ready == null) break;
           await new Promise((resolve) => setTimeout(resolve, 100));
         }
@@ -1755,7 +1800,6 @@ async function runCurrentOperation(input, timeoutMs) {
   }
 }
 
-
 export function snapshotControlRegion(el) {
   let role = "";
   try {
@@ -1779,7 +1823,10 @@ export function snapshotControlRegion(el) {
 
 export function summarizeSnapshotForms(root, visible, limit = 120) {
   const isVisible = typeof visible === "function" ? visible : () => true;
-  const norm = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const norm = (value) =>
+    String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
   const short = (value) => norm(value).slice(0, 240);
   const fieldSel = 'input, textarea, select, [contenteditable="true"], [role="textbox"]';
   const skipTypes = new Set(["hidden", "submit", "button", "reset", "image"]);
@@ -2015,126 +2062,99 @@ export function collectSnapshotForms(doc, visible) {
   return forms;
 }
 
-export function buildSnapshotExpression(maxTextChars) {
-  return `(() => {
-    const norm = value => String(value || '').replace(/\\s+/g, ' ').trim();
-    const short = value => norm(value).slice(0, 240);
-    const visible = el => {
-      try {
-        const style = window.getComputedStyle(el);
-        const rect = el.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-      } catch {
-        return false;
-      }
-    };
-    const summarizeSnapshotForms = ${summarizeSnapshotForms.toString()};
-    const collectSnapshotForms = ${collectSnapshotForms.toString()};
-    const snapshotControlRegion = ${snapshotControlRegion.toString()};
-    const labelForInRoot = (el, root) => {
-      const parts = [];
-      if (el.id) {
-        try {
-          const byFor = root.querySelectorAll
-            ? Array.from(root.querySelectorAll('label[for]')).filter(l => l.htmlFor === el.id)
-            : [];
-          parts.push(...byFor.map(l => l.innerText));
-        } catch {}
-      }
-      try {
-        const wrapping = el.closest && el.closest('label');
-        if (wrapping) parts.push(wrapping.innerText);
-      } catch {}
-      parts.push(
-        el.getAttribute('aria-label'),
-        el.getAttribute('placeholder'),
-        el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' ? el.innerText : '',
-        el.value && (el.tagName === 'BUTTON' || el.type === 'submit') ? el.value : ''
-      );
-      // Prefer first non-empty label source (avoid "Bio Bio" concat noise)
-      for (const p of parts) {
-        const s = short(p);
-        if (s) return s;
-      }
-      return '';
-    };
-    const describe = (el, ctx) => ({
-      tag: el.tagName.toLowerCase(),
-      type: el.getAttribute('type') || '',
-      name: el.getAttribute('name') || '',
-      id: el.id || '',
-      label: labelForInRoot(el, ctx.root || document),
-      region: snapshotControlRegion(el),
-      ...(ctx.shadow ? { shadow: true } : {}),
-      ...(ctx.frame ? { frame: ctx.frame } : {}),
-    });
-    const CONTROL_SEL =
-      'input, textarea, select, button, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="listbox"], [contenteditable="true"], [role="textbox"]';
-    const collectControls = (root, ctx, out, depth = 0) => {
-      if (!root || depth > 6 || out.length >= 120) return;
-      let nodes = [];
-      try {
-        nodes = Array.from(root.querySelectorAll(CONTROL_SEL));
-      } catch {
-        return;
-      }
-      for (const el of nodes) {
-        if (out.length >= 120) break;
-        if (!visible(el)) continue;
-        out.push(describe(el, ctx));
-      }
-      // Open shadow roots
-      let all = [];
-      try {
-        all = Array.from(root.querySelectorAll('*'));
-      } catch {
-        all = [];
-      }
-      for (const host of all) {
-        if (out.length >= 120) break;
-        if (host.shadowRoot) {
-          collectControls(host.shadowRoot, { ...ctx, shadow: true, root: host.shadowRoot }, out, depth + 1);
-        }
-      }
-    };
-    const controls = [];
-    collectControls(document, { root: document }, controls, 0);
-    // Same-origin iframes
-    const frames = [];
-    for (const iframe of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
-      let doc = null;
-      try {
-        doc = iframe.contentDocument;
-      } catch {
-        doc = null;
-      }
-      if (!doc) continue;
-      const frameName = iframe.id || iframe.name || iframe.title || 'iframe';
-      frames.push({ name: frameName, src: iframe.src || '' });
-      collectControls(doc, { root: doc, frame: frameName }, controls, 0);
+/** Ancestor, overlay, and box check already used by text clicks. */
+export function visibleIn(el, frameVisible) {
+  try {
+    if (!frameVisible) return false;
+    const win = el.ownerDocument.defaultView || window;
+    if (typeof el.checkVisibility === "function") {
+      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
     }
-    const alerts = Array.from(document.querySelectorAll('[role="alert"], .error'))
-      .filter(el => {
-        if (!visible(el)) return false;
-        if (el.hasAttribute('hidden')) return false;
-        return norm(el.innerText).length > 0;
-      })
-      .slice(0, 20)
-      .map(el => short(el.innerText));
-    const forms = collectSnapshotForms(document, visible);
-    return {
-      url: location.href,
-      title: document.title,
-      focused: document.hasFocus(),
-      activeElement: document.activeElement ? describe(document.activeElement, { root: document }) : null,
-      headings: Array.from(document.querySelectorAll('h1,h2,h3')).filter(visible).slice(0, 40).map(el => short(el.innerText)),
-      forms,
-      controls,
-      frames,
-      alerts,
-      links: Array.from(document.querySelectorAll('a[href]')).filter(visible).slice(0, 80).map(el => ({ text: short(el.innerText), href: el.href })),
-      text: norm(document.body ? document.body.innerText : '').slice(0, ${Number(maxTextChars)}),
-    };
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    // opacity and pointer-events are not inherited, so a control inside a
+    // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
+    for (let node = el, depth = 0; node && depth < 12; depth += 1) {
+      const style = win.getComputedStyle(node);
+      if (!style) break;
+      if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none" || Number(style.opacity) <= 0.01) return false;
+      const parent = node.parentElement;
+      const root = !parent && node.getRootNode ? node.getRootNode() : null;
+      node = parent || (root && root.host ? root.host : null);
+    }
+    // Hit-test: checkVisibility does not do it, so a control under an
+    // overlay still looks visible — and because dispatch is by reference it
+    // would fire straight through the overlay. Ranking only; a target
+    // outside the viewport simply cannot be hit-tested, so it is not
+    // penalised for that.
+    const doc = el.ownerDocument;
+    const r = el.getBoundingClientRect();
+    const px = r.left + r.width / 2;
+    const py = r.top + r.height / 2;
+    if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
+      let hit = doc.elementFromPoint(px, py);
+      for (let d = 0; d < 8; d += 1) {
+        if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== "function") break;
+        const deeper = hit.shadowRoot.elementFromPoint(px, py);
+        if (!deeper || deeper === hit) break;
+        hit = deeper;
+      }
+      if (hit) {
+        const chain = [];
+        for (let node = el, d = 0; node && d < 8; d += 1) {
+          chain.push(node);
+          const root = node.getRootNode ? node.getRootNode() : null;
+          node = root && root.host ? root.host : null;
+        }
+        if (!chain.some((node) => hit === node || node.contains(hit) || hit.contains(node))) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The iframe that embeds el, plus one parent frame. Not a walk to the top. */
+export function frameTreeVisible(frame) {
+  if (!frame) return true;
+  let parentOk = true;
+  try {
+    const parentView = frame.ownerDocument && frame.ownerDocument.defaultView;
+    const parent = parentView && parentView.frameElement;
+    if (parent) parentOk = visibleIn(parent, true);
+  } catch {
+    parentOk = false;
+  }
+  return visibleIn(frame, parentOk);
+}
+
+export function embeddingVisible(el) {
+  try {
+    const view = el && el.ownerDocument && el.ownerDocument.defaultView;
+    const frame = view && view.frameElement;
+    return frameTreeVisible(frame);
+  } catch {
+    return false;
+  }
+}
+
+export function buildSnapshotExpression(maxTextChars, options = {}) {
+  const scope =
+    typeof options.scope === "string" && options.scope.trim() ? options.scope.trim() : "auto";
+  return `(() => {
+    ${snapshotPageHelpersSource()}
+    ${visibleIn.toString()}
+    ${frameTreeVisible.toString()}
+    ${embeddingVisible.toString()}
+    const summarizeSnapshotForms = ${summarizeSnapshotForms.toString()};
+    const visible = el => visibleIn(el, embeddingVisible(el));
+    return buildSnapshotPayload(document, {
+      maxTextChars: ${Number(maxTextChars) || 0},
+      scope: ${JSON.stringify(scope)},
+      visible,
+      summarizeSnapshotForms,
+    });
   })()`;
 }
 
@@ -2182,7 +2202,6 @@ function buildAutofillProfileControlsExpression() {
   })()`;
 }
 
-
 export function dispatchInsertText(el, data) {
   const str = String(data ?? "");
   const fire = (type) => {
@@ -2226,7 +2245,9 @@ export function dispatchInsertText(el, data) {
     } catch {}
   }
   if (el._valueTracker) {
-    try { el._valueTracker.setValue(""); } catch {}
+    try {
+      el._valueTracker.setValue("");
+    } catch {}
   }
   fire("input");
 }
@@ -2291,7 +2312,9 @@ export function insertTextDelayMs(el, text, { requestedMs = 55, budgetMs = 20000
 }
 
 export function matchComboboxOption(options, query) {
-  const wanted = String(query || "").trim().toLowerCase();
+  const wanted = String(query || "")
+    .trim()
+    .toLowerCase();
   if (!wanted) return null;
   const list = Array.from(options || []);
   const textOf = (item) => String(item.textContent || item.innerText || "").toLowerCase();
@@ -2312,7 +2335,11 @@ export function collectComboboxOptions(root) {
       out.push(...Array.from(node.querySelectorAll('[role="option"]')));
     } catch {}
     let all = [];
-    try { all = Array.from(node.querySelectorAll("*")); } catch { all = []; }
+    try {
+      all = Array.from(node.querySelectorAll("*"));
+    } catch {
+      all = [];
+    }
     for (const host of all) {
       if (host.shadowRoot) walk(host.shadowRoot, depth + 1);
     }
@@ -2363,13 +2390,25 @@ export function dispatchOptionPointer(option) {
   if (!option) return false;
   const fire = (type) => {
     try {
-      option.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "mouse" }));
+      option.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          pointerId: 1,
+          pointerType: "mouse",
+        })
+      );
     } catch {
       try {
-        option.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true }));
+        option.dispatchEvent(
+          new MouseEvent(type, { bubbles: true, cancelable: true, composed: true })
+        );
       } catch {
         try {
-          option.dispatchEvent(new Event(type, { bubbles: true, cancelable: true, composed: true }));
+          option.dispatchEvent(
+            new Event(type, { bubbles: true, cancelable: true, composed: true })
+          );
         } catch {}
       }
     }
@@ -2437,7 +2476,8 @@ export function collectFillLabels(el, root) {
         const label = list[i];
         if (!label) continue;
         let forId = label.htmlFor || "";
-        if (!forId && typeof label.getAttribute === "function") forId = label.getAttribute("for") || "";
+        if (!forId && typeof label.getAttribute === "function")
+          forId = label.getAttribute("for") || "";
         if (forId === el.id) push(textOf(label));
       }
     }
@@ -2460,7 +2500,8 @@ export function collectFillLabels(el, root) {
     /* no sibling walk */
   }
   try {
-    const labelledBy = typeof el.getAttribute === "function" ? el.getAttribute("aria-labelledby") : "";
+    const labelledBy =
+      typeof el.getAttribute === "function" ? el.getAttribute("aria-labelledby") : "";
     if (labelledBy && root && typeof root.getElementById === "function") {
       const ids = String(labelledBy).split(/\s+/);
       for (let i = 0; i < ids.length; i += 1) {
@@ -2616,7 +2657,11 @@ export function fillValueStuck(el, value, mode) {
     if (expanded === "true") return false;
     let selected = false;
     try {
-      selected = !!(option && typeof option.getAttribute === "function" && option.getAttribute("aria-selected") === "true");
+      selected = !!(
+        option &&
+        typeof option.getAttribute === "function" &&
+        option.getAttribute("aria-selected") === "true"
+      );
     } catch {
       selected = false;
     }
@@ -2629,7 +2674,11 @@ export function fillValueStuck(el, value, mode) {
     if (got && first && got === first && expanded === "false") return true;
     // List closed and the input holds exactly what was requested, even when
     // the option text is longer ("New York" from "JFK · New York …").
-    if (expanded === "false" && (gotRaw === expected || (got && normalizeFillKey(expected) === got))) return true;
+    if (
+      expanded === "false" &&
+      (gotRaw === expected || (got && normalizeFillKey(expected) === got))
+    )
+      return true;
     if (!got && first && expanded !== "true") {
       let around = "";
       try {
@@ -2644,7 +2693,11 @@ export function fillValueStuck(el, value, mode) {
     return false;
   }
   const compact = (raw) => normalizeFillKey(raw).replace(/ /g, "");
-  const caseFold = (raw) => String(raw == null ? "" : raw).toLowerCase().replace(/\s+/g, " ").trim();
+  const caseFold = (raw) =>
+    String(raw == null ? "" : raw)
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
   // Phone and numeric masks insert punctuation. Ordinary text, including
   // passwords and emails, must not treat "a-b" as "ab".
   const foldsPunctuation = () => {
@@ -2680,7 +2733,12 @@ export function fillValueStuck(el, value, mode) {
 
 /** True only when fill reported an empty failed array. Null and garbage are misses. */
 export function fillFieldsSucceeded(result) {
-  return Boolean(result) && typeof result === "object" && Array.isArray(result.failed) && result.failed.length === 0;
+  return (
+    Boolean(result) &&
+    typeof result === "object" &&
+    Array.isArray(result.failed) &&
+    result.failed.length === 0
+  );
 }
 
 export const FILL_HELPER_SOURCE = [
@@ -3055,66 +3113,20 @@ export const CLICK_HELPER_SOURCE = [
   .join("\n");
 
 /** Resolve and click in a single page expression. */
-function buildClickExpression({ selector, text }) {
+export function buildClickExpression({ selector, text, ref, role, name } = {}) {
   return `(() => {
     ${CLICK_HELPER_SOURCE}
+    ${snapshotPageHelpersSource()}
+    ${visibleIn.toString()}
+    ${frameTreeVisible.toString()}
+    ${embeddingVisible.toString()}
     const selector = ${JSON.stringify(selector || "")};
     const wanted = normalizeLabelText(${JSON.stringify(text || "")});
+    const clickRef = ${JSON.stringify(ref || "")};
+    const clickRole = ${JSON.stringify(String(role || "").toLowerCase())};
+    const clickName = ${JSON.stringify(name || "")};
     const CLICK_SEL = 'button, a, [role="button"], [role="option"], [role="menuitem"], [role="tab"], [role="radio"], [role="checkbox"], [role="link"], [role="switch"], input[type="button"], input[type="submit"], input[type="reset"], summary';
 
-    // frameVisible: an element can be perfectly visible inside its own document
-    // while the iframe embedding that document is hidden.
-    const visibleIn = (el, frameVisible) => {
-      try {
-        if (!frameVisible) return false;
-        const win = el.ownerDocument.defaultView || window;
-        if (typeof el.checkVisibility === 'function') {
-          if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
-        }
-        const rect = el.getBoundingClientRect();
-        if (!(rect.width > 0 && rect.height > 0)) return false;
-        // opacity and pointer-events are not inherited, so a control inside a
-        // stale menu whose ANCESTOR is opacity:0 still computes opacity 1.
-        for (let node = el, depth = 0; node && depth < 12; depth += 1) {
-          const style = win.getComputedStyle(node);
-          if (!style) break;
-          if (style.display === 'none' || style.visibility === 'hidden' || style.pointerEvents === 'none' || Number(style.opacity) <= 0.01) return false;
-          const parent = node.parentElement;
-          const root = !parent && node.getRootNode ? node.getRootNode() : null;
-          node = parent || (root && root.host ? root.host : null);
-        }
-        // Hit-test: checkVisibility does not do it, so a control under an
-        // overlay still looks visible — and because dispatch is by reference it
-        // would fire straight through the overlay. Ranking only; a target
-        // outside the viewport simply cannot be hit-tested, so it is not
-        // penalised for that.
-        const doc = el.ownerDocument;
-        const r = el.getBoundingClientRect();
-        const px = r.left + r.width / 2;
-        const py = r.top + r.height / 2;
-        if (px >= 0 && py >= 0 && px <= win.innerWidth && py <= win.innerHeight) {
-          let hit = doc.elementFromPoint(px, py);
-          for (let d = 0; d < 8; d += 1) {
-            if (!hit || !hit.shadowRoot || typeof hit.shadowRoot.elementFromPoint !== 'function') break;
-            const deeper = hit.shadowRoot.elementFromPoint(px, py);
-            if (!deeper || deeper === hit) break;
-            hit = deeper;
-          }
-          if (hit) {
-            const chain = [];
-            for (let node = el, d = 0; node && d < 8; d += 1) {
-              chain.push(node);
-              const root = node.getRootNode ? node.getRootNode() : null;
-              node = root && root.host ? root.host : null;
-            }
-            if (!chain.some(node => hit === node || node.contains(hit) || hit.contains(node))) return false;
-          }
-        }
-        return true;
-      } catch (err) {
-        return false;
-      }
-    };
     // A real user click and el.click() both suppress activation on a disabled
     // control; dispatchEvent does not. Without this, automation could fire a
     // disabled destructive action that the UI does not offer.
@@ -3161,7 +3173,7 @@ function buildClickExpression({ selector, text }) {
     for (const frame of Array.from(document.querySelectorAll('iframe')).slice(0, 20)) {
       try {
         if (frame.contentDocument) {
-          roots.push({ root: frame.contentDocument, frameVisible: visibleIn(frame, true) });
+          roots.push({ root: frame.contentDocument, frameVisible: frameTreeVisible(frame) });
         }
       } catch (err) { /* cross-origin */ }
     }
@@ -3169,7 +3181,45 @@ function buildClickExpression({ selector, text }) {
     let el = null;
     let pick = null;
     let frameVisible = true;
-    if (selector) {
+    if (clickRef || clickRole) {
+      const entries = collectSnapshotEntries(document, {
+        scope: "auto",
+        visible: (el) => visibleIn(el, embeddingVisible(el)),
+      });
+      const resolved = resolveSnapshotClick(entries, { ref: clickRef, role: clickRole, name: clickName });
+      if (!resolved.entry) {
+        return {
+          found: false,
+          ambiguous: resolved.ambiguous === true,
+          candidates: resolved.candidates || [],
+          query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
+          candidateCount: (resolved.candidates || []).length,
+          documentHidden: document.visibilityState === "hidden",
+        };
+      }
+      el = resolved.entry.el;
+      if (el && isDisabled(el)) {
+        return {
+          found: false,
+          disabled: true,
+          query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
+          candidateCount: 1,
+          documentHidden: document.visibilityState === "hidden",
+        };
+      }
+      // The ref walk already skips a covered control or one whose frame (or
+      // that frame's parent) is hidden. Refuse again before dispatchEvent,
+      // which would otherwise fire by reference through the cover.
+      if (el && !visibleIn(el, embeddingVisible(el))) {
+        return {
+          found: false,
+          query: clickRef || [clickRole, clickName].filter(Boolean).join(" "),
+          candidateCount: 1,
+          documentHidden: document.visibilityState === "hidden",
+        };
+      }
+    }
+    if (!el && selector) {
       for (const entry of roots) {
         try {
           const hit = entry.root.querySelector(selector);
@@ -3242,6 +3292,7 @@ function buildClickExpression({ selector, text }) {
       return { found: false, query: selector || ${JSON.stringify(text || "")}, candidateCount: 0 };
     }
 
+    const stateBefore = readControlState(el);
     // 'instant': smooth scrolling is async and would leave the control still in
     // flight. Harmless here (we dispatch by reference) but keeps it on screen.
     try { el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); }
@@ -3310,12 +3361,15 @@ function buildClickExpression({ selector, text }) {
       }
     }
 
+    const stateAfter = readControlState(el);
+    const changed = controlStateChanged(stateBefore, stateAfter);
     return {
       found: true,
-      query: selector || ${JSON.stringify(text || "")},
+      query: clickRef || [clickRole, clickName].filter(Boolean).join(' ') || selector || ${JSON.stringify(text || "")},
       matched: {
         tag: el.tagName ? el.tagName.toLowerCase() : '',
-        role: el.getAttribute ? (el.getAttribute('role') || '') : '',
+        role: (el.getAttribute && el.getAttribute('role')) || implicitAriaRole(el) || '',
+        name: snapshotAccessibleName(el, document),
         labels: collectElementLabels(el).slice(0, 4),
       },
       score: pick ? pick.best.score : null,
@@ -3323,11 +3377,14 @@ function buildClickExpression({ selector, text }) {
       runnersUp: pick ? pick.runnersUp.map(item => ({ label: item.labels[0] || '', score: item.score, visible: item.visible })) : [],
       visible: visibleIn(el, frameVisible),
       ...(interrupted ? { interrupted } : {}),
+      state: stateAfter,
+      ...(changed === null ? {} : { stateChanged: changed }),
       // Chrome throttles a backgrounded tab and many sites ignore input there,
       // so a click on one may not take effect. Reported as an observed fact
       // about the tab, not inferred from whether the page appeared to change —
       // a global change-detector produced false negatives on quiet pages and
-      // false positives on ones with a ticking clock.
+      // false positives on ones with a ticking clock. state/stateChanged are
+      // the clicked control only.
       documentHidden: document.visibilityState === 'hidden',
       url: location.href,
     };
@@ -3554,16 +3611,16 @@ Modes:
 
 Current-mode operations:
 - open: create/get a named relay tab and navigate it to a URL.
-- snapshot: summarize the active/current tab.
+- snapshot: main landmark plus any open dialog (role, name, value, ref). scope "full" adds nav and page text. Pass --quiet.
 - fill_fields: fill labels/placeholders/names from fields.
 - autofill_profile: inspect the active form, map common fields to the local autofill profile, resolve placeholders locally, and fill them in one call.
-- click: click by selector or visible text.
+- click: click by ref, role+name, selector, or visible text. Returns the control state. Does not focus the window.
 - type: type into a selector or label.
 - screenshot: save a PNG under ~/.autohub/browser-screenshots.
 - evaluate: evaluate JavaScript in the selected tab.
 - goto: navigate the selected tab.
 - focus: one-shot human-in-the-loop focus (tab|window) with reason; does not change the popup default (background).
-- doctor: classify relay/extension/target-bootstrap health.
+- doctor: health check. Returns status, tabCount, and the active tab. verbose lists every tab; prefer tabs for inventory.
 - tabs: list every http(s) tab (active/focused first). Fast inventory — do not use doctor to find a tab.
 
 Targeting:
@@ -3602,7 +3659,7 @@ Resolved placeholder values are redacted from tool output.`,
       target: {
         type: "object",
         description:
-          'Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.',
+          "Current-mode tab target. Defaults to the unique-active tab, or last-focused when the extension stamps focused. Optional: id, url, title, name, query, strategy.",
         additionalProperties: true,
       },
       query: {
@@ -3627,7 +3684,31 @@ Resolved placeholder values are redacted from tool output.`,
       },
       selector: {
         type: "string",
-        description: "CSS selector for click/type/evaluate helpers.",
+        description: "CSS selector for click/type.",
+      },
+      ref: {
+        type: "string",
+        description:
+          'Snapshot ref for click, such as "e4". Refs match the default snapshot (dialog, then main, no nav).',
+      },
+      role: {
+        type: "string",
+        description: 'ARIA role for click, used with name. Example: role "combobox" name "Type".',
+      },
+      name: {
+        type: "string",
+        description: "Accessible name for click. Exact match. Requires role.",
+      },
+      scope: {
+        type: "string",
+        enum: ["auto", "full", "nav"],
+        description:
+          "Snapshot scope. auto (default) is the open dialog plus main, without nav or body text. full adds nav and text. nav is the navigation landmark only.",
+      },
+      verbose: {
+        type: "boolean",
+        description:
+          "Doctor only. Include the full tab list. Default doctor is status, tabCount, and the active tab.",
       },
       label: {
         type: "string",

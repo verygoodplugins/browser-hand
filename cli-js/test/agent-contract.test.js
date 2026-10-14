@@ -10,7 +10,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { summarizeTabInventory } from "../src/tool.js";
+import { buildHandlerInput, slimCliResult } from "../src/cli.js";
+import { buildClickExpression, summarizeTabInventory } from "../src/tool.js";
 import {
   buildSnapshotPayload,
   collectSnapshotEntries,
@@ -108,6 +109,10 @@ function matches(node, sel) {
   if (sel === "h1, h2, h3" || sel === "h1,h2,h3") return ["H1", "H2", "H3"].includes(node.tagName);
   if (sel === "label") return node.tagName === "LABEL";
   if (sel === "*") return true;
+  if (sel.startsWith(".") && !sel.includes(" ")) {
+    const className = String(node.getAttribute("class") || "");
+    return className.split(/\s+/).includes(sel.slice(1));
+  }
   const simple = sel.match(/^[a-z]+$/);
   return Boolean(simple) && node.tagName === sel.toUpperCase();
 }
@@ -341,7 +346,9 @@ test("control state reports aria-checked and whether a toggle moved", () => {
   assert.equal(implicitAriaRole(el("input", { type: "checkbox" })), "checkbox");
   assert.equal(implicitAriaRole(el("input", { type: "range" })), "slider");
   assert.equal(implicitAriaRole(el("input", { type: "number" })), "spinbutton");
+  assert.equal(implicitAriaRole(el("select")), "combobox");
   assert.equal(implicitAriaRole(el("select", { multiple: "" })), "listbox");
+  assert.equal(implicitAriaRole(el("select", { size: "4" })), "listbox");
 
   const secret = el("input", {
     type: "password",
@@ -468,6 +475,40 @@ test("shadow controls inside nav stay out of the default snapshot", () => {
   assert.ok(payload.nodes.some((node) => node.name === "Save"));
 });
 
+test("native listbox and slider controls stay in the snapshot", () => {
+  const many = el("select", { multiple: "", "aria-label": "Many" });
+  const volume = el("input", { type: "range", "aria-label": "Volume" });
+  const body = el("main", {}, [many, volume, el("div", { role: "listbox" }, [el("div", { role: "option", text: "A" })])]);
+  const doc = {
+    body,
+    title: "Form",
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.equal(payload.nodes.find((node) => node.name === "Many").role, "listbox");
+  assert.equal(payload.nodes.find((node) => node.name === "Volume").role, "slider");
+  assert.equal(
+    payload.nodes.some((node) => node.role === "listbox" && node.name !== "Many"),
+    false
+  );
+});
+
+test("scoped snapshot keeps visible alerts", () => {
+  const body = el("main", {}, [
+    el("button", { text: "Save" }),
+    el("div", { role: "alert", text: "Card declined" }),
+    el("p", { class: "error", text: "Name is required" }),
+    el("div", { role: "alert", hidden: "", text: "Hidden" }),
+  ]);
+  const doc = {
+    body,
+    title: "Pay",
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  const payload = buildSnapshotPayload(doc, { scope: "auto" });
+  assert.deepEqual(payload.alerts, ["Card declined", "Name is required"]);
+});
+
 test("injected snapshot helpers define the selectors they close over", () => {
   const context = vm.createContext({
     document: {
@@ -481,4 +522,89 @@ test("injected snapshot helpers define the selectors they close over", () => {
     context
   );
   assert.equal(context.roots.scope, "document");
+});
+
+test("cli accepts snapshot scope, doctor verbose, and click handles", () => {
+  const click = buildHandlerInput("click", { role: "combobox", name: "Type", "page-name": "dns" });
+  assert.equal(click.role, "combobox");
+  assert.equal(click.name, "Type");
+  assert.equal(click.pageName, "dns");
+
+  const byRef = buildHandlerInput("click", { ref: "e4" });
+  assert.equal(byRef.ref, "e4");
+
+  const snapshot = buildHandlerInput("snapshot", { scope: "full" });
+  assert.equal(snapshot.scope, "full");
+
+  const doctor = buildHandlerInput("doctor", { verbose: true });
+  assert.equal(doctor.verbose, true);
+  assert.equal(buildHandlerInput("doctor", {}).verbose, undefined);
+});
+
+test("quiet snapshot drops the repeated page wrapper", () => {
+  const snapshot = slimCliResult(
+    {
+      success: true,
+      mode: "current",
+      operation: "snapshot",
+      target: { title: "DNS", url: "https://dash.example/dns" },
+      snapshot: {
+        scope: "dialog+main",
+        nodes: [{ ref: "e1", role: "textbox", name: "Name", value: "www" }],
+      },
+    },
+    { quiet: true }
+  );
+  assert.equal(snapshot.mode, undefined);
+  assert.equal(snapshot.target, undefined);
+  assert.equal(snapshot.snapshot.nodes[0].value, "www");
+});
+
+test("role and ref clicks use the default snapshot refs", () => {
+  const byRole = buildClickExpression({ role: "button", name: "Save" });
+  const byRef = buildClickExpression({ ref: "e3" });
+  const call =
+    /collectSnapshotEntries\(document, \{\s*scope: "auto",\s*visible: \(el\) => visibleIn\(el, embeddingVisible\(el\)\),\s*\}\)/;
+  assert.match(byRole, call);
+  assert.match(byRef, call);
+  assert.doesNotMatch(byRole, /collectSnapshotEntries\(document, \{ includeNav: true/);
+  assert.doesNotMatch(byRef, /collectSnapshotEntries\(document, \{ includeNav: true/);
+  assert.match(byRole, /visibleIn\(el, embeddingVisible\(el\)\)/);
+  assert.match(byRef, /visibleIn\(el, embeddingVisible\(el\)\)/);
+});
+
+test("role and ref clicks refuse a control elementIsVisible accepts under an overlay", () => {
+  const save = el("button", { text: "Save" });
+  save.getBoundingClientRect = () => ({ left: 10, top: 10, width: 40, height: 20 });
+  save.checkVisibility = () => false;
+  save.dispatchEvent = () => {
+    throw new Error("dispatched through the overlay");
+  };
+  save.scrollIntoView = () => {};
+  const body = el("main", {}, [save]);
+  const view = {
+    innerWidth: 800,
+    innerHeight: 600,
+    frameElement: null,
+    getComputedStyle: () => ({
+      display: "block",
+      visibility: "visible",
+      pointerEvents: "auto",
+      opacity: "1",
+    }),
+  };
+  const doc = {
+    body,
+    title: "Form",
+    visibilityState: "visible",
+    defaultView: view,
+    elementFromPoint: () => save,
+    querySelectorAll: (sel) => body.querySelectorAll(sel),
+  };
+  save.ownerDocument = doc;
+  const context = vm.createContext({ document: doc, window: view });
+  const result = vm.runInContext(buildClickExpression({ role: "button", name: "Save" }), context);
+  assert.equal(result.found, false);
+  assert.equal(result.candidateCount, 0);
+  assert.equal(result.query, "button Save");
 });

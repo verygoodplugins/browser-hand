@@ -122,7 +122,10 @@ test("lists labeled form fields, an orphan input, and skips nav and hidden input
     },
   ]);
   const labels = forms.flatMap((entry) => entry.fields.map((field) => field.label));
-  assert.equal(labels.some((label) => label.includes("Products")), false);
+  assert.equal(
+    labels.some((label) => label.includes("Products")),
+    false
+  );
   assert.equal(JSON.stringify(forms).includes("csrf"), false);
 });
 
@@ -157,7 +160,9 @@ test("a shadow input inside a light-DOM form is not submitted with that form", (
   const host = h("span", {});
   host.shadowRoot = shadow;
   shadow.host = host;
-  const root = h("div", {}, [h("form", { id: "profile", name: "profile", action: "/save" }, [host])]);
+  const root = h("div", {}, [
+    h("form", { id: "profile", name: "profile", action: "/save" }, [host]),
+  ]);
 
   const forms = summarizeSnapshotForms(root, () => true);
   assert.deepEqual(forms, [
@@ -190,7 +195,9 @@ test("a shadow field keeps its own label when the light DOM reuses the id", () =
   ]);
 
   const forms = summarizeSnapshotForms(root, () => true);
-  const byName = Object.fromEntries(forms.flatMap((form) => form.fields.map((field) => [field.name, field.label])));
+  const byName = Object.fromEntries(
+    forms.flatMap((form) => form.fields.map((field) => [field.name, field.label]))
+  );
   assert.equal(byName.outerEmail, "Outer email");
   assert.equal(byName.innerEmail, "Inner email");
 });
@@ -205,7 +212,9 @@ test("the form attribute groups a control that sits outside the form", () => {
   assert.equal(forms.length, 1);
   assert.equal(forms[0].id, "checkout");
   assert.equal(forms[0].orphan, undefined);
-  assert.deepEqual(forms[0].fields, [{ label: "Email", type: "email", name: "email", id: "email" }]);
+  assert.deepEqual(forms[0].fields, [
+    { label: "Email", type: "email", name: "email", id: "email" },
+  ]);
 });
 
 test("form=missing does not fall through to the ancestor form", () => {
@@ -248,7 +257,9 @@ test("a shadow control does not join a light-DOM form with the same id", () => {
   assert.ok(orphan);
   assert.ok(orphan.fields.some((field) => field.name === "card"));
   assert.equal(
-    forms.some((form) => form.id === "checkout" && form.fields.some((field) => field.name === "card")),
+    forms.some(
+      (form) => form.id === "checkout" && form.fields.some((field) => field.name === "card")
+    ),
     false
   );
 });
@@ -322,7 +333,10 @@ test("omits a form when every field fails the visibility predicate", () => {
       h("input", { type: "text", name: "gone", id: "gone" }),
     ]),
   ]);
-  assert.deepEqual(summarizeSnapshotForms(root, () => false), []);
+  assert.deepEqual(
+    summarizeSnapshotForms(root, () => false),
+    []
+  );
 });
 
 test("region is nav, then form, otherwise control", () => {
@@ -345,21 +359,17 @@ test("region is nav, then form, otherwise control", () => {
   assert.equal(snapshotControlRegion(h("button", { text: "Go" })), "control");
 });
 
-test("buildSnapshotExpression lists forms before controls and assigns region", () => {
+test("buildSnapshotExpression embeds the scoped payload and form summary", () => {
   const src = buildSnapshotExpression(100);
   new Function(`return ${src}`);
-  const body = src.slice(src.lastIndexOf("return {"));
-  const formsAt = body.indexOf("forms");
-  const controlsAt = body.indexOf("controls");
-  const linksAt = body.indexOf("links");
-  assert.ok(formsAt !== -1 && formsAt < controlsAt && controlsAt < linksAt);
-  assert.match(src, /const forms = collectSnapshotForms\(document, visible\)/);
-  assert.match(src, /region:\s*snapshotControlRegion\(el\)/);
-  assert.match(src, /\.slice\(0,\s*100\)/);
+  assert.match(src, /buildSnapshotPayload/);
+  assert.match(src, /const summarizeSnapshotForms = function summarizeSnapshotForms/);
+  assert.match(src, /scope: "auto"/);
+  const full = buildSnapshotExpression(100, { scope: "full" });
+  assert.match(full, /scope: "full"/);
 
-  // toString() drops module closures. Run the embedded copy in a bare realm.
-  const start = src.indexOf("const summarizeSnapshotForms");
-  const end = src.indexOf("const labelForInRoot");
+  const start = src.indexOf("const summarizeSnapshotForms = ");
+  const end = src.indexOf("const visible = el =>");
   const name = h("input", { id: "full-name", name: "fullName", type: "text" });
   const root = h("div", {}, [
     h("form", { id: "profile", name: "profile", action: "/save" }, [
@@ -372,7 +382,6 @@ test("buildSnapshotExpression lists forms before controls and assigns region", (
     `${src.slice(start, end)}\nthis.forms = summarizeSnapshotForms(root, () => true);`,
     context
   );
-  // Cross-realm objects fail deepEqual; compare the JSON the page would return.
   assert.deepEqual(JSON.parse(JSON.stringify(context.forms)), [
     {
       id: "profile",
