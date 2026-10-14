@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-14
+
+- Added `--group-title` on `open` and `goto`. Tabs for one task join a Chrome tab group with that title and a color. The same title keeps joining the group. A different title starts a new group. With no title, the group stays named Browser Hand. If a saved group cannot be reused in that tab's window, Browser Hand opens a replacement group instead of failing the command.
+- Added `steps`, one call for a repeated form (click, fill, type, evaluate, snapshot). The call stops at the first miss, and step snapshots leave formatted secrets out.
+- Added a scoped snapshot (open dialog plus main by default) and clicks by snapshot ref or by role and accessible name. Covered controls are skipped. `doctor` stays a short health check. `tabs` is the inventory.
+- Snapshot `forms` lists the labeled fields in that same scope.
+- Fixed fill so a missed field fails the command, and the read-back keeps unicode and punctuation. A control whose form id is missing is not attached.
+- Fixed combobox fill so it types, then chooses the matching option.
+- Fixed `open` so an existing tab is reused instead of a new blank one. Snapshot and evaluate no longer create a named tab just to read the page.
+- Fixed the debugger infobar: after you dismiss "Browser Hand started debugging this browser", that tab stays on the scripting path and the bar is not brought back.
+- Improved the toolbar icon so the crop is the solid glove, not the wrist mist.
+
 ## [0.2.9] - 2026-07-14
 
 - Added configurable per-browser idle cleanup with `--idle-timeout`, `DEV_BROWSER_IDLE_TIMEOUT_MS`, and `~/.dev-browser/config.json` support. Idle cleanup preserves persistent profiles, excludes externally connected Chrome, and safely rechecks activity under the per-browser lock before closing.

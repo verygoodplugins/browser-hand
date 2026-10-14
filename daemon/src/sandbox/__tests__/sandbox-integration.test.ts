@@ -85,7 +85,7 @@ describe.sequential("QuickJS sandbox integration", () => {
       `
         const page = await browser.getPage("locator");
         await page.goto("https://example.com");
-        console.log(await page.locator("h1").textContent());
+        console.log(await page.locator("body").textContent());
       `,
       manager,
       "default",
@@ -95,7 +95,7 @@ describe.sequential("QuickJS sandbox integration", () => {
       }
     );
 
-    expect(output.stdout.join("")).toContain("Example Domain");
+    expect(output.stdout.join("")).toContain("documentation examples");
   }, 120_000);
 
   it("supports page.evaluate", async () => {
