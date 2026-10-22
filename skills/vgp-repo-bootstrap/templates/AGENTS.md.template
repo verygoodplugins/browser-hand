@@ -29,7 +29,10 @@ npm run build
 
 ## Validation before claiming done
 
-Run the real test/build commands above and cite output. Do not claim green without evidence.
+Read and follow the installed `babysit` skill
+(`~/.autovault/skills/babysit/SKILL.md`) for PR creation, hosted review, CI
+triage, and merge readiness. It is the canonical procedure; keep
+project-specific commands and contracts here.
 
 ## Commit style
 
