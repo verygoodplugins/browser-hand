@@ -502,21 +502,44 @@ function relayPageEndpoint(name) {
 
 /**
  * chrome.tabs.create rejects file: URLs ("Cannot navigate to a file: URL"), so
- * rewrite them to the relay's /local-file route. The relay reads the file and
- * serves it over http, which the extension can open like any other page.
- * Non-file URLs pass through unchanged.
+ * register the document with the relay and open the capability URL it returns:
+ * `<doc origin>/local/<token>/<basename>`. The token scopes the document to its
+ * own directory, so `./style.css` or `img/a.png` resolve against that URL and
+ * the relay serves them from beside the file (never from outside it). The
+ * original query string and hash carry over. Non-file URLs pass through.
  */
-export function rewriteLocalFileUrl(url, relayBase = CURRENT_RELAY_URL) {
+export async function rewriteLocalFileUrl(url, relayBase = CURRENT_RELAY_URL) {
   if (typeof url !== "string" || !/^file:\/\//i.test(url)) {
     return url;
   }
+  let parsed;
   let filePath;
   try {
-    filePath = fileURLToPath(url);
+    parsed = new URL(url);
+    filePath = fileURLToPath(parsed);
   } catch {
     return url;
   }
-  return `${relayBase}/local-file?path=${encodeURIComponent(filePath)}`;
+  let registered;
+  try {
+    registered = await fetchJson(`${relayBase}/local-docs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+      timeoutMs: 5000,
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not serve ${filePath} through the Browser Hand relay (${error.message}). ` +
+        "A relay started before local-document support needs a restart: `browser-hand relay`."
+    );
+  }
+  if (typeof registered?.url !== "string") {
+    throw new Error(
+      `The Browser Hand relay at ${relayBase} did not return a URL for ${filePath}; restart it with \`browser-hand relay\`.`
+    );
+  }
+  return `${registered.url}${parsed.search}${parsed.hash}`;
 }
 
 async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
@@ -1527,13 +1550,6 @@ async function runCurrentOperation(input, timeoutMs) {
     return await runCurrentTabs(input, timeoutMs);
   }
 
-  if ((operation === "open" || operation === "goto") && typeof input.url === "string") {
-    const rewritten = rewriteLocalFileUrl(input.url);
-    if (rewritten !== input.url) {
-      input = { ...input, url: rewritten };
-    }
-  }
-
   if (input.query && !(input.target && input.target.query)) {
     input = {
       ...input,
@@ -1542,6 +1558,13 @@ async function runCurrentOperation(input, timeoutMs) {
   }
 
   const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  // Registering needs a running relay, so this waits for ensureRelayConnected.
+  if ((operation === "open" || operation === "goto") && typeof input.url === "string") {
+    const rewritten = await rewriteLocalFileUrl(input.url);
+    if (rewritten !== input.url) {
+      input = { ...input, url: rewritten };
+    }
+  }
   const cdp = new CdpClient(info.wsEndpoint);
   try {
     const targetResult = await cdp.send("Target.getTargets");

@@ -11,6 +11,7 @@ const server = await serveRelay({ host, port });
 console.error(`[browser-hand-relay] listening on http://${host}:${port}`);
 console.error(`[browser-hand-relay] extension: ws://${host}:${port}/extension`);
 console.error(`[browser-hand-relay] cdp:       ${server.wsEndpoint}`);
+console.error(`[browser-hand-relay] local docs: ${server.localDocOrigin} (capability URLs only)`);
 
 const stop = async () => {
   try {

@@ -58,7 +58,9 @@ Operations:
   open --url <url> [--page-name <name>] [--group-title <text>]
                                         Create/get a named relay tab and navigate it.
                                         --group-title names the browser tab group for this session.
-                                        file: URLs are served through the relay (tabs.create rejects file:).
+                                        file: URLs are registered with the relay and opened from its
+                                        separate local-doc origin (tabs.create rejects file:); only the
+                                        document's own directory is served.
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.

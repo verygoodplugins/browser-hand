@@ -7,6 +7,8 @@
  */
 
 import assert from "node:assert/strict";
+import http from "node:http";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -48,18 +50,81 @@ test("doctor stays healthy when the smoke tab bootstraps", () => {
   assert.equal(healthy.status, "tab_bootstrap_works");
 });
 
-test("rewriteLocalFileUrl routes file: URLs through the relay", () => {
-  const out = rewriteLocalFileUrl("file:///Users/me/brief.html", "http://127.0.0.1:9333");
-  assert.equal(out, "http://127.0.0.1:9333/local-file?path=%2FUsers%2Fme%2Fbrief.html");
+/** Stub relay recording what the CLI sends; the real relay is covered in relay/src/local-file-server.test.ts. */
+async function withStubRelay(reply, fn) {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", () => {
+      requests.push({ method: req.method, url: req.url, headers: req.headers, body });
+      reply(res, body);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    return await fn(`http://127.0.0.1:${server.address().port}`, requests);
+  } finally {
+    server.close();
+  }
+}
+
+const registered = (res, body) => {
+  const name = encodeURIComponent(path.basename(JSON.parse(body).path));
+  res.writeHead(201, { "content-type": "application/json" });
+  res.end(JSON.stringify({ url: `http://127.0.0.1:41873/local/tok/${name}` }));
+};
+
+test("rewriteLocalFileUrl registers the file and keeps directory context (P2)", async () => {
+  await withStubRelay(registered, async (relay, requests) => {
+    const out = await rewriteLocalFileUrl("file:///tmp/my%20report/index.html", relay);
+    assert.equal(out, "http://127.0.0.1:41873/local/tok/index.html");
+    // The old query-only /local-file URL sent ./style.css to /style.css (404).
+    assert.equal(new URL("./style.css", out).pathname, "/local/tok/style.css");
+    assert.equal(new URL("img/a.png", out).pathname, "/local/tok/img/a.png");
+
+    const [req] = requests;
+    assert.deepEqual([req.method, req.url], ["POST", "/local-docs"]);
+    assert.match(req.headers["content-type"], /^application\/json/);
+    assert.equal(
+      req.headers.origin,
+      undefined,
+      "relay refuses registration when Origin is present"
+    );
+    assert.deepEqual(JSON.parse(req.body), { path: "/tmp/my report/index.html" });
+  });
 });
 
-test("rewriteLocalFileUrl leaves http(s) URLs untouched", () => {
-  assert.equal(
-    rewriteLocalFileUrl("https://example.com/x", "http://127.0.0.1:9333"),
-    "https://example.com/x"
-  );
-  assert.equal(
-    rewriteLocalFileUrl("http://127.0.0.1:8799/", "http://127.0.0.1:9333"),
-    "http://127.0.0.1:8799/"
-  );
+test("rewriteLocalFileUrl preserves the query string and hash", async () => {
+  await withStubRelay(registered, async (relay, requests) => {
+    const out = await rewriteLocalFileUrl(
+      "file:///tmp/r/index.html?tab=2&q=a%20b#section-3",
+      relay
+    );
+    const parsed = new URL(out);
+    assert.deepEqual([parsed.search, parsed.hash], ["?tab=2&q=a%20b", "#section-3"]);
+    assert.deepEqual(JSON.parse(requests[0].body), { path: "/tmp/r/index.html" });
+  });
+});
+
+test("rewriteLocalFileUrl leaves non-file URLs alone without calling the relay", async () => {
+  await withStubRelay(registered, async (relay, requests) => {
+    for (const url of ["https://example.com/x", "http://127.0.0.1:8799/", undefined]) {
+      assert.equal(await rewriteLocalFileUrl(url, relay), url);
+    }
+    assert.equal(requests.length, 0);
+  });
+});
+
+test("rewriteLocalFileUrl fails loudly when the relay refuses or predates local documents", async () => {
+  const notFound = (res) => res.writeHead(404).end("404 Not Found");
+  const noUrl = (res) => res.writeHead(201, { "content-type": "application/json" }).end("{}");
+  for (const [reply, message] of [
+    [notFound, /Could not serve \/tmp\/r\/index\.html.*HTTP 404.*browser-hand relay/s],
+    [noUrl, /did not return a URL/],
+  ]) {
+    await withStubRelay(reply, (relay) =>
+      assert.rejects(rewriteLocalFileUrl("file:///tmp/r/index.html", relay), message)
+    );
+  }
 });
