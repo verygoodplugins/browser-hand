@@ -122,6 +122,19 @@ export function isHttpPageTarget(item) {
   return Boolean(item && item.type === "page" && /^https?:\/\//i.test(String(item.url || "")));
 }
 
+/**
+ * Every page the extension lists: http(s), file://, and about:blank. Mirrors
+ * `TabManager.isControllableUrl`, so a tab Browser Hand opened and has not
+ * navigated yet is still a tab.
+ */
+export function isControllablePageTarget(item) {
+  return Boolean(
+    item &&
+    item.type === "page" &&
+    /^(?:https?:\/\/|file:\/\/|about:blank(?:\?|$))/i.test(String(item.url || ""))
+  );
+}
+
 function clipText(value, cap) {
   const text = String(value || "");
   if (text.length <= cap) return text;
@@ -147,8 +160,8 @@ export function rankTabTargets(targets = []) {
   });
 }
 
-export function filterTabTargets(targets = [], query = {}) {
-  let pages = (targets || []).filter(isHttpPageTarget);
+export function filterTabTargets(targets = [], query = {}, { includeNonHttp = false } = {}) {
+  let pages = (targets || []).filter(includeNonHttp ? isControllablePageTarget : isHttpPageTarget);
   const idNeedle = query.id ? String(query.id) : "";
   const urlNeedle = query.url ? String(query.url).toLowerCase() : "";
   const titleNeedle = query.title ? String(query.title).toLowerCase() : "";
@@ -1532,7 +1545,9 @@ export function planCloseTargets(targets = [], opts = {}) {
       (item) => item?.type === "page" && item.targetId === namedTargetId
     );
   } else {
-    candidates = filterTabTargets(targets, target);
+    // Unlike snapshot/click, close must see about:blank and file:// tabs: a
+    // group close that skipped them would leave tabs open and still say `closed`.
+    candidates = filterTabTargets(targets, target, { includeNonHttp: true });
     if (group) {
       candidates = candidates.filter((item) => groupTitleKey(item.groupTitle) === group);
     }

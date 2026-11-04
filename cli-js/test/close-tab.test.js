@@ -14,7 +14,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { buildHandlerInput, parseArgs } from "../src/cli.js";
-import { buildCloseResult, planCloseTargets, waitForTargetsClosed } from "../src/tool.js";
+import {
+  buildCloseResult,
+  filterTabTargets,
+  isControllablePageTarget,
+  planCloseTargets,
+  waitForTargetsClosed,
+} from "../src/tool.js";
 
 const cli = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../src/cli.js");
 
@@ -145,6 +151,67 @@ test("a group close leaves the user's tabs in that group open", () => {
     plan.skipped.map((tab) => tab.id),
     ["tab-2"]
   );
+});
+
+test("close selects Browser Hand tabs that are still on about:blank or file://", () => {
+  const blank = { ...page("tab-1", { owned: true }), url: "about:blank" };
+  const local = { ...page("tab-2", { owned: true }), url: "file:///tmp/gym/index.html" };
+  const targets = [blank, local, page("tab-3", { owned: true })];
+  assert.deepEqual(ids(planCloseTargets(targets, { target: { id: "tab-1" } }).closable), ["tab-1"]);
+  assert.deepEqual(ids(planCloseTargets(targets, { target: { id: "tab-2" } }).closable), ["tab-2"]);
+});
+
+test("a group close takes every tab in the group, including about:blank and file:// ones", () => {
+  const group = { owned: true, groupTitle: "DNS records" };
+  const targets = [
+    { ...page("tab-1", group), url: "about:blank" },
+    { ...page("tab-2", group), url: "file:///tmp/gym/index.html" },
+    page("tab-3", group),
+  ];
+  const plan = planCloseTargets(targets, { groupTitle: "DNS records" });
+  assert.deepEqual(ids(plan.closable), ["tab-1", "tab-2", "tab-3"]);
+  assert.equal(plan.matched, 3);
+});
+
+test("a user's about:blank or file:// tab in a group is reported as skipped, not dropped", () => {
+  const user = { owned: false, groupTitle: "DNS records" };
+  const targets = [
+    page("tab-1", { owned: true, groupTitle: "DNS records" }),
+    { ...page("tab-2", user), url: "file:///Users/me/notes.html" },
+    { ...page("tab-3", user), url: "about:blank" },
+  ];
+  const plan = planCloseTargets(targets, { groupTitle: "DNS records" });
+  assert.deepEqual(ids(plan.closable), ["tab-1"]);
+  assert.deepEqual(
+    plan.skipped.map((tab) => tab.id),
+    ["tab-2", "tab-3"]
+  );
+});
+
+test("close sees the pages the extension lists, while tabs/snapshot/click stay http(s)-only", () => {
+  const targets = [
+    { type: "page", targetId: "web", url: "https://example.com/" },
+    { type: "page", targetId: "blank", url: "about:blank" },
+    { type: "page", targetId: "blank-q", url: "about:blank?x=1" },
+    { type: "page", targetId: "local", url: "file:///tmp/a.html" },
+    { type: "page", targetId: "chrome", url: "chrome://extensions/" },
+    { type: "page", targetId: "ext", url: "chrome-extension://abc/page.html" },
+    { type: "page", targetId: "lookalike", url: "about:blankly" },
+    { type: "service_worker", targetId: "sw", url: "https://example.com/sw.js" },
+  ];
+  assert.deepEqual(ids(targets.filter(isControllablePageTarget)), [
+    "web",
+    "blank",
+    "blank-q",
+    "local",
+  ]);
+  assert.deepEqual(ids(filterTabTargets(targets, {})), ["web"]);
+  assert.deepEqual(ids(filterTabTargets(targets, {}, { includeNonHttp: true })), [
+    "web",
+    "blank",
+    "blank-q",
+    "local",
+  ]);
 });
 
 test("a group title narrowed by --query still needs --all to close several tabs", () => {
