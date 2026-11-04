@@ -309,18 +309,30 @@ export class TabManager {
     return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
   }
 
-  private debuggerUnavailable = false;
+  private debuggerUnavailableReason: string | null = null;
 
   /** Whether this host browser has reported chrome.debugger as unavailable. */
   isDebuggerUnavailable(): boolean {
-    return this.debuggerUnavailable;
+    return this.debuggerUnavailableReason !== null;
+  }
+
+  /**
+   * Capability report for the relay's `register` message, or null while no
+   * limitation has been seen. Sent on connect too: the flag outlives a socket.
+   */
+  debuggerCapability(): { available: false; reason: string } | null {
+    return this.debuggerUnavailableReason === null
+      ? null
+      : { available: false, reason: this.debuggerUnavailableReason };
   }
 
   private markDebuggerUnavailable(reason: string): void {
-    if (!this.debuggerUnavailable) {
-      this.logger.log("chrome.debugger unavailable in this browser:", reason);
-    }
-    this.debuggerUnavailable = true;
+    if (this.debuggerUnavailableReason !== null) return;
+    this.debuggerUnavailableReason = reason;
+    this.logger.log("chrome.debugger unavailable in this browser:", reason);
+    // The scripting fallback makes the attach succeed from the caller's side, so
+    // the relay (and doctor) would never see the error. Report it directly.
+    this.sendMessage({ method: "register", params: { debugger: this.debuggerCapability() } });
   }
 
   /**

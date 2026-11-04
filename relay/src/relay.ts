@@ -77,7 +77,13 @@ type ExtensionMessage =
   | ExtensionResponseMessage
   | ExtensionEventMessage
   | { method: "log"; params: { level: string; args: string[] } }
-  | { method: "register"; params: { browser?: Partial<HostBrowser> } };
+  | {
+      method: "register";
+      params: {
+        browser?: Partial<HostBrowser>;
+        debugger?: { available?: boolean; reason?: string };
+      };
+    };
 
 interface CDPCommand {
   id: number;
@@ -186,6 +192,12 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   let extensionWs: WSContext | null = null;
   /** Browser the connected extension is running in (null until it registers). */
   let extensionBrowser: HostBrowser | null = null;
+  /**
+   * Set once the extension reports its browser has no chrome.debugger. The extension
+   * falls back to scripting and the failing call then succeeds, so this report is the
+   * only way doctor learns the limitation. Null = none reported on this connection.
+   */
+  let extensionDebugger: { available: false; reason: string } | null = null;
 
   const deferredCdpEvents: CDPEvent[] = [];
 
@@ -642,6 +654,8 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
       // Which browser the extension is driving. Agents read this so they target
       // the connected browser instead of assuming Chrome.
       browser: extensionBrowser,
+      // { available: false, reason } when the browser restricts chrome.debugger.
+      debugger: extensionDebugger,
       mode: "extension",
     });
   });
@@ -1016,6 +1030,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             extensionWs.close(4001, "Extension Replaced");
 
             extensionBrowser = null;
+            extensionDebugger = null;
             connectedTargets.clear();
             namedPages.clear();
             clearAdoptionState();
@@ -1070,6 +1085,14 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
                 version: String(browser.version || "").slice(0, 60),
               };
               log(`Extension host browser: ${extensionBrowser.name} ${extensionBrowser.version}`);
+            }
+            const capability = message.params?.debugger;
+            if (capability && typeof capability === "object" && capability.available === false) {
+              extensionDebugger = {
+                available: false,
+                reason: String(capability.reason || "chrome.debugger unavailable").slice(0, 200),
+              };
+              log(`Extension reports chrome.debugger unavailable: ${extensionDebugger.reason}`);
             }
             return;
           }
@@ -1240,6 +1263,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
 
           extensionWs = null;
           extensionBrowser = null;
+          extensionDebugger = null;
           connectedTargets.clear();
           namedPages.clear();
           clearAdoptionState();

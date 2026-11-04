@@ -41,11 +41,16 @@ export default defineBackground(() => {
   });
 
   // Tell the relay which browser is driving this connection, so doctor/tabs
-  // report browser:{name,version} and agents never assume Chrome.
+  // report browser:{name,version} and agents never assume Chrome. A known
+  // chrome.debugger limitation is re-sent: the relay forgets it per connection.
   async function registerHostBrowser(): Promise<void> {
     try {
       const browser = await detectHostBrowser();
-      connectionManager.send({ method: "register", params: { browser } });
+      const debuggerCapability = tabManager.debuggerCapability();
+      connectionManager.send({
+        method: "register",
+        params: { browser, ...(debuggerCapability ? { debugger: debuggerCapability } : {}) },
+      });
     } catch (error) {
       logger.debug("Error detecting host browser:", error);
     }

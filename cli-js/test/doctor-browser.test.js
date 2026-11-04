@@ -41,6 +41,42 @@ test("doctor distinguishes debugger_unavailable from path_b_required", () => {
   assert.equal(pathB.status, "path_b_required");
 });
 
+test("relay-reported debugger limitation wins even when the smoke tab bootstrapped (P2)", () => {
+  // The extension's scripting fallback lets the smoke tab open, so smoke.success is true
+  // and there is no error text to match: only the relay's report carries the limitation.
+  const reported = classifyDevBrowserDoctor({
+    relayInfo: { extensionConnected: true },
+    targetCount: 5,
+    smoke: { success: true },
+    debuggerState: { available: false, reason: "debugger.attach isn't available in Search" },
+  });
+  assert.equal(reported.status, "debugger_unavailable");
+  assert.match(reported.action, /scripting transport/i);
+
+  for (const debuggerState of [null, undefined, {}, { available: true }]) {
+    const healthy = classifyDevBrowserDoctor({
+      relayInfo: { extensionConnected: true },
+      targetCount: 5,
+      smoke: { success: true },
+      debuggerState,
+    });
+    assert.equal(healthy.status, "tab_bootstrap_works", JSON.stringify(debuggerState));
+  }
+
+  // The report never masks an earlier, more fundamental state.
+  const asleep = classifyDevBrowserDoctor({
+    relayInfo: { extensionConnected: false },
+    debuggerState: { available: false },
+  });
+  assert.equal(asleep.status, "extension_disconnected");
+  const unstable = classifyDevBrowserDoctor({
+    relayInfo: { extensionConnected: true },
+    smoke: { success: false, error: "Extension connection replaced" },
+    debuggerState: { available: false },
+  });
+  assert.equal(unstable.status, "extension_unstable");
+});
+
 test("doctor stays healthy when the smoke tab bootstraps", () => {
   const healthy = classifyDevBrowserDoctor({
     relayInfo: { extensionConnected: true },
