@@ -10,7 +10,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/standalone.js",
-    "dev": "tsx src/standalone.ts"
+    "dev": "tsx src/standalone.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test \"src/*.test.ts\""
   },
   "engines": {
     "node": ">=18"
