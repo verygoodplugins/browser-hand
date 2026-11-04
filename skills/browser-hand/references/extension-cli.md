@@ -19,6 +19,7 @@ browser-hand tabs
 browser-hand tabs --query stripe
 browser-hand snapshot --quiet
 browser-hand open --url https://example.com --page-name smoke
+browser-hand close --page-name smoke
 ```
 
 Run `doctor` before authenticated multi-step work. Only `status: "tab_bootstrap_works"` means the bridge is healthy.
@@ -140,6 +141,25 @@ Browser Hand keeps that tab in the session and does not reattach. Later commands
 - `--target-id <id>`
 
 Do not use `doctor` to find a tab. Doctor is a health check; `tabs` is the inventory.
+
+## Closing tabs
+
+```bash
+browser-hand close --page-name smoke                  # the tab you opened under that name
+browser-hand close --query example.com --all          # every Browser Hand tab that matches
+browser-hand close --group-title "DNS records"        # the whole Browser Hand tab group
+browser-hand close --target-id tab-12 --include-user-tabs   # a tab the user had open (explicit override)
+```
+
+Selection uses the same flags as snapshot and click (`--page-name`, `--query`, `--target-url`, `--target-title`, `--target-id`), with three differences, all for safety:
+
+- **An explicit selector is required.** There is no "current tab" default.
+- **Several matches are refused** unless `--all` is passed. A lone `--group-title` already means the whole group. `--page-name` cannot be mixed with another selector.
+- **Only tabs Browser Hand opened are closed.** The relay stamps each tab it created (`browserHandOwned`). A tab the user already had open, including one `open` adopted because it was on the same URL, is refused. With `--all` or `--group-title` those tabs are skipped and listed under `skipped`. `--include-user-tabs` lifts the rule.
+
+Single close: `{ "success": true, "closed": true, "targetId": "tab-12", "url": "...", "title": "..." }`. With `--all` or `--group-title` you get `closed` (true when every selected tab closed), `count`, a `tabs` list of the same four fields, and `skipped`. After the close the CLI re-reads Chrome's tab list. `closed: false` with an `error` means the tab is still open, so do not assume it is gone. Exit code is 1 in that case.
+
+If the error says the relay "predates ownership tracking", rebuild and restart it. If `--group-title` finds no tab, reload the extension: older builds do not report group titles.
 
 ## Agent-oriented recovery
 
