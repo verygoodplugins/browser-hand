@@ -299,6 +299,31 @@ export class TabManager {
   }
 
   /**
+   * Some Chromium forks (e.g. the "Search" browser) restrict the
+   * chrome.debugger API entirely: attach throws "debugger.attach isn't
+   * available in <Browser>". That is a browser capability gap, not a
+   * password-manager wedge — we switch the tab to the scripting transport and
+   * remember the browser lacks the debugger so doctor can report it.
+   */
+  isDebuggerUnavailableError(message: string): boolean {
+    return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
+  }
+
+  private debuggerUnavailable = false;
+
+  /** Whether this host browser has reported chrome.debugger as unavailable. */
+  isDebuggerUnavailable(): boolean {
+    return this.debuggerUnavailable;
+  }
+
+  private markDebuggerUnavailable(reason: string): void {
+    if (!this.debuggerUnavailable) {
+      this.logger.log("chrome.debugger unavailable in this browser:", reason);
+    }
+    this.debuggerUnavailable = true;
+  }
+
+  /**
    * Ensure the Chrome debugger API is attached for CDP commands.
    * On password-manager wedge, falls back to scripting transport.
    */
@@ -353,6 +378,11 @@ export class TabManager {
         const message = error instanceof Error ? error.message : String(error);
         if (/already attached/i.test(message)) {
           // ok
+        } else if (this.isDebuggerUnavailableError(message)) {
+          // This browser has no chrome.debugger — stay on scripting for good.
+          this.markDebuggerUnavailable(message);
+          this.markScriptingFallback(tabId, message);
+          return;
         } else if (this.isDebuggerWedgeError(message)) {
           await this.sleep(300);
           try {
@@ -368,6 +398,11 @@ export class TabManager {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.isDebuggerUnavailableError(message)) {
+        this.markDebuggerUnavailable(message);
+        this.markScriptingFallback(tabId, message);
+        return;
+      }
       if (this.isDebuggerWedgeError(message)) {
         this.markScriptingFallback(tabId, message);
         return;

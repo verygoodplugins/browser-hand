@@ -189,6 +189,42 @@ describe("TabManager", () => {
     });
   });
 
+  describe("debugger unavailable in this browser", () => {
+    it("falls back to scripting instead of throwing when attach is unavailable", async () => {
+      mockTabsGet.mockResolvedValue(
+        chromeTab({ id: 77, url: "https://example.com/", status: "complete" })
+      );
+      mockDebuggerDetach.mockResolvedValue(undefined);
+      // The "Search" Chromium fork rejects attach entirely.
+      mockDebuggerAttach.mockRejectedValue(new Error("debugger.attach isn't available in Search"));
+      tabManager.set(77, {
+        sessionId: "session-77",
+        targetId: "target-77",
+        state: "connected",
+        debuggerAttached: false,
+        targetInfo: {
+          targetId: "target-77",
+          type: "page",
+          title: "Example",
+          url: "https://example.com/",
+        },
+      });
+
+      await expect(tabManager.ensureDebuggerAttached(77)).resolves.toBeUndefined();
+      expect(tabManager.usesScriptingFallback(77)).toBe(true);
+      expect(tabManager.isDebuggerUnavailable()).toBe(true);
+    });
+
+    it("classifies the unavailable error", () => {
+      expect(
+        tabManager.isDebuggerUnavailableError("debugger.attach isn't available in Search")
+      ).toBe(true);
+      expect(tabManager.isDebuggerUnavailableError("Another debugger is already attached")).toBe(
+        false
+      );
+    });
+  });
+
   describe("detach", () => {
     it("should send detached event and remove tab", () => {
       tabManager.set(123, {

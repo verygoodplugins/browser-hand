@@ -31,7 +31,7 @@ resources:
 
 # Browser Hand
 
-Control the user’s **real Chrome profile** through a local extension bridge. No `--remote-debugging-port` on the everyday profile.
+Control the user’s **real browser profile** — whichever browser has the Browser Hand extension connected (usually Chrome, but any Chromium browser: Edge, Brave, Arc, "Search", …) — through a local extension bridge. No `--remote-debugging-port` on the everyday profile. `doctor` reports `browser: {name, version}` so you target the connected browser instead of assuming Chrome.
 
 This is a **skill**, not an MCP server: no always-on tool list and no extra MCP process. The agent loads it when the task matches (signed-in browser work).
 
@@ -101,7 +101,10 @@ Full reference: `references/extension-cli.md`.
 - Prefer **named pages** (`--page-name`) for multi-step work.
 - On the first `open` of a task, pass `--group-title` with a few words ("DNS records", "Invoice review"). That names the Chrome tab group and gives it a color. Later commands in the same task omit it and join that group. A different title starts a new group. Leaving it off keeps the group named Browser Hand.
 - Pass **`--quiet`** on snapshot, click, fill, evaluate, and steps. It drops the repeated `mode` / `target` / `url` / `title` wrapper.
-- `doctor` returns `status`, `tabCount`, and the active tab. It is a health check. Use `tabs` for the inventory. `doctor --verbose` is only for diagnosing target selection.
+- `doctor` returns `status`, `browser: {name, version}`, `tabCount`, and the active tab. It is a health check. Use `tabs` for the inventory. `doctor --verbose` is only for diagnosing target selection. `doctor --browser <name>` asserts which connected browser you expect and warns on a mismatch.
+- **Never open tabs with OS commands.** Do not fall back to `open -a "Google Chrome" <url>`, `start`, `xdg-open`, or any shell launcher — that opens the wrong browser (not the one with the extension) and loses the session. Always use `browser-hand open`/`goto`. If `open` fails, report the error; do not route around it.
+- To show a **local file** (a generated HTML brief, report, etc.), pass its `file:` URL to `open --url file:///…`. The CLI serves it through the relay automatically — `chrome.tabs.create` cannot navigate to `file:` URLs, so do not try to open the file path directly.
+- If `doctor` reports `status: debugger_unavailable`, the connected browser restricts `chrome.debugger`; Browser Hand drives it via the scripting transport. open/snapshot/fill/click/evaluate still work — this is **not** the `path_b_required` (separate debug profile) case.
 - To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`.
 - Default snapshot is the open dialog (and an open listbox or menu) plus the main landmark. Read `snapshot.nodes`: `ref`, `role`, `name`, and `value` / `ariaChecked`. Nav is omitted. `--scope full` adds `nav` and page text. `--scope nav` is the landmark only.
 - Click with `--ref` from that snapshot, or `--role` and `--name` (exact). `--text "A"` is ambiguous when the same string is both a value and a label. `--selector` remains for CSS.

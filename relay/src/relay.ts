@@ -8,6 +8,13 @@ import {
   planBlankNavigation,
   type AdoptTarget,
 } from "./adopt-existing-tab.js";
+import { readLocalFile } from "./local-file.js";
+
+/** Host browser reported by the extension on connect. */
+export interface HostBrowser {
+  name: string;
+  version: string;
+}
 
 export interface RelayOptions {
   port?: number;
@@ -58,7 +65,8 @@ interface ExtensionEventMessage {
 type ExtensionMessage =
   | ExtensionResponseMessage
   | ExtensionEventMessage
-  | { method: "log"; params: { level: string; args: string[] } };
+  | { method: "log"; params: { level: string; args: string[] } }
+  | { method: "register"; params: { browser?: Partial<HostBrowser> } };
 
 interface CDPCommand {
   id: number;
@@ -157,6 +165,8 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   const relayCreatedTargetIds = new Set<string>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
+  /** Browser the connected extension is running in (null until it registers). */
+  let extensionBrowser: HostBrowser | null = null;
 
   const deferredCdpEvents: CDPEvent[] = [];
 
@@ -551,7 +561,27 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     return c.json({
       wsEndpoint: `ws://${host}:${port}/cdp`,
       extensionConnected: extensionWs !== null,
+      // Which browser the extension is driving. Agents read this so they target
+      // the connected browser instead of assuming Chrome.
+      browser: extensionBrowser,
       mode: "extension",
+    });
+  });
+
+  // Serve a local file so agents can open generated docs. `file:` URLs fail in
+  // chrome.tabs.create ("Cannot navigate to a file: URL"), so the CLI rewrites
+  // them to this route. Localhost-only, same trust boundary as the relay itself.
+  app.get("/local-file", async (c) => {
+    const result = await readLocalFile(c.req.query("path"));
+    if (result.status !== 200 || !result.body) {
+      return c.json({ error: result.error || "Not found" }, result.status === 400 ? 400 : 404);
+    }
+    return new Response(result.body, {
+      status: 200,
+      headers: {
+        "content-type": result.contentType || "application/octet-stream",
+        "cache-control": "no-store",
+      },
     });
   });
 
@@ -887,6 +917,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             log("Closing existing extension connection");
             extensionWs.close(4001, "Extension Replaced");
 
+            extensionBrowser = null;
             connectedTargets.clear();
             namedPages.clear();
             clearAdoptionState();
@@ -930,6 +961,18 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           if ("method" in message && message.method === "log") {
             const { level, args } = message.params;
             console.error(`[extension:${level}]`, ...args);
+            return;
+          }
+
+          if ("method" in message && message.method === "register") {
+            const browser = message.params?.browser;
+            if (browser && typeof browser === "object") {
+              extensionBrowser = {
+                name: String(browser.name || "Unknown").slice(0, 100),
+                version: String(browser.version || "").slice(0, 60),
+              };
+              log(`Extension host browser: ${extensionBrowser.name} ${extensionBrowser.version}`);
+            }
             return;
           }
 
@@ -1098,6 +1141,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           extensionPendingRequests.clear();
 
           extensionWs = null;
+          extensionBrowser = null;
           connectedTargets.clear();
           namedPages.clear();
           clearAdoptionState();

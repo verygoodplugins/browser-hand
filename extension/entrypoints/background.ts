@@ -10,6 +10,7 @@ import { TabManager } from "../services/TabManager";
 import { ConnectionManager } from "../services/ConnectionManager";
 import { CDPRouter } from "../services/CDPRouter";
 import { StateManager } from "../services/StateManager";
+import { detectHostBrowser } from "../utils/browser-info";
 import type { PopupMessage, StateResponse } from "../utils/types";
 
 export default defineBackground(() => {
@@ -39,11 +40,25 @@ export default defineBackground(() => {
     clearFocusOverride: () => stateManager.clearFocusOverride(),
   });
 
+  // Tell the relay which browser is driving this connection, so doctor/tabs
+  // report browser:{name,version} and agents never assume Chrome.
+  async function registerHostBrowser(): Promise<void> {
+    try {
+      const browser = await detectHostBrowser();
+      connectionManager.send({ method: "register", params: { browser } });
+    } catch (error) {
+      logger.debug("Error detecting host browser:", error);
+    }
+  }
+
   // Create connection manager
   connectionManager = new ConnectionManager({
     logger,
     onMessage: (msg) => cdpRouter.handleCommand(msg),
-    onConnect: () => tabManager.syncExistingTabs(),
+    onConnect: async () => {
+      await registerHostBrowser();
+      await tabManager.syncExistingTabs();
+    },
     onDisconnect: () => tabManager.detachAll(),
   });
 
