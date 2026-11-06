@@ -3,6 +3,7 @@ import type {
   GetStateMessage,
   SetStateMessage,
   StateResponse,
+  TransportMode,
 } from "../../utils/types";
 
 const toggle = document.getElementById("active-toggle") as HTMLInputElement;
@@ -11,11 +12,18 @@ const popupMark = document.getElementById("popup-mark") as HTMLImageElement;
 const connectionStatus = document.getElementById("connection-status") as HTMLParagraphElement;
 const focusPolicySelect = document.getElementById("focus-policy") as HTMLSelectElement;
 const focusHint = document.getElementById("focus-hint") as HTMLParagraphElement;
+const transportSelect = document.getElementById("transport-mode") as HTMLSelectElement;
+const transportHint = document.getElementById("transport-hint") as HTMLParagraphElement;
 
 const FOCUS_HINTS: Record<FocusPolicy, string> = {
   background: "Agents keep working without stealing your keyboard focus.",
   tab: "Switches to the automation tab inside Chrome, but leaves other apps focused.",
   window: "Brings Chrome to the front (old behavior).",
+};
+
+const TRANSPORT_HINTS: Record<TransportMode, string> = {
+  scripting: "No debugging banner and nothing for sites to detect. Uses scripting + tabs APIs.",
+  debugger: "Full CDP via chrome.debugger. Shows Chrome's debugging banner; some sites block it.",
 };
 
 function updateUI(state: StateResponse): void {
@@ -24,6 +32,16 @@ function updateUI(state: StateResponse): void {
   popupMark.src = state.isActive ? "/icons/icon-48.png" : "/icons/icon-inactive-48.png";
   focusPolicySelect.value = state.focusPolicy || "background";
   focusHint.textContent = FOCUS_HINTS[state.focusPolicy] || FOCUS_HINTS.background;
+  const transportMode = state.transportMode || "scripting";
+  transportSelect.value = transportMode;
+  const debuggerOption = transportSelect.querySelector('option[value="debugger"]');
+  if (debuggerOption instanceof HTMLOptionElement) {
+    debuggerOption.disabled = state.debuggerAvailable === false;
+  }
+  transportHint.textContent =
+    state.debuggerAvailable === false
+      ? "This browser has no usable chrome.debugger; Browser Hand runs debugger-free."
+      : TRANSPORT_HINTS[transportMode];
 
   if (state.isActive) {
     connectionStatus.textContent = state.isConnected ? "Connected to relay" : "Connecting...";
@@ -56,6 +74,18 @@ toggle.addEventListener("change", () => {
   const isActive = toggle.checked;
   chrome.runtime.sendMessage<SetStateMessage, StateResponse>(
     { type: "setState", isActive },
+    (response) => {
+      if (response) {
+        updateUI(response);
+      }
+    }
+  );
+});
+
+transportSelect.addEventListener("change", () => {
+  const transportMode = transportSelect.value as TransportMode;
+  chrome.runtime.sendMessage<SetStateMessage, StateResponse>(
+    { type: "setState", transportMode },
     (response) => {
       if (response) {
         updateUI(response);

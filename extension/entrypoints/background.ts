@@ -26,6 +26,8 @@ export default defineBackground(() => {
   const tabManager = new TabManager({
     logger,
     sendMessage: (msg) => connectionManager.send(msg),
+    // Debugger-free (chrome.scripting + chrome.tabs) unless the user opts into CDP.
+    getTransportMode: () => stateManager.getTransportMode(),
   });
 
   // Create CDP router (background focus by default — do not steal OS focus;
@@ -85,6 +87,8 @@ export default defineBackground(() => {
       isActive: state.isActive,
       isConnected,
       focusPolicy: state.focusPolicy,
+      transportMode: state.transportMode,
+      debuggerAvailable: tabManager.isDebuggerAvailable(),
     };
   }
 
@@ -131,6 +135,13 @@ export default defineBackground(() => {
           }
           if (message.focusPolicy) {
             await stateManager.setState({ focusPolicy: message.focusPolicy });
+          }
+          if (message.transportMode) {
+            const previous = await stateManager.getTransportMode();
+            await stateManager.setState({ transportMode: message.transportMode });
+            if ((await stateManager.getTransportMode()) !== previous) {
+              tabManager.resetTransports();
+            }
           }
           sendResponse(await buildStateResponse());
         })();
@@ -187,20 +198,26 @@ export default defineBackground(() => {
       });
   });
 
-  // Register debugger event listeners
-  chrome.debugger.onEvent.addListener(onDebuggerEvent);
-  chrome.debugger.onDetach.addListener(onDebuggerDetach);
+  // Debugger listeners and stale-attach cleanup only apply where chrome.debugger
+  // is real. Browsers that omit or stub it (Search) run debugger-free.
+  void tabManager.probeDebugger();
+  if (!tabManager.debuggerApiMissing()) {
+    chrome.debugger.onEvent?.addListener(onDebuggerEvent);
+    chrome.debugger.onDetach?.addListener(onDebuggerDetach);
 
-  // Reset any stale debugger connections on startup
-  chrome.debugger.getTargets().then((targets) => {
-    const attached = targets.filter((t) => t.tabId && t.attached);
-    if (attached.length > 0) {
-      logger.log(`Detaching ${attached.length} stale debugger connections`);
-      for (const target of attached) {
-        chrome.debugger.detach({ tabId: target.tabId }).catch(() => {});
-      }
-    }
-  });
+    // Reset any stale debugger connections on startup
+    Promise.resolve(chrome.debugger.getTargets?.())
+      .then((targets) => {
+        const attached = (targets ?? []).filter((t) => t.tabId && t.attached);
+        if (attached.length > 0) {
+          logger.log(`Detaching ${attached.length} stale debugger connections`);
+          for (const target of attached) {
+            chrome.debugger.detach({ tabId: target.tabId }).catch(() => {});
+          }
+        }
+      })
+      .catch(() => {});
+  }
 
   // MV3 keepalive. The setTimeout-based reconnect loop dies with the service
   // worker, so once Chrome kills the idle worker (~30s) nothing recovers until

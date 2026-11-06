@@ -273,6 +273,11 @@ export class CDPRouter {
         return { ok: true };
       }
 
+      case "DevBrowser.getCapabilities": {
+        await this.tabManager.probeDebugger();
+        return await this.tabManager.getTransportInfo();
+      }
+
       case "DevBrowser.listTargets": {
         const targetInfos = await this.tabManager.listTargets();
         return { targetInfos };
@@ -285,8 +290,14 @@ export class CDPRouter {
         if (!found?.tabId) {
           throw new Error(`No tab for group target ${targetId}`);
         }
-        const groupId = await this.groupExistingTarget(found.tabId, params.groupTitle);
-        return { groupId };
+        try {
+          const groupId = await this.groupExistingTarget(found.tabId, params.groupTitle);
+          return { groupId };
+        } catch (err) {
+          // Grouping is cosmetic. Browsers without tabGroups (Search) skip it.
+          this.logger.debug("Tab grouping unavailable; leaving tab ungrouped", err);
+          return { groupId: null };
+        }
       }
 
       case "Runtime.enable":
@@ -373,6 +384,21 @@ export class CDPRouter {
         }
       }
 
+      case "Page.navigate": {
+        // Unknown session: fall out of the switch for the generic "No tab found" error.
+        if (!debuggee || !targetTabId) break;
+        await this.tabManager.ensureDebuggerAttached(targetTabId);
+        // Debugger transport: fall out of the switch and forward over CDP.
+        if (!this.tabManager.usesScriptingFallback(targetTabId)) break;
+        const url = typeof msg.params.params?.url === "string" ? msg.params.params.url : "";
+        if (!url) throw new Error("Page.navigate requires a url");
+        return await this.tabManager.navigateViaTabs(
+          targetTabId,
+          url,
+          msg.params.sessionId ?? targetTab?.sessionId
+        );
+      }
+
       case "Target.createTarget": {
         const url = (msg.params.params?.url as string) || "about:blank";
         this.logger.debug("Creating new tab with URL:", url);
@@ -380,10 +406,16 @@ export class CDPRouter {
         if (!tab.id) throw new Error("Failed to create tab");
 
         try {
-          await this.getOrCreateBrowserHandGroup(
-            tab.id,
-            msg.params.params?.groupTitle as string | undefined
-          );
+          try {
+            await this.getOrCreateBrowserHandGroup(
+              tab.id,
+              msg.params.params?.groupTitle as string | undefined
+            );
+          } catch (err) {
+            // Grouping is cosmetic. Browsers without tabGroups (Search) skip it
+            // instead of failing tab bootstrap.
+            this.logger.debug("Tab grouping unavailable; continuing without a group", err);
+          }
 
           await new Promise((resolve) => setTimeout(resolve, 100));
           const registered = await this.tabManager.register(tab);
@@ -453,15 +485,15 @@ export class CDPRouter {
     await this.tabManager.ensureDebuggerAttached(targetTabId);
 
     if (this.tabManager.usesScriptingFallback(targetTabId)) {
-      // Only evaluate is supported without the debugger; surface a clear error
-      // for other CDP methods so agents can re-open / re-navigate.
+      // Only evaluate, navigate and screenshot are emulated without the debugger;
+      // surface a clear error for other CDP methods.
       if (msg.params.method === "Runtime.evaluate") {
         const expression =
           typeof msg.params.params?.expression === "string" ? msg.params.params.expression : "";
         return await this.tabManager.evaluateViaScripting(targetTabId, expression);
       }
       throw new Error(
-        `Tab is on scripting fallback after password-manager wedge; ${msg.params.method} requires debugger. Re-open the page or use evaluate/fill/type/click.`
+        `${msg.params.method} is not supported by the debugger-free transport (chrome.scripting/chrome.tabs). Use snapshot/evaluate/fill/type/click/goto/screenshot, or switch Browser Hand to the debugger transport.`
       );
     }
 

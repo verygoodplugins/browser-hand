@@ -19,6 +19,11 @@
   retrying browser work; repeated `open`/`snapshot` calls will be flaky.
 - **`tab_bootstrap_works`** → extension mode is healthy. Continue with `open` or
   `snapshot`.
+- **`path_b_required`** → creating a named tab failed. The current build drives
+  pages debugger-free, so this normally means an **old extension build** (e.g.
+  `debugger.attach isn't available in Search`): rebuild, reload the extension from
+  `extension/dist/chrome-mv3`, and check `doctor`'s `transport` field
+  (`effective: scripting`, `debuggerAvailable`).
 
 Two failure modes look identical but have different owners — probe first, then route to the right fix:
 - `curl :9333` **refused** = no relay listening → the extension has nothing to connect to → start a persistent relay. This is yours to fix, don't ask the user.
