@@ -3,13 +3,32 @@
  */
 
 import type { Logger } from "../utils/logger";
-import type { TabInfo, TargetInfo } from "../utils/types";
+import type { TabInfo, TargetInfo, TransportMode } from "../utils/types";
 
 export type SendMessageFn = (message: unknown) => void;
 
 export interface TabManagerDeps {
   logger: Logger;
   sendMessage: SendMessageFn;
+  /**
+   * Which transport to prefer. The extension entrypoint passes the persisted
+   * setting (default "scripting", debugger-free). Standalone use keeps the
+   * historical "debugger" behavior.
+   */
+  getTransportMode?: () => Promise<TransportMode> | TransportMode;
+}
+
+/** chrome.debugger stubs (Search) reject with "<api> isn't available in <browser>". */
+const DEBUGGER_UNAVAILABLE_RE =
+  /isn['’]?t available|debugger (api )?(is )?(unavailable|not available|not supported)|not implemented/i;
+
+/** Page CSP (or the isolated-world CSP) refused string evaluation. */
+const EVAL_BLOCKED_RE = /unsafe-eval|content security policy|trusted ?types?/i;
+
+type EvalOutcome = { ok: true; value?: unknown } | { ok: false; error?: string; name?: string };
+
+function stripHash(url: string | undefined): string {
+  return (url ?? "").split("#")[0];
 }
 
 export class TabManager {
@@ -19,10 +38,60 @@ export class TabManager {
   private lastFocusedTabId: number | null = null;
   private logger: Logger;
   private sendMessage: SendMessageFn;
+  private getTransportMode: () => Promise<TransportMode> | TransportMode;
+  /** Set once an attach proves chrome.debugger is a stub; skips further attempts. */
+  private debuggerUnavailableReason: string | null = null;
+  private debuggerProbed = false;
 
   constructor(deps: TabManagerDeps) {
     this.logger = deps.logger;
     this.sendMessage = deps.sendMessage;
+    this.getTransportMode = deps.getTransportMode ?? (() => "debugger");
+  }
+
+  /** chrome.debugger is absent, or lacks the calls we need. */
+  debuggerApiMissing(): boolean {
+    const api = (globalThis as { chrome?: typeof chrome }).chrome?.debugger;
+    return typeof api?.attach !== "function" || typeof api?.sendCommand !== "function";
+  }
+
+  /** False on browsers that stub chrome.debugger (e.g. Search) or omit it. */
+  isDebuggerAvailable(): boolean {
+    return this.debuggerUnavailableReason === null && !this.debuggerApiMissing();
+  }
+
+  /**
+   * Scripting mode never attaches, so it would never learn that chrome.debugger is
+   * a stub. Attach to a tab that cannot exist: real Chrome rejects with "No tab with
+   * given id", Search's stub with "isn't available". Nothing is ever attached.
+   */
+  async probeDebugger(): Promise<void> {
+    if (this.debuggerProbed || this.debuggerApiMissing()) return;
+    this.debuggerProbed = true;
+    try {
+      await chrome.debugger.attach({ tabId: -1 }, "1.3");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (DEBUGGER_UNAVAILABLE_RE.test(message)) this.debuggerUnavailableReason = message;
+    }
+  }
+
+  async getTransportInfo(): Promise<{
+    mode: TransportMode;
+    effective: TransportMode;
+    debuggerAvailable: boolean;
+    debuggerUnavailableReason?: string;
+  }> {
+    const mode = await this.getTransportMode();
+    const debuggerAvailable = this.isDebuggerAvailable();
+    return {
+      mode,
+      effective: mode === "debugger" && debuggerAvailable ? "debugger" : "scripting",
+      debuggerAvailable,
+      ...(this.debuggerUnavailableReason
+        ? { debuggerUnavailableReason: this.debuggerUnavailableReason }
+        : {}),
+    };
   }
 
   /**
@@ -280,6 +349,37 @@ export class TabManager {
     });
   }
 
+  /**
+   * Drive a tab through chrome.scripting + chrome.tabs only: no CDP attach, no
+   * infobar, nothing for a site to detect. Not an error state (no errorText).
+   */
+  markScriptingTransport(tabId: number): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.debugTransport === "scripting") return;
+    this.tabs.set(tabId, {
+      ...tab,
+      debugTransport: "scripting",
+      debuggerAttached: false,
+      state: "connected",
+    });
+  }
+
+  /** Re-evaluate every tab's transport after the mode setting changes. */
+  resetTransports(): void {
+    for (const [tabId, tab] of this.tabs) {
+      if (tab.debuggerAttached && !this.debuggerApiMissing()) {
+        chrome.debugger.detach({ tabId }).catch(() => {});
+      }
+      this.tabs.set(tabId, {
+        ...tab,
+        debugTransport: undefined,
+        debuggerAttached: false,
+        debuggerDismissed: false,
+        errorText: undefined,
+      });
+    }
+  }
+
   clearScriptingFallback(tabId: number): void {
     const tab = this.tabs.get(tabId);
     if (!tab || tab.debugTransport !== "scripting" || tab.debuggerDismissed) return;
@@ -308,14 +408,20 @@ export class TabManager {
       throw new Error(`Tab ${tabId} is not registered`);
     }
 
-    if (tab.debuggerDismissed) {
-      if (tab.debugTransport !== "scripting") {
-        this.markScriptingFallback(tabId, "debugger dismissed by user");
-      }
+    if (tab.debugTransport === "scripting") {
       return;
     }
 
-    if (tab.debugTransport === "scripting") {
+    // Debugger-free by default; also the automatic path when the browser stubs
+    // chrome.debugger (Search). Only an explicit "debugger" mode attaches CDP.
+    const { effective } = await this.getTransportInfo();
+    if (effective === "scripting") {
+      this.markScriptingTransport(tabId);
+      return;
+    }
+
+    if (tab.debuggerDismissed) {
+      this.markScriptingFallback(tabId, "debugger dismissed by user");
       return;
     }
 
@@ -368,6 +474,12 @@ export class TabManager {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (DEBUGGER_UNAVAILABLE_RE.test(message)) {
+        this.debuggerUnavailableReason = message;
+        this.logger.log("chrome.debugger is unavailable; using debugger-free transport:", message);
+        this.markScriptingTransport(tabId);
+        return;
+      }
       if (this.isDebuggerWedgeError(message)) {
         this.markScriptingFallback(tabId, message);
         return;
@@ -417,20 +529,23 @@ export class TabManager {
   }
 
   /**
-   * Evaluate expression in page MAIN world via chrome.scripting (no debugger).
-   * Returns a CDP-like Runtime.evaluate result shape.
+   * Evaluate an expression with no debugger. Returns a CDP-like Runtime.evaluate
+   * result. Runs in the page's MAIN world so page globals are visible. A page
+   * whose CSP forbids eval refuses that, and the extension's ISOLATED world is no
+   * escape (its own CSP forbids eval too), so the source is then injected as
+   * script text through chrome.userScripts, which never calls eval.
    */
   async evaluateViaScripting(
     tabId: number,
     expression: string
   ): Promise<{
     result: { type: string; value?: unknown; description?: string };
-    exceptionDetails?: { text: string };
+    exceptionDetails?: { text: string; exception?: { description: string } };
   }> {
     if (!chrome.scripting?.executeScript) {
       throw new Error("chrome.scripting is unavailable");
     }
-    const [{ result }] = await chrome.scripting.executeScript({
+    const [first] = await chrome.scripting.executeScript({
       target: { tabId },
       world: "MAIN",
       args: [expression],
@@ -441,29 +556,144 @@ export class TabManager {
           if (value != null && typeof (value as { then?: unknown }).then === "function") {
             value = await value;
           }
-          return { ok: true as const, value };
+          // Only plain data crosses back; DOM nodes etc. degrade to a string.
+          let safe: unknown = value;
+          if (value !== undefined) {
+            try {
+              safe = JSON.parse(JSON.stringify(value));
+            } catch {
+              safe = String(value);
+            }
+          }
+          return { ok: true as const, value: safe };
         } catch (e) {
+          const err = e as { name?: string; message?: string };
           return {
             ok: false as const,
-            error: e instanceof Error ? e.message : String(e),
+            error: err?.message ? String(err.message) : String(e),
+            name: err?.name,
           };
         }
       },
     });
+    let result = first?.result as EvalOutcome | undefined;
+    if (
+      result?.ok === false &&
+      (result.name === "EvalError" || EVAL_BLOCKED_RE.test(result.error ?? ""))
+    ) {
+      this.logger.debug("Page CSP blocked eval; injecting as script text", tabId);
+      result = await this.evaluateViaUserScripts(tabId, expression, result.error);
+    }
 
     if (!result || typeof result !== "object") {
       return { result: { type: "undefined" } };
     }
-    if ((result as { ok?: boolean }).ok === false) {
-      const text = String((result as { error?: string }).error || "evaluate failed");
+    if (result.ok === false) {
+      const text = String(result.error || "evaluate failed");
       return {
         result: { type: "undefined" },
-        exceptionDetails: { text },
+        exceptionDetails: { text, exception: { description: text } },
       };
     }
-    const value = (result as { value?: unknown }).value;
+    const value = result.value;
     const type = value === null ? "object" : value === undefined ? "undefined" : typeof value;
     return { result: { type, value } };
+  }
+
+  /** CSP-proof evaluate: the expression is the script itself, so nothing is eval'd. */
+  private async evaluateViaUserScripts(
+    tabId: number,
+    expression: string,
+    blockedError = "Content Security Policy blocked string evaluation"
+  ): Promise<EvalOutcome> {
+    let api: typeof chrome.userScripts | undefined;
+    try {
+      api = chrome.userScripts; // undefined (or throws) until the user allows user scripts
+    } catch {
+      api = undefined;
+    }
+    if (typeof api?.execute !== "function") {
+      return {
+        ok: false,
+        error: `${blockedError} — this page's CSP blocks string evaluation. Turn on "Allow User Scripts" for Browser Hand on the browser's extensions page, or use the debugger transport where the browser has one.`,
+      };
+    }
+    // A newline after the expression keeps a trailing // comment from eating the wrapper.
+    const code = `(async()=>{try{const v=await(\n${expression}\n);let s=v;if(v!==undefined){try{s=JSON.parse(JSON.stringify(v))}catch(e){s=String(v)}}return{ok:true,value:s}}catch(e){return{ok:false,error:e&&e.message?String(e.message):String(e),name:e&&e.name}}})()`;
+    try {
+      const [first] = await api.execute<EvalOutcome>({
+        js: [{ code }],
+        target: { tabId },
+        world: "MAIN",
+      });
+      return first?.result ?? { ok: false, error: "userScripts.execute returned no result" };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
+  /**
+   * Page.navigate without the debugger: chrome.tabs.update, then wait for the
+   * load to settle so the caller gets a real errorText and a loaded DOM.
+   * Reports loadComplete (the CLI skips waiting for Page.loadEventFired) and
+   * also emits that event shortly after replying, for clients that wait on it.
+   */
+  async navigateViaTabs(
+    tabId: number,
+    url: string,
+    sessionId?: string,
+    timeoutMs = 20000
+  ): Promise<{ frameId: string; loaderId: string; errorText?: string; loadComplete?: boolean }> {
+    const before = await chrome.tabs.get(tabId);
+    const frameId = this.tabs.get(tabId)?.targetId ?? `tab-${tabId}`;
+    const loaderId = `scripting-${Date.now().toString(36)}`;
+    const sameDocument = url.includes("#") && stripHash(before.url) === stripHash(url);
+
+    await chrome.tabs.update(tabId, { url });
+
+    let loaded = false;
+    let live = before;
+    const start = Date.now();
+    let sawLoading = before.status === "loading";
+    while (Date.now() - start < timeoutMs) {
+      if (sameDocument) {
+        loaded = true; // fragment navigation never reloads the document
+        break;
+      }
+      try {
+        live = await chrome.tabs.get(tabId);
+      } catch {
+        return { frameId, loaderId, errorText: "net::ERR_ABORTED (tab closed during navigation)" };
+      }
+      if (live.status === "loading") sawLoading = true;
+      // A fast load can flip loading→complete between polls; the URL change or a
+      // short grace period stands in for the "loading" sighting.
+      const moved = stripHash(live.url) !== stripHash(before.url);
+      if (live.status === "complete" && (sawLoading || moved || Date.now() - start > 1000)) {
+        loaded = true;
+        break;
+      }
+      await this.sleep(100);
+    }
+
+    const finalUrl = live.url || live.pendingUrl || "";
+    if (finalUrl.startsWith("chrome-error://")) {
+      return { frameId, loaderId, errorText: `net::ERR_FAILED (navigation failed: ${finalUrl})` };
+    }
+    if (loaded) {
+      await this.register(live).catch(() => null);
+      setTimeout(() => {
+        this.sendMessage({
+          method: "forwardCDPEvent",
+          params: {
+            sessionId,
+            method: "Page.loadEventFired",
+            params: { timestamp: Date.now() / 1000 },
+          },
+        });
+      }, 150);
+    }
+    return { frameId, loaderId, ...(loaded ? { loadComplete: true } : {}) };
   }
 
   /**

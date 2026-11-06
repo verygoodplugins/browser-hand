@@ -55,6 +55,15 @@ This is a **skill**, not an MCP server: no always-on tool list and no extra MCP 
 3. This stack defaults to **background tabs** — no stealing OS focus while the user works.
 4. Recovery paths for password-manager wedges and multi-step agent flows; local **challenge gym** for agent-shaped failures.
 
+## Page control: debugger-free by default
+
+The extension drives pages with `chrome.scripting` + `chrome.tabs` (no `chrome.debugger`), so there is no "started debugging this browser" banner and nothing for a site to detect. Snapshot, click, type, fill, evaluate, goto and screenshot all work this way. Browsers that stub `chrome.debugger` (the macOS **Search** browser) therefore work with no setup.
+
+- `browser-hand doctor` reports `transport` (`mode`, `effective`, `debuggerAvailable`).
+- The popup's **Page control** selector opts into the CDP debugger transport; it falls back to debugger-free automatically where the API is stubbed or missing.
+- Pages whose CSP forbids `eval` need `chrome.userScripts`: turn on **Allow User Scripts** for Browser Hand on the extensions page (Chrome 138+). Search provides it once the extension declares the permission. Without it those pages fail with an error that says so.
+- Not available without the debugger: `screenshot --full-page` (visible viewport only) and tab groups where `chrome.tabGroups` is missing (tabs are left ungrouped).
+
 ## Pieces (repo root)
 
 | Piece | Command / path |

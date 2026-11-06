@@ -13,6 +13,15 @@ export type TabState = "connecting" | "connected" | "error";
 
 export type DebugTransport = "debugger" | "scripting";
 
+/**
+ * How the extension drives pages.
+ * scripting (default): debugger-free. chrome.scripting + chrome.tabs only, so no
+ *   "started debugging this browser" infobar and nothing for sites to detect.
+ * debugger: CDP over chrome.debugger. Falls back to scripting on browsers that
+ *   stub the API (e.g. Search), so it never hard-fails.
+ */
+export type TransportMode = "scripting" | "debugger";
+
 export interface TabInfo {
   sessionId?: string;
   targetId?: string;
@@ -107,12 +116,16 @@ export interface SetStateMessage {
   type: "setState";
   isActive?: boolean;
   focusPolicy?: FocusPolicy;
+  transportMode?: TransportMode;
 }
 
 export interface StateResponse {
   isActive: boolean;
   isConnected: boolean;
   focusPolicy: FocusPolicy;
+  transportMode: TransportMode;
+  /** False when the browser stubs chrome.debugger (Search) or it is missing. */
+  debuggerAvailable: boolean;
 }
 
 export type PopupMessage = GetStateMessage | SetStateMessage;
