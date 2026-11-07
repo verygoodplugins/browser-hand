@@ -68,7 +68,7 @@ cd cli && cargo build
 ## Architecture notes
 
 - **Extension services:** `extension/services/{ConnectionManager,CDPRouter,TabManager,StateManager}.ts` — attach, tab targeting, CDP routing, focus policy.
-- **Relay:** `relay/src/relay.ts` — extension ↔ CLI WebSocket.
+- **Relay:** `relay/src/relay.ts` — extension ↔ CLI WebSocket. `relay/src/local-docs.ts` serves `file:` documents the CLI registers: a second listener (own origin/port) serving only `/local/<token>/…`, confined to the document's directory. Never add a route that takes a filesystem path from a request.
 - **CLI surface:** `cli-js/src/{cli,tool,autofill*}.js` — doctor, open, snapshot, fill, click, type, evaluate, screenshot, focus.
 - **Skill contract:** `skills/browser-hand/SKILL.md` + `references/*` — agent recipes and platform gotchas. Prefer skill updates over scattering recipes into random docs.
 - **Challenge ledger:** `extension/challenges/LEDGER.md` — pass/fail and fix commits for the agent gym.
