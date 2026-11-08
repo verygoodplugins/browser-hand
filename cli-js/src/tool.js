@@ -513,6 +513,48 @@ function relayPageEndpoint(name) {
   return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ""}`;
 }
 
+/**
+ * chrome.tabs.create rejects file: URLs ("Cannot navigate to a file: URL"), so
+ * register the document with the relay and open the capability URL it returns:
+ * `<doc origin>/local/<token>/<basename>`. The token scopes the document to its
+ * own directory, so `./style.css` or `img/a.png` resolve against that URL and
+ * the relay serves them from beside the file (never from outside it). The
+ * original query string and hash carry over. Non-file URLs pass through.
+ */
+export async function rewriteLocalFileUrl(url, relayBase = CURRENT_RELAY_URL) {
+  if (typeof url !== "string" || !/^file:\/\//i.test(url)) {
+    return url;
+  }
+  let parsed;
+  let filePath;
+  try {
+    parsed = new URL(url);
+    filePath = fileURLToPath(parsed);
+  } catch {
+    return url;
+  }
+  let registered;
+  try {
+    registered = await fetchJson(`${relayBase}/local-docs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+      timeoutMs: 5000,
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not serve ${filePath} through the Browser Hand relay (${error.message}). ` +
+        "A relay started before local-document support needs a restart: `browser-hand relay`."
+    );
+  }
+  if (typeof registered?.url !== "string") {
+    throw new Error(
+      `The Browser Hand relay at ${relayBase} did not return a URL for ${filePath}; restart it with \`browser-hand relay\`.`
+    );
+  }
+  return `${registered.url}${parsed.search}${parsed.hash}`;
+}
+
 async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   if (!pageName || typeof pageName !== "string") {
     return null;
@@ -776,11 +818,27 @@ export async function resolveNamedPageInfo({
   return lookupPage(pageName);
 }
 
+/**
+ * Detect "chrome.debugger unavailable in this browser" errors (e.g. the
+ * "Search" Chromium fork reports `debugger.attach isn't available in Search`).
+ * Distinct from the path_b separate-debug-profile case.
+ */
+export function isDebuggerUnavailableError(error) {
+  const message = String(error || "");
+  return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
+}
+
+/**
+ * `debuggerState` is the relay's `debugger` report ({available:false, reason}). It is
+ * what surfaces the limitation when the extension's scripting fallback lets the smoke
+ * tab open anyway; the smoke error text only covers an extension without that fallback.
+ */
 export function classifyDevBrowserDoctor({
   relayInfo,
   recentExtensionDisconnected = false,
   targetCount = 0,
   smoke = null,
+  debuggerState = null,
 } = {}) {
   if (!relayInfo) {
     return {
@@ -801,7 +859,9 @@ export function classifyDevBrowserDoctor({
       action: `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
     };
   }
-  if (smoke?.success === true) {
+  const debuggerUnavailable =
+    debuggerState?.available === false || isDebuggerUnavailableError(smoke?.error);
+  if (smoke?.success === true && !debuggerUnavailable) {
     return {
       status: "tab_bootstrap_works",
       action: "Browser Hand is healthy. Run authenticated work through the extension relay.",
@@ -812,6 +872,15 @@ export function classifyDevBrowserDoctor({
       status: "extension_unstable",
       action:
         "Reload the Browser Hand extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.",
+    };
+  }
+  if (debuggerUnavailable) {
+    // The host browser restricts chrome.debugger (e.g. the "Search" fork). This
+    // is a browser capability gap, not the separate-debug-profile (path_b) case.
+    return {
+      status: "debugger_unavailable",
+      action:
+        "This browser restricts chrome.debugger, so Browser Hand drives tabs via the scripting transport. Most work (open, snapshot, fill, click, evaluate) still runs; if a command needs full CDP, use a browser that allows chrome.debugger.",
     };
   }
   if (targetCount === 0) {
@@ -1395,11 +1464,25 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
       extensionConnected: relayInfo?.extensionConnected === true,
       mode: relayInfo?.mode || null,
     },
+    // Which browser the connected extension is running in. Agents read this so
+    // they target that browser and never fall back to `open -a "Google Chrome"`.
+    browser: relayInfo?.browser || null,
+    // Set when the connected browser restricts chrome.debugger (null = no limitation seen).
+    debugger: relayInfo?.debugger || null,
     pages,
     targetCount: 0,
     smoke: null,
     recentExtensionDisconnected,
   };
+
+  // Optional --browser selector: warn when the connected browser does not match.
+  if (typeof input.browser === "string" && input.browser.trim()) {
+    const wanted = input.browser.trim();
+    const connectedName = result.browser?.name || "";
+    if (connectedName && !connectedName.toLowerCase().includes(wanted.toLowerCase())) {
+      result.browserMismatch = `Requested --browser "${wanted}" but the connected extension is in "${connectedName}".`;
+    }
+  }
 
   if (relayInfo?.wsEndpoint && relayInfo.extensionConnected === true) {
     const cdp = new CdpClient(relayInfo.wsEndpoint);
@@ -1454,16 +1537,27 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
     }
   }
 
+  // The extension only learns chrome.debugger is unavailable when the smoke tab first
+  // attaches, after the probe above, so read what it reported before classifying.
+  if (result.smoke) {
+    result.debugger = (await probeRelay(1000))?.debugger || result.debugger;
+  }
+
   const classification = classifyDevBrowserDoctor({
     relayInfo,
     recentExtensionDisconnected,
     targetCount: result.targetCount,
     smoke: result.smoke,
+    debuggerState: result.debugger,
   });
   result.status = classification.status;
   result.action = classification.action;
   result.success = classification.status === "tab_bootstrap_works";
-  if (classification.status !== "tab_bootstrap_works") {
+  // debugger_unavailable is a browser capability gap, not a failed bootstrap or path_b.
+  if (
+    classification.status !== "tab_bootstrap_works" &&
+    classification.status !== "debugger_unavailable"
+  ) {
     result.pathBNote =
       "Tab bootstrap failed. For disposable/debug profiles use upstream headless or --connect on a non-default user-data-dir — not your everyday Chrome profile.";
   }
@@ -1746,6 +1840,13 @@ async function runCurrentOperation(input, timeoutMs) {
   }
 
   const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  // Registering needs a running relay, so this waits for ensureRelayConnected.
+  if ((operation === "open" || operation === "goto") && typeof input.url === "string") {
+    const rewritten = await rewriteLocalFileUrl(input.url);
+    if (rewritten !== input.url) {
+      input = { ...input, url: rewritten };
+    }
+  }
   const cdp = new CdpClient(info.wsEndpoint);
   try {
     const targetResult = await cdp.send("Target.getTargets");

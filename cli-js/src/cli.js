@@ -42,7 +42,7 @@ const OP_ALIASES = {
   list: "tabs",
 };
 
-const HELP = `browser-hand — drive your real Chrome via the Browser Hand extension relay.
+const HELP = `browser-hand — drive your real browser (whichever has the Browser Hand extension) via the relay.
 
 Operations:
   snapshot [--scope auto|full|nav]      Dialog + main by default (role, name, value, ref). full adds nav and text.
@@ -58,7 +58,10 @@ Operations:
   goto --url <url>                      Navigate the active tab.
   open --url <url> [--page-name <name>] [--group-title <text>]
                                         Create/get a named relay tab and navigate it.
-                                        --group-title names the Chrome tab group for this session.
+                                        --group-title names the browser tab group for this session.
+                                        file: URLs are registered with the relay and opened from its
+                                        separate local-doc origin (tabs.create rejects file:); only the
+                                        document's own directory is served.
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
@@ -280,6 +283,9 @@ function buildHandlerInput(operation, args) {
       break;
     case "doctor":
       if (args.verbose === true) input.verbose = true;
+      if (typeof args.browser === "string" && args.browser.trim()) {
+        input.browser = args.browser.trim();
+      }
       break;
     case "tabs":
       if (typeof args.query === "string" && args.query.trim()) {

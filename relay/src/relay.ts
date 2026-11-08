@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { serve } from "@hono/node-server";
+import { serve, type ServerType } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import type { WSContext } from "hono/ws";
 import {
@@ -8,15 +8,33 @@ import {
   planBlankNavigation,
   type AdoptTarget,
 } from "./adopt-existing-tab.js";
+import {
+  LOCAL_DOC_ROUTE_PREFIX,
+  LOCAL_DOC_SECURITY_HEADERS,
+  LocalDocError,
+  LocalDocRegistry,
+} from "./local-file.js";
+
+/** Host browser reported by the extension on connect. */
+export interface HostBrowser {
+  name: string;
+  version: string;
+}
 
 export interface RelayOptions {
   port?: number;
   host?: string;
+  /** Port of the document listener (default: OS-assigned). Must differ from `port`: it is the origin boundary. */
+  localDocPort?: number;
+  /** Idle lifetime of a local-document capability token (default 2h, sliding). */
+  localDocTtlMs?: number;
 }
 
 export interface RelayServer {
   wsEndpoint: string;
   port: number;
+  /** Origin local documents are served from, e.g. http://127.0.0.1:41873. */
+  localDocOrigin: string;
   stop(): Promise<void>;
 }
 
@@ -58,7 +76,14 @@ interface ExtensionEventMessage {
 type ExtensionMessage =
   | ExtensionResponseMessage
   | ExtensionEventMessage
-  | { method: "log"; params: { level: string; args: string[] } };
+  | { method: "log"; params: { level: string; args: string[] } }
+  | {
+      method: "register";
+      params: {
+        browser?: Partial<HostBrowser>;
+        debugger?: { available?: boolean; reason?: string };
+      };
+    };
 
 interface CDPCommand {
   id: number;
@@ -130,9 +155,17 @@ function adoptedNavigationEvents(
   return events;
 }
 
+/** `host` as it appears in a URL authority (IPv6 literals need brackets). */
+function urlHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
 export async function serveRelay(options: RelayOptions = {}): Promise<RelayServer> {
   const port = options.port ?? 9222;
   const host = options.host ?? "127.0.0.1";
+  if (options.localDocPort !== undefined && options.localDocPort === port) {
+    throw new Error("localDocPort must differ from the relay port (separate origins)");
+  }
 
   const connectedTargets = new Map<string, ConnectedTarget>();
   /** Named page → last known session + target. Prefer targetId rebind when session churns. */
@@ -157,6 +190,14 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   const relayCreatedTargetIds = new Set<string>();
   const playwrightClients = new Map<string, PlaywrightClient>();
   let extensionWs: WSContext | null = null;
+  /** Browser the connected extension is running in (null until it registers). */
+  let extensionBrowser: HostBrowser | null = null;
+  /**
+   * Set once the extension reports its browser has no chrome.debugger. The extension
+   * falls back to scripting and the failing call then succeeds, so this report is the
+   * only way doctor learns the limitation. Null = none reported on this connection.
+   */
+  let extensionDebugger: { available: false; reason: string } | null = null;
 
   const deferredCdpEvents: CDPEvent[] = [];
 
@@ -565,15 +606,116 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     });
   }
 
+  // Local documents get their own listener: origins include the port, so a
+  // document is never same-origin with the relay API, and this listener has no
+  // route except /local/<token>/…. It starts first so the control guard knows its port.
+  const localDocs = new LocalDocRegistry({ ttlMs: options.localDocTtlMs });
+  const docApp = new Hono();
+  let docAuthorities = new Set<string>();
+  const isDocAuthority = (authority: string | undefined): boolean =>
+    authority !== undefined && docAuthorities.has(authority.toLowerCase());
+
+  docApp.use("*", async (c, next) => {
+    await next();
+    for (const [name, value] of Object.entries(LOCAL_DOC_SECURITY_HEADERS)) {
+      c.res.headers.set(name, value);
+    }
+  });
+  docApp.get("*", async (c) => {
+    if (!isDocAuthority(c.req.header("host"))) return c.notFound();
+    const match = /^\/local\/([^/]+)(\/.*)?$/.exec(new URL(c.req.url).pathname);
+    if (!match) return c.notFound();
+    const result = await localDocs.read(match[1], match[2] ?? "");
+    if (result.status !== 200 || !result.body) return c.notFound();
+    return new Response(result.body, {
+      status: 200,
+      headers: { "content-type": result.contentType || "application/octet-stream" },
+    });
+  });
+
+  let docServer!: ServerType;
+  const docPort = await new Promise<number>((resolve, reject) => {
+    docServer = serve(
+      { fetch: docApp.fetch, port: options.localDocPort ?? 0, hostname: host },
+      (info) => resolve(info.port)
+    );
+    docServer.once("error", reject);
+  });
+  const docHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : urlHost(host);
+  const localDocOrigin = `http://${docHost}:${docPort}`;
+  docAuthorities = new Set(
+    [docHost, "127.0.0.1", "localhost", "[::1]"].map((h) => `${h}:${docPort}`.toLowerCase())
+  );
+
   const app = new Hono();
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+
+  // Nothing addressed to or issued by the document origin may reach the relay
+  // API, /cdp or /extension: reject by Host and by Origin before any route runs.
+  app.use("*", async (c, next) => {
+    const origin = c.req.header("origin");
+    let fromDocument = false;
+    if (origin) {
+      try {
+        fromDocument = isDocAuthority(new URL(origin).host);
+      } catch {
+        // Opaque or malformed Origin ("null"): not the document origin.
+      }
+    }
+    if (fromDocument || isDocAuthority(c.req.header("host"))) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    await next();
+  });
 
   app.get("/", (c) => {
     return c.json({
       wsEndpoint: `ws://${host}:${port}/cdp`,
       extensionConnected: extensionWs !== null,
+      // Which browser the extension is driving. Agents read this so they target
+      // the connected browser instead of assuming Chrome.
+      browser: extensionBrowser,
+      // { available: false, reason } when the browser restricts chrome.debugger.
+      debugger: extensionDebugger,
       mode: "extension",
     });
+  });
+
+  // Register a local document (file: URLs fail in chrome.tabs.create) and return
+  // its capability URL. The only route taking a filesystem path, so CLI-only:
+  // browsers attach Origin to every POST and a JSON body forces a preflight the
+  // relay never answers, so a web page can neither call it nor read the token.
+  app.post("/local-docs", async (c) => {
+    if (c.req.header("origin") !== undefined) {
+      return c.json({ error: "Forbidden" }, 403);
+    }
+    if (!c.req.header("content-type")?.toLowerCase().startsWith("application/json")) {
+      return c.json({ error: "Content-Type must be application/json" }, 415);
+    }
+    let body: { path?: unknown } | null;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    try {
+      const doc = await localDocs.register(body?.path);
+      return c.json(
+        {
+          token: doc.token,
+          name: doc.name,
+          expiresAt: doc.expiresAt,
+          origin: localDocOrigin,
+          url: `${localDocOrigin}${LOCAL_DOC_ROUTE_PREFIX}${doc.token}/${encodeURIComponent(doc.name)}`,
+        },
+        201
+      );
+    } catch (err) {
+      if (err instanceof LocalDocError) {
+        return c.json({ error: err.message }, err.status as 400 | 404);
+      }
+      throw err;
+    }
   });
 
   app.get("/pages", (c) => {
@@ -908,6 +1050,8 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
             log("Closing existing extension connection");
             extensionWs.close(4001, "Extension Replaced");
 
+            extensionBrowser = null;
+            extensionDebugger = null;
             connectedTargets.clear();
             namedPages.clear();
             clearAdoptionState();
@@ -951,6 +1095,26 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           if ("method" in message && message.method === "log") {
             const { level, args } = message.params;
             console.error(`[extension:${level}]`, ...args);
+            return;
+          }
+
+          if ("method" in message && message.method === "register") {
+            const browser = message.params?.browser;
+            if (browser && typeof browser === "object") {
+              extensionBrowser = {
+                name: String(browser.name || "Unknown").slice(0, 100),
+                version: String(browser.version || "").slice(0, 60),
+              };
+              log(`Extension host browser: ${extensionBrowser.name} ${extensionBrowser.version}`);
+            }
+            const capability = message.params?.debugger;
+            if (capability && typeof capability === "object" && capability.available === false) {
+              extensionDebugger = {
+                available: false,
+                reason: String(capability.reason || "chrome.debugger unavailable").slice(0, 200),
+              };
+              log(`Extension reports chrome.debugger unavailable: ${extensionDebugger.reason}`);
+            }
             return;
           }
 
@@ -1119,6 +1283,8 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           extensionPendingRequests.clear();
 
           extensionWs = null;
+          extensionBrowser = null;
+          extensionDebugger = null;
           connectedTargets.clear();
           namedPages.clear();
           clearAdoptionState();
@@ -1145,18 +1311,23 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   log(`  HTTP: http://${host}:${port}`);
   log(`  CDP endpoint: ${wsEndpoint}`);
   log(`  Extension endpoint: ws://${host}:${port}/extension`);
+  log(`  Local documents: ${localDocOrigin} (capability URLs only)`);
   log("Waiting for extension to connect...");
 
   return {
     wsEndpoint,
     port,
+    localDocOrigin,
     async stop() {
       for (const client of playwrightClients.values()) {
         client.ws.close(1000, "Server stopped");
       }
       playwrightClients.clear();
       extensionWs?.close(1000, "Server stopped");
+      // Capabilities die with the relay.
+      localDocs.clear();
       server.close();
+      docServer.close();
     },
   };
 }
