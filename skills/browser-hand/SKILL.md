@@ -92,6 +92,7 @@ browser-hand steps --page-name work --quiet --steps '[{"op":"click","role":"comb
 browser-hand type --page-name work --label "Bio" --text "Hello"
 browser-hand evaluate --page-name work --code 'document.title' --quiet
 browser-hand screenshot --page-name work
+browser-hand close --page-name work
 ```
 
 Full reference: `references/extension-cli.md`.
@@ -100,6 +101,7 @@ Full reference: `references/extension-cli.md`.
 
 - Prefer **named pages** (`--page-name`) for multi-step work.
 - On the first `open` of a task, pass `--group-title` with a few words ("DNS records", "Invoice review"). That names the Chrome tab group and gives it a color. Later commands in the same task omit it and join that group. A different title starts a new group. Leaving it off keeps the group named Browser Hand.
+- Close the tabs you opened when the task is done: `close --page-name work`, or `close --group-title "DNS records"` for the whole group. `close` only closes tabs Browser Hand opened and refuses a tab the user had open. Never add `--include-user-tabs` on your own; only when the user names the tab to close. A selector that matches several tabs is refused without `--all`, and `close` never defaults to the active tab. Read `closed` in the result: it is `true` only after the tab left Chrome.
 - Pass **`--quiet`** on snapshot, click, fill, evaluate, and steps. It drops the repeated `mode` / `target` / `url` / `title` wrapper.
 - `doctor` returns `status`, `browser: {name, version}`, `tabCount`, and the active tab. It is a health check. Use `tabs` for the inventory. `doctor --verbose` is only for diagnosing target selection. `doctor --browser <name>` asserts which connected browser you expect and warns on a mismatch.
 - **Never open tabs with OS commands.** Do not fall back to `open -a "Google Chrome" <url>`, `start`, `xdg-open`, or any shell launcher — that opens the wrong browser (not the one with the extension) and loses the session. Always use `browser-hand open`/`goto`. If `open` fails, report the error; do not route around it.

@@ -16,6 +16,7 @@
  *   browser-hand evaluate --code 'document.title'
  *   browser-hand goto --url https://example.com
  *   browser-hand open --url https://example.com --page-name smoke
+ *   browser-hand close --page-name smoke
  *   browser-hand doctor
  *
  * Output: JSON on stdout. Exits 0 on success, 1 on tool/handler error,
@@ -64,8 +65,13 @@ Operations:
   focus [--focus window|tab]            Bring a tab forward for human input (one-shot; default window).
     --reason <why>                      Required for good audit (e.g. 2fa, confirm-publish).
   tabs [--query <text>]                 List every http(s) tab. Unique-active first; last-focused when stamped.
-  doctor [--verbose] [--browser <name>] Health check: status, browser:{name,version}, tabCount, active tab.
-                                        --browser asserts which connected browser you expect.
+  close (--page-name <n> | --query <text> | --target-id <id> | --group-title <t>)
+                                        Close a tab Browser Hand opened. Returns { closed, targetId, url, title }.
+                                        Never closes the active tab by default and refuses a selector
+                                        that matches several tabs unless --all is given. --group-title
+                                        closes every tab in that Browser Hand tab group. Refuses a tab
+                                        you had open unless --include-user-tabs is passed.
+  doctor [--verbose]                    Health check: status, tabCount, and the active tab. Not a tab list.
   relay                                 Start a persistent extension relay (foreground) so the
                                         Chrome extension has a stable endpoint to connect to.
                                         Run once and leave it up; Ctrl-C to stop. Idempotent —
@@ -87,6 +93,9 @@ Global flags:
   --role <role>             Click by ARIA role. Requires --name.
   --name <name>             Accessible name for --role. Exact match.
   --group-title <text>      Optional tab-group label for open/goto. A new title starts a new group.
+                            With close: the Browser Hand tab group to close.
+  --all                     close: allow a selector that matches several tabs to close all of them.
+  --include-user-tabs       close: also close tabs Browser Hand did not open (tabs you had open).
   -h, --help                Show this help.
 
 Examples:
@@ -97,6 +106,9 @@ Examples:
   browser-hand tabs
   browser-hand tabs --query stripe
   browser-hand snapshot --query stripe
+  browser-hand close --page-name smoke
+  browser-hand close --query example.com --all
+  browser-hand close --group-title "DNS records"
   browser-hand doctor
   browser-hand click --page-name work --role combobox --name "Type"
   browser-hand click --page-name work --ref e4
@@ -116,6 +128,10 @@ function parseArgs(argv) {
       args.quiet = true;
     } else if (tok === "--full-page") {
       args.fullPage = true;
+    } else if (tok === "--all") {
+      args.all = true;
+    } else if (tok === "--include-user-tabs") {
+      args.includeUserTabs = true;
     } else if (tok.startsWith("--")) {
       const key = tok.slice(2);
       const next = argv[i + 1];
@@ -274,6 +290,24 @@ function buildHandlerInput(operation, args) {
     case "tabs":
       if (typeof args.query === "string" && args.query.trim()) {
         input.query = args.query.trim();
+      }
+      break;
+    case "close":
+      if (args["group-title"] === true) {
+        fail("--group-title requires a value");
+      }
+      if (typeof args["group-title"] === "string" && args["group-title"].trim()) {
+        input.groupTitle = args["group-title"].trim();
+      }
+      if (args.all === true) input.all = true;
+      if (args.includeUserTabs === true) input.includeUserTabs = true;
+      if (!input.pageName && !input.target && !input.groupTitle) {
+        fail(
+          "close requires --page-name, --query, --target-id/--target-url/--target-title, or --group-title"
+        );
+      }
+      if (input.pageName && (input.target || input.groupTitle)) {
+        fail("close --page-name cannot be combined with --query, --target-*, or --group-title");
       }
       break;
     case "snapshot":

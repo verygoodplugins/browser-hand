@@ -210,6 +210,19 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     relayCreatedTargetIds.clear();
   }
 
+  /**
+   * True only for tabs this relay opened that no one adopted as an existing
+   * page. `browser-hand close` closes these without an override; everything
+   * else is a tab the user may have had open.
+   */
+  function isBrowserHandOwned(targetId: unknown): boolean {
+    return (
+      typeof targetId === "string" &&
+      relayCreatedTargetIds.has(targetId) &&
+      !protectedTargetIds.has(targetId)
+    );
+  }
+
   function listedTargets(): AdoptTarget[] {
     return Array.from(connectedTargets.values()).map((target) => {
       const info = target.targetInfo as TargetInfo & { focused?: boolean; active?: boolean };
@@ -446,7 +459,13 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     }
     if (method === "Target.closeTarget") {
       const closingId = typeof params?.targetId === "string" ? params.targetId : "";
-      if (closingId && (protectedTargetIds.has(closingId) || adoptedByTarget.has(closingId))) {
+      // `force` is the CLI's `--include-user-tabs`: the caller already decided to
+      // close a tab the user had open. Playwright never sends it.
+      const forced = params?.force === true;
+      if (
+        closingId &&
+        ((protectedTargetIds.has(closingId) && !forced) || adoptedByTarget.has(closingId))
+      ) {
         log(`Ignoring close of adopted tab ${closingId}`);
         return { success: true };
       }
@@ -540,6 +559,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
               targetInfos: live.targetInfos.map((targetInfo) => ({
                 ...targetInfo,
                 attached: true,
+                browserHandOwned: isBrowserHandOwned(targetInfo.targetId),
               })),
             };
           }
@@ -550,6 +570,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
           targetInfos: Array.from(connectedTargets.values()).map((t) => ({
             ...t.targetInfo,
             attached: true,
+            browserHandOwned: isBrowserHandOwned(t.targetId),
           })),
         };
       }

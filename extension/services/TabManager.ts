@@ -177,12 +177,29 @@ export class TabManager {
   async listTargets(): Promise<TargetInfo[]> {
     await this.refreshFocusFlags();
     const tabs = await chrome.tabs.query({});
+    const groupTitles = await this.groupTitlesById();
     const infos: TargetInfo[] = [];
     for (const tab of tabs) {
       const targetInfo = await this.register(tab);
-      if (targetInfo) infos.push(targetInfo);
+      if (!targetInfo) continue;
+      const groupTitle = tab.groupId != null ? groupTitles.get(tab.groupId) : undefined;
+      infos.push(groupTitle ? { ...targetInfo, groupTitle } : targetInfo);
     }
     return infos;
+  }
+
+  /** Chrome tab-group id -> title, so `close --group-title` can find a session's tabs. */
+  private async groupTitlesById(): Promise<Map<number, string>> {
+    const titles = new Map<number, string>();
+    try {
+      for (const group of await chrome.tabGroups.query({})) {
+        const title = typeof group.title === "string" ? group.title.trim() : "";
+        if (title) titles.set(group.id, title);
+      }
+    } catch {
+      // tabGroups is unavailable in some test doubles and old Chrome builds.
+    }
+    return titles;
   }
 
   /**

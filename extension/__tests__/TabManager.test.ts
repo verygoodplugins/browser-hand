@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { fakeBrowser } from "wxt/testing";
 import { TabManager } from "../services/TabManager";
 import type { Logger } from "../utils/logger";
@@ -417,6 +417,48 @@ describe("TabManager", () => {
         targetId: "tab-9",
         focused: true,
         active: true,
+      });
+    });
+
+    describe("tab group titles", () => {
+      // The stubbed chrome global has no tabGroups; tests install a partial double.
+      const globalChrome = chrome as unknown as { tabGroups?: unknown };
+      let previousTabGroups: unknown;
+
+      beforeEach(() => {
+        previousTabGroups = globalChrome.tabGroups;
+      });
+
+      afterEach(() => {
+        globalChrome.tabGroups = previousTabGroups;
+      });
+
+      it("stamps the tab-group title on tabs that sit in a titled group", async () => {
+        globalChrome.tabGroups = {
+          query: vi.fn().mockResolvedValue([
+            { id: 11, title: "DNS records" },
+            { id: 12, title: "" },
+          ]),
+        };
+        mockTabsQuery.mockResolvedValue([
+          chromeTab({ id: 1, groupId: 11 }),
+          chromeTab({ id: 2, groupId: 12 }),
+          chromeTab({ id: 3, groupId: -1 }),
+        ]);
+
+        const infos = await tabManager.listTargets();
+        expect(infos.find((info) => info.targetId === "tab-1")?.groupTitle).toBe("DNS records");
+        expect(infos.find((info) => info.targetId === "tab-2")).not.toHaveProperty("groupTitle");
+        expect(infos.find((info) => info.targetId === "tab-3")).not.toHaveProperty("groupTitle");
+      });
+
+      it("still lists tabs when tab groups cannot be read", async () => {
+        globalChrome.tabGroups = { query: vi.fn().mockRejectedValue(new Error("no tabGroups")) };
+        mockTabsQuery.mockResolvedValue([chromeTab({ id: 1, groupId: 11 })]);
+
+        const infos = await tabManager.listTargets();
+        expect(infos).toHaveLength(1);
+        expect(infos[0]).not.toHaveProperty("groupTitle");
       });
     });
   });
