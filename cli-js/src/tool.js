@@ -1199,6 +1199,18 @@ class CdpClient {
   }
 }
 
+/**
+ * True when Page.navigate already finished loading, so waiting for
+ * Page.loadEventFired would only burn the timeout: a relay-adopted blank tab, or
+ * the extension's debugger-free transport (reports loadComplete).
+ */
+export function navigationSettled(navResult) {
+  return (
+    navResult?.loadComplete === true ||
+    (typeof navResult?.loaderId === "string" && navResult.loaderId.startsWith("adopted-"))
+  );
+}
+
 async function attachTarget(cdp, targetId) {
   const tryOnce = async () => {
     const attach = await cdp.send("Target.attachToTarget", {
@@ -1398,13 +1410,15 @@ async function selectOrOpenCurrentTarget({ cdp, input, operation, targets, timeo
           pageName: plan.pageName,
         };
         sessionId = await attachTarget(cdp, selected.targetId);
-        await cdp.send("Page.navigate", { url: cached.url }, sessionId);
-        await cdp
-          .waitForEvent("Page.loadEventFired", {
-            sessionId,
-            timeoutMs: 15000,
-          })
-          .catch(() => null);
+        const renav = await cdp.send("Page.navigate", { url: cached.url }, sessionId);
+        if (!navigationSettled(renav)) {
+          await cdp
+            .waitForEvent("Page.loadEventFired", {
+              sessionId,
+              timeoutMs: 15000,
+            })
+            .catch(() => null);
+        }
         selected.url = cached.url;
         setCachedNamedPage(plan.pageName, {
           targetId: selected.targetId,
@@ -1500,6 +1514,10 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
         result.targets = shaped.targets;
         result.truncated = shaped.truncated;
       }
+
+      // Which transport the extension drives pages with (debugger-free by default).
+      // Older extensions don't know the command; that is fine.
+      result.transport = await cdp.send("DevBrowser.getCapabilities").catch(() => null);
 
       try {
         const pageInfo = await openNamedRelayPage(smokeName, {
@@ -2158,9 +2176,7 @@ async function runCurrentOperation(input, timeoutMs) {
           throw err;
         }
         const urlBeforeNav = selected.url;
-        const adopted =
-          typeof navResult?.loaderId === "string" && navResult.loaderId.startsWith("adopted-");
-        if (!adopted) {
+        if (!navigationSettled(navResult)) {
           await cdp.waitForEvent("Page.loadEventFired", { sessionId, timeoutMs }).catch(() => null);
         }
         if (!navResult?.errorText) {

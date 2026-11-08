@@ -2,7 +2,7 @@
  * StateManager - Manages extension active/inactive state with persistence.
  */
 
-import type { FocusPolicy } from "../utils/types";
+import type { FocusPolicy, TransportMode } from "../utils/types";
 
 const STORAGE_KEY = "devBrowserActiveState";
 const OVERRIDE_KEY = "devBrowserFocusOverride";
@@ -15,6 +15,8 @@ export interface ExtensionState {
    * window: previous behavior — activate tab and focus the Chrome window.
    */
   focusPolicy: FocusPolicy;
+  /** scripting (default, debugger-free) or debugger (CDP; falls back when unavailable). */
+  transportMode: TransportMode;
 }
 
 /** One-shot / TTL agent override of the popup focus policy. */
@@ -30,7 +32,12 @@ export interface FocusOverride {
 const DEFAULT_STATE: ExtensionState = {
   isActive: true,
   focusPolicy: "background",
+  transportMode: "scripting",
 };
+
+function normalizeTransportMode(value: unknown): TransportMode {
+  return value === "debugger" || value === "scripting" ? value : DEFAULT_STATE.transportMode;
+}
 
 function normalizeFocusPolicy(value: unknown): FocusPolicy {
   if (value === "tab" || value === "window" || value === "background") {
@@ -52,6 +59,7 @@ export class StateManager {
     return {
       isActive: state?.isActive ?? DEFAULT_STATE.isActive,
       focusPolicy: normalizeFocusPolicy(state?.focusPolicy),
+      transportMode: normalizeTransportMode(state?.transportMode),
     };
   }
 
@@ -66,9 +74,17 @@ export class StateManager {
         partial.focusPolicy !== undefined
           ? normalizeFocusPolicy(partial.focusPolicy)
           : current.focusPolicy,
+      transportMode:
+        partial.transportMode !== undefined
+          ? normalizeTransportMode(partial.transportMode)
+          : current.transportMode,
     };
     await chrome.storage.local.set({ [STORAGE_KEY]: next });
     return next;
+  }
+
+  async getTransportMode(): Promise<TransportMode> {
+    return (await this.getState()).transportMode;
   }
 
   async getFocusPolicy(): Promise<FocusPolicy> {

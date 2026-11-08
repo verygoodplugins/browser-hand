@@ -21,6 +21,8 @@ Attaching automation through Chrome’s remote debugging port (or “controlled 
 
 Browser Hand takes a different route: a small **Chrome extension** bridges your normal profile to a **local relay** on your machine. Agents talk to the CLI; the extension drives tabs. No remote-debug flag on the default profile, no WebDriver banner, and **background work by default** so automation doesn’t yank focus.
 
+The extension is also **debugger-free by default**: it uses `chrome.scripting` and `chrome.tabs` rather than `chrome.debugger`, so there is no “started debugging this browser” infobar for sites to detect. That is why it also runs in Chrome-extension-compatible browsers that stub `chrome.debugger`, such as the macOS **Search** browser. Pick the CDP debugger transport in the popup (**Page control**) only if you want it; see [the skill](./skills/browser-hand/SKILL.md#page-control-debugger-free-by-default) for what each mode can and cannot do.
+
 ## What you get
 
 - **Real sessions** — use the Chrome profile you already use (cookies, passkeys, extensions, open tabs).

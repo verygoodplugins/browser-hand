@@ -13,7 +13,11 @@ describe("StateManager", () => {
   describe("getState", () => {
     it("should return default active + background focus when no stored state", async () => {
       const state = await stateManager.getState();
-      expect(state).toEqual({ isActive: true, focusPolicy: "background" });
+      expect(state).toEqual({
+        isActive: true,
+        focusPolicy: "background",
+        transportMode: "scripting",
+      });
     });
 
     it("should return stored state when available and fill missing focusPolicy", async () => {
@@ -22,7 +26,11 @@ describe("StateManager", () => {
       });
 
       const state = await stateManager.getState();
-      expect(state).toEqual({ isActive: true, focusPolicy: "background" });
+      expect(state).toEqual({
+        isActive: true,
+        focusPolicy: "background",
+        transportMode: "scripting",
+      });
     });
 
     it("should preserve a stored window focus policy", async () => {
@@ -43,7 +51,17 @@ describe("StateManager", () => {
       expect(stored.devBrowserActiveState).toEqual({
         isActive: true,
         focusPolicy: "background",
+        transportMode: "scripting",
       });
+    });
+
+    it("defaults to the debugger-free transport and persists an explicit opt-in", async () => {
+      expect(await stateManager.getTransportMode()).toBe("scripting");
+      await stateManager.setState({ transportMode: "debugger" });
+      expect(await stateManager.getTransportMode()).toBe("debugger");
+      // Junk values never leave the safe default.
+      await stateManager.setState({ transportMode: "bogus" as never });
+      expect(await stateManager.getTransportMode()).toBe("scripting");
     });
 
     it("should update state from active to inactive", async () => {
@@ -51,7 +69,11 @@ describe("StateManager", () => {
       await stateManager.setState({ isActive: false });
 
       const state = await stateManager.getState();
-      expect(state).toEqual({ isActive: false, focusPolicy: "background" });
+      expect(state).toEqual({
+        isActive: false,
+        focusPolicy: "background",
+        transportMode: "scripting",
+      });
     });
 
     it("should update focus policy without clearing isActive", async () => {
@@ -59,7 +81,7 @@ describe("StateManager", () => {
       await stateManager.setState({ focusPolicy: "tab" });
 
       const state = await stateManager.getState();
-      expect(state).toEqual({ isActive: true, focusPolicy: "tab" });
+      expect(state).toEqual({ isActive: true, focusPolicy: "tab", transportMode: "scripting" });
     });
   });
 

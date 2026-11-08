@@ -35,6 +35,13 @@
         <option value="window">Focus Chrome window</option>
       </select>
       <p class="hint" id="focus-hint">Agents keep working without stealing your keyboard focus.</p>
+
+      <label class="field-label" for="transport-mode">Page control</label>
+      <select id="transport-mode" class="focus-select">
+        <option value="scripting">Debugger-free (default)</option>
+        <option value="debugger">Chrome debugger (CDP)</option>
+      </select>
+      <p class="hint" id="transport-hint"></p>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>
