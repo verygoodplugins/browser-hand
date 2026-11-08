@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Extension 1.2.0] - 2026-11-08
+
+- Chrome extension manifest is 1.2.0.
+- Added debugger-free page control, so Browser Hand works in Search and other Chromium browsers that block `chrome.debugger`.
+- Fixed evaluate in Search on sites with a strict content security policy: user-script evaluation now runs synchronously first and only falls back to the async wrapper for promises.
+- The CLI targets the connected browser instead of assuming Chrome.
+- Added `close` to shut tabs Browser Hand opened, including about:blank and file:// tabs.
+
 ## [0.3.0] - 2026-10-14
 
 - Chrome extension manifest is 1.1.0.
