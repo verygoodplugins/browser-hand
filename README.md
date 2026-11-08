@@ -83,7 +83,15 @@ browser-hand open --url https://example.com --page-name demo --group-title "DNS 
 browser-hand snapshot --page-name demo
 browser-hand click --page-name demo --text "More information..."
 browser-hand screenshot --page-name demo
+browser-hand close --page-name demo     # done: close the tab Browser Hand opened
 ```
+
+`close` needs an explicit selector (`--page-name`, `--query`, `--target-*`, or `--group-title`) and never closes the active tab by default. It returns `{ closed, targetId, url, title }`, and `closed` is only `true` once Chrome no longer lists the tab.
+
+- A selector that matches several tabs is refused unless you pass `--all`.
+- `--group-title "DNS records"` closes every tab in that Browser Hand tab group.
+- It only closes tabs Browser Hand opened. A tab you already had open is refused; `--all` and `--group-title` skip such tabs and list them under `skipped`. Pass `--include-user-tabs` to close one anyway.
+- Ownership is tracked by the relay, so restart it (`npm run build:relay && npm run relay`) and reload the extension after upgrading. A relay that predates this fails closed instead of guessing.
 
 The first `open` of a task can name the Chrome tab group. Later opens with the same title join that group. A different title starts a new group and a new color. Leave the flag off and the group stays named Browser Hand.
 

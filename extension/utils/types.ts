@@ -102,6 +102,8 @@ export interface TargetInfo {
   focused?: boolean;
   windowId?: number;
   attached?: boolean;
+  /** Title of the Chrome tab group the tab sits in. Only stamped by listTargets. */
+  groupTitle?: string;
 }
 
 /** How automation may take foreground focus. Default is background (never steal). */

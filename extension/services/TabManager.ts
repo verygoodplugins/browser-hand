@@ -246,12 +246,29 @@ export class TabManager {
   async listTargets(): Promise<TargetInfo[]> {
     await this.refreshFocusFlags();
     const tabs = await chrome.tabs.query({});
+    const groupTitles = await this.groupTitlesById();
     const infos: TargetInfo[] = [];
     for (const tab of tabs) {
       const targetInfo = await this.register(tab);
-      if (targetInfo) infos.push(targetInfo);
+      if (!targetInfo) continue;
+      const groupTitle = tab.groupId != null ? groupTitles.get(tab.groupId) : undefined;
+      infos.push(groupTitle ? { ...targetInfo, groupTitle } : targetInfo);
     }
     return infos;
+  }
+
+  /** Chrome tab-group id -> title, so `close --group-title` can find a session's tabs. */
+  private async groupTitlesById(): Promise<Map<number, string>> {
+    const titles = new Map<number, string>();
+    try {
+      for (const group of await chrome.tabGroups.query({})) {
+        const title = typeof group.title === "string" ? group.title.trim() : "";
+        if (title) titles.set(group.id, title);
+      }
+    } catch {
+      // tabGroups is unavailable in some test doubles and old Chrome builds.
+    }
+    return titles;
   }
 
   /**
@@ -399,6 +416,43 @@ export class TabManager {
   }
 
   /**
+   * Some Chromium forks (e.g. the "Search" browser) restrict the
+   * chrome.debugger API entirely: attach throws "debugger.attach isn't
+   * available in <Browser>". That is a browser capability gap, not a
+   * password-manager wedge — we switch the tab to the scripting transport and
+   * remember the browser lacks the debugger so doctor can report it.
+   */
+  isDebuggerUnavailableError(message: string): boolean {
+    return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
+  }
+
+  private debuggerUnavailableReason: string | null = null;
+
+  /** Whether this host browser has reported chrome.debugger as unavailable. */
+  isDebuggerUnavailable(): boolean {
+    return this.debuggerUnavailableReason !== null;
+  }
+
+  /**
+   * Capability report for the relay's `register` message, or null while no
+   * limitation has been seen. Sent on connect too: the flag outlives a socket.
+   */
+  debuggerCapability(): { available: false; reason: string } | null {
+    return this.debuggerUnavailableReason === null
+      ? null
+      : { available: false, reason: this.debuggerUnavailableReason };
+  }
+
+  private markDebuggerUnavailable(reason: string): void {
+    if (this.debuggerUnavailableReason !== null) return;
+    this.debuggerUnavailableReason = reason;
+    this.logger.log("chrome.debugger unavailable in this browser:", reason);
+    // The scripting fallback makes the attach succeed from the caller's side, so
+    // the relay (and doctor) would never see the error. Report it directly.
+    this.sendMessage({ method: "register", params: { debugger: this.debuggerCapability() } });
+  }
+
+  /**
    * Ensure the Chrome debugger API is attached for CDP commands.
    * On password-manager wedge, falls back to scripting transport.
    */
@@ -459,6 +513,11 @@ export class TabManager {
         const message = error instanceof Error ? error.message : String(error);
         if (/already attached/i.test(message)) {
           // ok
+        } else if (this.isDebuggerUnavailableError(message)) {
+          // This browser has no chrome.debugger — stay on scripting for good.
+          this.markDebuggerUnavailable(message);
+          this.markScriptingFallback(tabId, message);
+          return;
         } else if (this.isDebuggerWedgeError(message)) {
           await this.sleep(300);
           try {

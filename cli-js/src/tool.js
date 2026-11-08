@@ -122,6 +122,19 @@ export function isHttpPageTarget(item) {
   return Boolean(item && item.type === "page" && /^https?:\/\//i.test(String(item.url || "")));
 }
 
+/**
+ * Every page the extension lists: http(s), file://, and about:blank. Mirrors
+ * `TabManager.isControllableUrl`, so a tab Browser Hand opened and has not
+ * navigated yet is still a tab.
+ */
+export function isControllablePageTarget(item) {
+  return Boolean(
+    item &&
+    item.type === "page" &&
+    /^(?:https?:\/\/|file:\/\/|about:blank(?:\?|$))/i.test(String(item.url || ""))
+  );
+}
+
 function clipText(value, cap) {
   const text = String(value || "");
   if (text.length <= cap) return text;
@@ -147,8 +160,8 @@ export function rankTabTargets(targets = []) {
   });
 }
 
-export function filterTabTargets(targets = [], query = {}) {
-  let pages = (targets || []).filter(isHttpPageTarget);
+export function filterTabTargets(targets = [], query = {}, { includeNonHttp = false } = {}) {
+  let pages = (targets || []).filter(includeNonHttp ? isControllablePageTarget : isHttpPageTarget);
   const idNeedle = query.id ? String(query.id) : "";
   const urlNeedle = query.url ? String(query.url).toLowerCase() : "";
   const titleNeedle = query.title ? String(query.title).toLowerCase() : "";
@@ -500,6 +513,48 @@ function relayPageEndpoint(name) {
   return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ""}`;
 }
 
+/**
+ * chrome.tabs.create rejects file: URLs ("Cannot navigate to a file: URL"), so
+ * register the document with the relay and open the capability URL it returns:
+ * `<doc origin>/local/<token>/<basename>`. The token scopes the document to its
+ * own directory, so `./style.css` or `img/a.png` resolve against that URL and
+ * the relay serves them from beside the file (never from outside it). The
+ * original query string and hash carry over. Non-file URLs pass through.
+ */
+export async function rewriteLocalFileUrl(url, relayBase = CURRENT_RELAY_URL) {
+  if (typeof url !== "string" || !/^file:\/\//i.test(url)) {
+    return url;
+  }
+  let parsed;
+  let filePath;
+  try {
+    parsed = new URL(url);
+    filePath = fileURLToPath(parsed);
+  } catch {
+    return url;
+  }
+  let registered;
+  try {
+    registered = await fetchJson(`${relayBase}/local-docs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+      timeoutMs: 5000,
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not serve ${filePath} through the Browser Hand relay (${error.message}). ` +
+        "A relay started before local-document support needs a restart: `browser-hand relay`."
+    );
+  }
+  if (typeof registered?.url !== "string") {
+    throw new Error(
+      `The Browser Hand relay at ${relayBase} did not return a URL for ${filePath}; restart it with \`browser-hand relay\`.`
+    );
+  }
+  return `${registered.url}${parsed.search}${parsed.hash}`;
+}
+
 async function lookupNamedRelayPage(pageName, { timeoutMs = 5000 } = {}) {
   if (!pageName || typeof pageName !== "string") {
     return null;
@@ -763,11 +818,27 @@ export async function resolveNamedPageInfo({
   return lookupPage(pageName);
 }
 
+/**
+ * Detect "chrome.debugger unavailable in this browser" errors (e.g. the
+ * "Search" Chromium fork reports `debugger.attach isn't available in Search`).
+ * Distinct from the path_b separate-debug-profile case.
+ */
+export function isDebuggerUnavailableError(error) {
+  const message = String(error || "");
+  return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
+}
+
+/**
+ * `debuggerState` is the relay's `debugger` report ({available:false, reason}). It is
+ * what surfaces the limitation when the extension's scripting fallback lets the smoke
+ * tab open anyway; the smoke error text only covers an extension without that fallback.
+ */
 export function classifyDevBrowserDoctor({
   relayInfo,
   recentExtensionDisconnected = false,
   targetCount = 0,
   smoke = null,
+  debuggerState = null,
 } = {}) {
   if (!relayInfo) {
     return {
@@ -788,7 +859,9 @@ export function classifyDevBrowserDoctor({
       action: `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
     };
   }
-  if (smoke?.success === true) {
+  const debuggerUnavailable =
+    debuggerState?.available === false || isDebuggerUnavailableError(smoke?.error);
+  if (smoke?.success === true && !debuggerUnavailable) {
     return {
       status: "tab_bootstrap_works",
       action: "Browser Hand is healthy. Run authenticated work through the extension relay.",
@@ -799,6 +872,15 @@ export function classifyDevBrowserDoctor({
       status: "extension_unstable",
       action:
         "Reload the Browser Hand extension; the extension socket reconnected during tab creation, so retrying browser work will be flaky until the worker is stable.",
+    };
+  }
+  if (debuggerUnavailable) {
+    // The host browser restricts chrome.debugger (e.g. the "Search" fork). This
+    // is a browser capability gap, not the separate-debug-profile (path_b) case.
+    return {
+      status: "debugger_unavailable",
+      action:
+        "This browser restricts chrome.debugger, so Browser Hand drives tabs via the scripting transport. Most work (open, snapshot, fill, click, evaluate) still runs; if a command needs full CDP, use a browser that allows chrome.debugger.",
     };
   }
   if (targetCount === 0) {
@@ -1229,6 +1311,20 @@ function getCachedNamedPage(pageName) {
   return cache[pageName] || null;
 }
 
+/** Drop cached name → tab entries that point at tabs which no longer exist. */
+function forgetNamedPageTargets(targetIds = []) {
+  if (targetIds.length === 0) return;
+  const cache = loadNamedPageTargetCache();
+  let changed = false;
+  for (const [name, entry] of Object.entries(cache)) {
+    if (targetIds.includes(entry?.targetId)) {
+      delete cache[name];
+      changed = true;
+    }
+  }
+  if (changed) saveNamedPageTargetCache(cache);
+}
+
 function setCachedNamedPage(pageName, entry) {
   const cache = loadNamedPageTargetCache();
   cache[pageName] = {
@@ -1382,11 +1478,25 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
       extensionConnected: relayInfo?.extensionConnected === true,
       mode: relayInfo?.mode || null,
     },
+    // Which browser the connected extension is running in. Agents read this so
+    // they target that browser and never fall back to `open -a "Google Chrome"`.
+    browser: relayInfo?.browser || null,
+    // Set when the connected browser restricts chrome.debugger (null = no limitation seen).
+    debugger: relayInfo?.debugger || null,
     pages,
     targetCount: 0,
     smoke: null,
     recentExtensionDisconnected,
   };
+
+  // Optional --browser selector: warn when the connected browser does not match.
+  if (typeof input.browser === "string" && input.browser.trim()) {
+    const wanted = input.browser.trim();
+    const connectedName = result.browser?.name || "";
+    if (connectedName && !connectedName.toLowerCase().includes(wanted.toLowerCase())) {
+      result.browserMismatch = `Requested --browser "${wanted}" but the connected extension is in "${connectedName}".`;
+    }
+  }
 
   if (relayInfo?.wsEndpoint && relayInfo.extensionConnected === true) {
     const cdp = new CdpClient(relayInfo.wsEndpoint);
@@ -1445,16 +1555,27 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
     }
   }
 
+  // The extension only learns chrome.debugger is unavailable when the smoke tab first
+  // attaches, after the probe above, so read what it reported before classifying.
+  if (result.smoke) {
+    result.debugger = (await probeRelay(1000))?.debugger || result.debugger;
+  }
+
   const classification = classifyDevBrowserDoctor({
     relayInfo,
     recentExtensionDisconnected,
     targetCount: result.targetCount,
     smoke: result.smoke,
+    debuggerState: result.debugger,
   });
   result.status = classification.status;
   result.action = classification.action;
   result.success = classification.status === "tab_bootstrap_works";
-  if (classification.status !== "tab_bootstrap_works") {
+  // debugger_unavailable is a browser capability gap, not a failed bootstrap or path_b.
+  if (
+    classification.status !== "tab_bootstrap_works" &&
+    classification.status !== "debugger_unavailable"
+  ) {
     result.pathBNote =
       "Tab bootstrap failed. For disposable/debug profiles use upstream headless or --connect on a non-default user-data-dir — not your everyday Chrome profile.";
   }
@@ -1485,6 +1606,236 @@ async function runCurrentTabs(input = {}, timeoutMs) {
   }
 }
 
+const CLOSE_SELECTOR_HELP =
+  "close needs --page-name, --query, --target-id/--target-url/--target-title, or --group-title. It never closes the active tab by default.";
+
+/** Same normalization the extension applies to tab-group titles. */
+function groupTitleKey(raw) {
+  return String(raw ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40)
+    .trimEnd();
+}
+
+/**
+ * Decide which tabs `close` acts on. Pure: no relay or Chrome access.
+ *
+ * - Needs an explicit selector. It never falls back to the active tab.
+ * - A selector matching several tabs is refused unless `all` is set. A lone
+ *   `groupTitle` already means "the whole group".
+ * - Without `includeUserTabs`, only tabs Browser Hand opened (`browserHandOwned`
+ *   from the relay) are closable. A single user tab is refused; in a multi-tab
+ *   selection user tabs are skipped and reported.
+ */
+export function planCloseTargets(targets = [], opts = {}) {
+  const { pageName, namedTargetId, target = {}, all = false, includeUserTabs = false } = opts;
+  const group = typeof opts.groupTitle === "string" ? groupTitleKey(opts.groupTitle) : "";
+  const hasTargetSelector = Boolean(
+    target.id || target.url || target.title || target.name || target.query
+  );
+
+  if (!namedTargetId && !hasTargetSelector && !group) {
+    throw new Error(CLOSE_SELECTOR_HELP);
+  }
+  if (namedTargetId && (hasTargetSelector || group)) {
+    throw new Error(
+      "close --page-name cannot be combined with --query, --target-*, or --group-title"
+    );
+  }
+
+  const selectorLabel = JSON.stringify({
+    ...(pageName ? { pageName } : {}),
+    ...(hasTargetSelector ? target : {}),
+    ...(group ? { groupTitle: group } : {}),
+  });
+
+  let candidates;
+  if (namedTargetId) {
+    // A named page is an exact id, so a tab still on about:blank can be closed too.
+    candidates = (targets || []).filter(
+      (item) => item?.type === "page" && item.targetId === namedTargetId
+    );
+  } else {
+    // Unlike snapshot/click, close must see about:blank and file:// tabs: a
+    // group close that skipped them would leave tabs open and still say `closed`.
+    candidates = filterTabTargets(targets, target, { includeNonHttp: true });
+    if (group) {
+      candidates = candidates.filter((item) => groupTitleKey(item.groupTitle) === group);
+    }
+  }
+
+  if (candidates.length === 0) {
+    const noGroupInfo =
+      group && !(targets || []).some((item) => typeof item?.groupTitle === "string");
+    throw new Error(
+      `No Chrome tab matched ${selectorLabel}` +
+        (noGroupInfo
+          ? ". No tab reports a group title; reload the Browser Hand extension if the group exists."
+          : "")
+    );
+  }
+
+  const wholeGroup = Boolean(group) && !hasTargetSelector;
+  if (candidates.length > 1 && !all && !wholeGroup) {
+    throw new Error(
+      `Ambiguous Chrome tab target ${selectorLabel} matched ${candidates.length} tabs: ${formatTargetCandidates(candidates)}. Pass --all to close every match.`
+    );
+  }
+
+  if (includeUserTabs) {
+    return { matched: candidates.length, closable: candidates, skipped: [] };
+  }
+
+  if (!(targets || []).some((item) => typeof item?.browserHandOwned === "boolean")) {
+    throw new Error(
+      "The relay does not report which tabs Browser Hand opened (it predates ownership tracking). Rebuild and restart it (`npm run build:relay && npm run relay`), or pass --include-user-tabs to close anyway."
+    );
+  }
+
+  const closable = candidates.filter((item) => item.browserHandOwned === true);
+  const skipped = candidates
+    .filter((item) => item.browserHandOwned !== true)
+    .map((item) => ({
+      ...compactTarget(item),
+      reason: "not opened by Browser Hand; pass --include-user-tabs to close it",
+    }));
+  if (closable.length === 0) {
+    throw new Error(
+      `Refusing to close ${candidates.length === 1 ? "a tab" : "tabs"} Browser Hand did not open: ${formatTargetCandidates(candidates)}. Pass --include-user-tabs to close ${candidates.length === 1 ? "it" : "them"}.`
+    );
+  }
+  return { matched: candidates.length, closable, skipped };
+}
+
+/**
+ * Poll until none of `targetIds` is listed any more. Returns the ids that are
+ * still open. The relay can answer a close with success without closing
+ * anything (adopted tabs), so the live list is the only proof.
+ */
+export async function waitForTargetsClosed(
+  listTargets,
+  targetIds,
+  { timeoutMs = 3000, intervalMs = 150, sleep = delay } = {}
+) {
+  const deadline = Date.now() + timeoutMs;
+  let open = new Set(targetIds);
+  for (;;) {
+    const live = new Set((await listTargets()).map((item) => item?.targetId || item?.id));
+    open = new Set([...open].filter((id) => live.has(id)));
+    if (open.size === 0 || Date.now() >= deadline) return open;
+    await sleep(intervalMs);
+  }
+}
+
+/** `{ closed, targetId, url, title }` for one tab; a `tabs` list for --all / --group-title. */
+export function buildCloseResult({ tabs, skipped = [], multi = false, pageName, groupTitle }) {
+  const allClosed = tabs.length > 0 && tabs.every((tab) => tab.closed);
+  const base = { success: allClosed, mode: "current", operation: "close" };
+  if (!multi) {
+    const [tab] = tabs;
+    return {
+      ...base,
+      ...tab,
+      ...(pageName ? { pageName } : {}),
+      ...(skipped.length > 0 ? { skipped } : {}),
+    };
+  }
+  return {
+    ...base,
+    closed: allClosed,
+    count: tabs.filter((tab) => tab.closed).length,
+    ...(groupTitle ? { groupTitle } : {}),
+    tabs,
+    skipped,
+  };
+}
+
+async function runCurrentClose(input, timeoutMs) {
+  const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  const cdp = new CdpClient(info.wsEndpoint);
+  try {
+    let namedTargetId;
+    if (input.pageName) {
+      const page = await lookupNamedRelayPage(input.pageName);
+      if (!page?.targetId) {
+        const known = await listNamedRelayPages();
+        const count = Array.isArray(known?.pages) ? known.pages.length : 0;
+        throw new Error(namedPageNotFoundMessage(input.pageName, count));
+      }
+      namedTargetId = page.targetId;
+    }
+    const listOpen = async () => (await cdp.send("Target.getTargets"))?.targetInfos || [];
+    const includeUserTabs = input.includeUserTabs === true;
+    const groupTitle =
+      typeof input.groupTitle === "string" && input.groupTitle.trim() ? input.groupTitle : "";
+    const plan = planCloseTargets(await listOpen(), {
+      pageName: input.pageName,
+      namedTargetId,
+      target: input.target,
+      groupTitle,
+      all: input.all === true,
+      includeUserTabs,
+    });
+
+    const picked = plan.closable.map((item) => compactTarget(item));
+    const sendErrors = new Map();
+    for (const tab of picked) {
+      try {
+        await cdp.send("Target.closeTarget", {
+          targetId: tab.id,
+          ...(includeUserTabs ? { force: true } : {}),
+        });
+      } catch (err) {
+        sendErrors.set(tab.id, err.message);
+      }
+    }
+    // The live list is the proof; the relay can report success without closing.
+    let stillOpen;
+    try {
+      stillOpen = await waitForTargetsClosed(
+        listOpen,
+        picked.map((tab) => tab.id)
+      );
+    } catch (err) {
+      // Closing the last tab of the last window quits Chrome and drops the relay socket.
+      throw new Error(
+        `Lost the relay while confirming the close (${err.message}). If that was the last open tab, Chrome may have quit. Run \`browser-hand tabs\` to check.`
+      );
+    }
+    const results = picked.map((tab) => {
+      const closed = !stillOpen.has(tab.id);
+      return {
+        closed,
+        targetId: tab.id,
+        url: tab.url,
+        title: tab.title,
+        ...(closed
+          ? {}
+          : { error: sendErrors.get(tab.id) || "Tab is still open after Target.closeTarget" }),
+      };
+    });
+    const closedIds = results.filter((tab) => tab.closed).map((tab) => tab.targetId);
+
+    // A closed tab leaves stale name → target entries that would otherwise be
+    // "restored" by the next open/goto on that name.
+    forgetNamedPageTargets(closedIds);
+    if (input.pageName && closedIds.length > 0) {
+      await deleteNamedRelayPage(input.pageName);
+    }
+
+    return buildCloseResult({
+      tabs: results,
+      skipped: plan.skipped,
+      multi: input.all === true || Boolean(groupTitle),
+      pageName: input.pageName,
+      groupTitle,
+    });
+  } finally {
+    cdp.close();
+  }
+}
+
 async function runCurrentOperation(input, timeoutMs) {
   const deadlineAt = Date.now() + (Number.isFinite(timeoutMs) ? timeoutMs : 0);
   const operation = input.operation;
@@ -1502,7 +1853,18 @@ async function runCurrentOperation(input, timeoutMs) {
     };
   }
 
+  if (operation === "close") {
+    return await runCurrentClose(input, timeoutMs);
+  }
+
   const info = await ensureRelayConnected(Math.min(timeoutMs, 15000));
+  // Registering needs a running relay, so this waits for ensureRelayConnected.
+  if ((operation === "open" || operation === "goto") && typeof input.url === "string") {
+    const rewritten = await rewriteLocalFileUrl(input.url);
+    if (rewritten !== input.url) {
+      input = { ...input, url: rewritten };
+    }
+  }
   const cdp = new CdpClient(info.wsEndpoint);
   try {
     const targetResult = await cdp.send("Target.getTargets");
@@ -3757,6 +4119,7 @@ const operations = [
   "focus",
   "doctor",
   "tabs",
+  "close",
   "steps",
   "run_script",
 ];
@@ -3784,6 +4147,7 @@ Current-mode operations:
 - focus: one-shot human-in-the-loop focus (tab|window) with reason; does not change the popup default (background).
 - doctor: health check. Returns status, tabCount, and the active tab. verbose lists every tab; prefer tabs for inventory.
 - tabs: list every http(s) tab (active/focused first). Fast inventory — do not use doctor to find a tab.
+- close: close a tab. Needs pageName, query/target, or groupTitle; never the active tab by default. Refuses when the selector matches several tabs unless all:true (a lone groupTitle closes the whole group). Only tabs Browser Hand opened are closed; a tab the user had open is refused unless includeUserTabs:true. Returns { closed, targetId, url, title }; all/groupTitle return a tabs list plus skipped.
 
 Targeting:
 - target defaults to { strategy: "active" }.
@@ -3946,6 +4310,20 @@ Resolved placeholder values are redacted from tool output.`,
       fullPage: {
         type: "boolean",
         description: "Current screenshot: capture beyond viewport when true.",
+      },
+      groupTitle: {
+        type: "string",
+        description:
+          "open/goto: name the Chrome tab group. close: close every tab in the Browser Hand tab group with this title.",
+      },
+      all: {
+        type: "boolean",
+        description: "close only: allow a selector that matches several tabs to close all of them.",
+      },
+      includeUserTabs: {
+        type: "boolean",
+        description:
+          "close only: also close tabs Browser Hand did not open (tabs the user had open). Off by default.",
       },
     },
     required: [],
