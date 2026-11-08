@@ -147,7 +147,24 @@ describe("debugger-free transport", () => {
       const injection = execute.mock.calls[0][0];
       expect(injection.world).toBe("MAIN");
       expect(injection.target).toEqual({ tabId: 7 });
-      expect(injection.js[0].code).toContain("await(\ndocument.title\n)");
+      expect(injection.js[0].code).toContain("const v=(\ndocument.title\n)");
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    it("falls back to the async wrapper only when the expression returns a promise", async () => {
+      const info = await registerTab();
+      executeScript.mockResolvedValue(blocked);
+      const execute = vi
+        .fn()
+        .mockResolvedValueOnce([{ result: { pending: true } }])
+        .mockResolvedValueOnce([{ result: { ok: true, value: "async-ok" } }]);
+      installChrome({ userScripts: { execute } });
+      const out = (await router.handleCommand(
+        command("Runtime.evaluate", { expression: "fetch('/x')" }, info.sessionId)
+      )) as { result: { value: string } };
+      expect(out.result.value).toBe("async-ok");
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(execute.mock.calls[1][0].js[0].code).toContain("await(\nfetch('/x')\n)");
     });
 
     it("says how to unblock when userScripts is unavailable (no dead-end debugger advice)", async () => {

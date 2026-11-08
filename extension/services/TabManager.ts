@@ -678,14 +678,35 @@ export class TabManager {
       };
     }
     // A newline after the expression keeps a trailing // comment from eating the wrapper.
-    const code = `(async()=>{try{const v=await(\n${expression}\n);let s=v;if(v!==undefined){try{s=JSON.parse(JSON.stringify(v))}catch(e){s=String(v)}}return{ok:true,value:s}}catch(e){return{ok:false,error:e&&e.message?String(e.message):String(e),name:e&&e.name}}})()`;
+    // Try a synchronous wrapper first: some Chromium forks (e.g. the macOS Search
+    // browser) do not await a promise returned from userScripts.execute, so the
+    // async wrapper comes back with no result. Only fall back to the async
+    // wrapper when the expression itself produced a thenable.
+    const syncCode = `(()=>{try{const v=(\n${expression}\n);if(v!=null&&typeof v.then==="function"){return{pending:true}}let s=v;if(v!==undefined){try{s=JSON.parse(JSON.stringify(v))}catch(e){s=String(v)}}return{ok:true,value:s}}catch(e){return{ok:false,error:e&&e.message?String(e.message):String(e),name:e&&e.name}}})()`;
+    const asyncCode = `(async()=>{try{const v=await(\n${expression}\n);let s=v;if(v!==undefined){try{s=JSON.parse(JSON.stringify(v))}catch(e){s=String(v)}}return{ok:true,value:s}}catch(e){return{ok:false,error:e&&e.message?String(e.message):String(e),name:e&&e.name}}})()`;
     try {
-      const [first] = await api.execute<EvalOutcome>({
-        js: [{ code }],
+      const [syncFirst] = await api.execute<EvalOutcome | { pending: true }>({
+        js: [{ code: syncCode }],
         target: { tabId },
         world: "MAIN",
       });
-      return first?.result ?? { ok: false, error: "userScripts.execute returned no result" };
+      const syncResult = syncFirst?.result as (EvalOutcome | { pending?: boolean }) | undefined;
+      if (syncResult && typeof syncResult === "object" && !("pending" in syncResult && syncResult.pending)) {
+        return syncResult as EvalOutcome;
+      }
+      const [first] = await api.execute<EvalOutcome>({
+        js: [{ code: asyncCode }],
+        target: { tabId },
+        world: "MAIN",
+      });
+      return (
+        first?.result ?? {
+          ok: false,
+          error: syncResult
+            ? "userScripts.execute returned no result for an async expression (this browser may not await promises from user scripts)"
+            : "userScripts.execute returned no result",
+        }
+      );
     } catch (e) {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
