@@ -437,7 +437,7 @@ describe("CDPRouter", () => {
       const previousGroup = tabs.group;
       const previousTabGroups = (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups;
       tabs.group = group;
-      (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = { get, update };
+      (chrome as unknown as { tabGroups: unknown }).tabGroups = { get, update };
       try {
         const result = await cdpRouter.handleCommand({
           id: 1,
@@ -482,7 +482,7 @@ describe("CDPRouter", () => {
       const previousGroup = tabs.group;
       const previousTabGroups = (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups;
       tabs.group = group;
-      (chrome as typeof chrome & { tabGroups?: unknown }).tabGroups = { get, update };
+      (chrome as unknown as { tabGroups: unknown }).tabGroups = { get, update };
       const command = {
         id: 1,
         method: "forwardCDPCommand" as const,

@@ -1,0 +1,290 @@
+:root {
+  color-scheme: light;
+  --ink: #0b0a12;
+  --ink-raised: #15111f;
+  --bone: #f7f4ee;
+  --bone-deep: #e7e1d6;
+  --mist: #5c574f;
+  --cyan: #7ee7ff;
+  --green: #4caf50;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bone);
+  color: var(--ink);
+  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.shell {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 20px 72px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 28px;
+}
+
+.mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex: none;
+}
+
+.wordmark {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.wordmark h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.wordmark p {
+  margin: 0;
+  color: var(--mist);
+  font-size: 14px;
+}
+
+.topbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid var(--bone-deep);
+  border-radius: 14px;
+  padding: 20px;
+}
+
+.panel + .panel,
+.banner + .panel,
+.panel + .banner {
+  margin-top: 16px;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+}
+
+.auth-layout {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.auth-tabs button {
+  flex: 1;
+  border: 1px solid var(--bone-deep);
+  background: transparent;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.auth-tabs button[aria-selected="true"] {
+  background: var(--ink);
+  color: var(--cyan);
+  border-color: var(--ink);
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.account-grid dt {
+  margin: 0;
+  color: var(--mist);
+  font-size: 13px;
+}
+
+.account-grid dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.button {
+  border: 1px solid var(--bone-deep);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.button.primary {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.banner {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--bone-deep);
+  color: var(--mist);
+  font-size: 14px;
+}
+
+.banner strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.orders {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.order {
+  border: 1px solid var(--bone-deep);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.order-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.order-number {
+  font-weight: 650;
+}
+
+.order-meta {
+  margin-top: 4px;
+  color: var(--mist);
+  font-size: 13px;
+}
+
+.order-lines {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.status {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.status-paid,
+.status-fulfilled {
+  color: #1f7a34;
+}
+
+.status-pending {
+  color: #8a5a00;
+}
+
+.status-cancelled,
+.status-refunded {
+  color: var(--mist);
+}
+
+.muted {
+  color: var(--mist);
+}
+
+.error {
+  color: #9f1239;
+}
+
+.setup code,
+.banner code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.setup ol {
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+
+.setup li + li {
+  margin-top: 8px;
+}
+
+.footnote {
+  margin-top: 28px;
+  color: var(--mist);
+  font-size: 13px;
+}
+
+@media (max-width: 640px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .account-grid dt {
+    margin-top: 8px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .topbar-actions {
+    margin-left: 0;
+  }
+}

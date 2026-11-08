@@ -131,3 +131,46 @@ input:checked + .slider::before {
   line-height: 1.35;
   color: #888;
 }
+
+.account-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #eee;
+}
+
+.account-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.account-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  flex: none;
+}
+
+.account-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.account-email {
+  font-size: 11px;
+  color: #888;
+  overflow-wrap: anywhere;
+}
+
+.account-button {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+}

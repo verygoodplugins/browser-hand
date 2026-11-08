@@ -1,3 +1,4 @@
+import { ACCOUNT_SNAPSHOT_KEY, accountPageUrl, isAccountSnapshot } from "../../account/session";
 import type {
   FocusPolicy,
   GetStateMessage,
@@ -104,4 +105,48 @@ focusPolicySelect.addEventListener("change", () => {
       }
     }
   );
+});
+
+const accountName = document.getElementById("account-name") as HTMLDivElement;
+const accountEmail = document.getElementById("account-email") as HTMLDivElement;
+const accountAvatar = document.getElementById("account-avatar") as HTMLImageElement;
+const openAccount = document.getElementById("open-account") as HTMLButtonElement;
+
+function renderAccount(value: unknown): void {
+  const snapshot = isAccountSnapshot(value) ? value : null;
+  if (snapshot?.signedIn) {
+    accountName.textContent = snapshot.name || snapshot.email || "Signed in";
+    accountEmail.textContent = snapshot.email || "Account and orders";
+    openAccount.textContent = "Account";
+    if (snapshot.imageUrl) {
+      accountAvatar.src = snapshot.imageUrl;
+      accountAvatar.hidden = false;
+    } else {
+      accountAvatar.removeAttribute("src");
+      accountAvatar.hidden = true;
+    }
+    return;
+  }
+  accountName.textContent = "Not signed in";
+  accountEmail.textContent = "Account and orders";
+  openAccount.textContent = "Sign in";
+  accountAvatar.removeAttribute("src");
+  accountAvatar.hidden = true;
+}
+
+chrome.storage.local.get(ACCOUNT_SNAPSHOT_KEY, (result) => {
+  renderAccount(result[ACCOUNT_SNAPSHOT_KEY]);
+});
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes[ACCOUNT_SNAPSHOT_KEY]) {
+    renderAccount(changes[ACCOUNT_SNAPSHOT_KEY].newValue);
+  }
+});
+
+openAccount.addEventListener("click", () => {
+  const url = accountPageUrl();
+  chrome.tabs.create({ url }).catch(() => {
+    window.open(url, "_blank");
+  });
 });

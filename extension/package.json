@@ -13,9 +13,18 @@
     "test:run": "vitest run"
   },
   "devDependencies": {
+    "@clerk/backend": "^3.27.0",
     "@types/chrome": "^0.1.32",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0",
     "wxt": "^0.20.0"
+  },
+  "dependencies": {
+    "@clerk/chrome-extension": "^3.1.105",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

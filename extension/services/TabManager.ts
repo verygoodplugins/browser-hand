@@ -426,8 +426,6 @@ export class TabManager {
     return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
   }
 
-  private debuggerUnavailableReason: string | null = null;
-
   /** Whether this host browser has reported chrome.debugger as unavailable. */
   isDebuggerUnavailable(): boolean {
     return this.debuggerUnavailableReason !== null;

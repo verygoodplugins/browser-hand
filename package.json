@@ -17,6 +17,7 @@
     "setup": "bash scripts/setup.sh",
     "browser-hand": "node cli-js/src/cli.js",
     "doctor": "node cli-js/src/cli.js doctor",
+    "clerk:brand": "node extension/scripts/clerk-brand.mjs",
     "relay": "node cli-js/src/cli.js relay",
     "smoke:live": "bash scripts/smoke-live.sh",
     "gym:compare": "node cli-js/src/gym-compare.js",

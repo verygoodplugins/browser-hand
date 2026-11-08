@@ -42,6 +42,17 @@
         <option value="debugger">Chrome debugger (CDP)</option>
       </select>
       <p class="hint" id="transport-hint"></p>
+
+      <div class="account-row">
+        <div class="account-identity">
+          <img id="account-avatar" class="account-avatar" alt="" hidden />
+          <div>
+            <div id="account-name" class="account-name">Not signed in</div>
+            <div id="account-email" class="account-email">Account and orders</div>
+          </div>
+        </div>
+        <button id="open-account" class="account-button" type="button">Sign in</button>
+      </div>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

@@ -122,6 +122,117 @@ npm run smoke:live
 
 Coming from upstream or an older AutoHub-era install? Start with **[MIGRATING.md](./MIGRATING.md)**.
 
+## Account sign-in (Clerk)
+
+The toolbar popup still controls the local relay with or without an account. Sign-in, sign-up, sign-out, and order history live on an extension account page (`account.html`), opened from **Sign in** / **Account** in the popup. Sessions are handled by [Clerk’s Chrome extension SDK](https://clerk.com/docs/chrome-extension/getting-started/quickstart) (`@clerk/chrome-extension`). Components use Browser Hand colors (ink `#0B0A12`, bone, cyan `#7EE7FF`) and the glove mark.
+
+There is no Clerk application or key in this repo. Create one, then add keys locally. **Never commit `.env`.**
+
+### 1. Create the Clerk application
+
+1. In the [Clerk Dashboard](https://dashboard.clerk.com), create an application named **Browser Hand**.
+2. Enable **Email** (password and/or email code). OAuth can be added later; extension pages are a poor place for provider redirects until the extension origin is allowed.
+3. Open **Native applications** and enable the **Native API**. Chrome extensions need it.
+4. On **API keys**, choose the Chrome extension quick copy. You need the **publishable key** and the **Frontend API URL**.
+
+### 2. Put keys in `.env`
+
+```bash
+cp .env.example .env
+```
+
+| Variable                    | Where it goes              | Notes                                                                                                                                    |
+| --------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `WXT_CLERK_PUBLISHABLE_KEY` | Extension bundle (public)  | `pk_test_…` or `pk_live_…`. WXT inlines `WXT_` variables at build time.                                                                  |
+| `CLERK_SECRET_KEY`          | `npm run clerk:brand` only | `sk_test_…` / `sk_live_…`. No `WXT_` prefix, so it is not bundled.                                                                       |
+| `WXT_CLERK_FRONTEND_API`    | Optional host permission   | `https://<slug>.clerk.accounts.dev` from the same API keys page.                                                                         |
+| `WXT_CLERK_SYNC_HOST`       | Optional                   | Set only when a website should share this session. Development is often `http://localhost:3000`. Leave empty for extension-only sign-in. |
+| `CLERK_EXTENSION_ID`        | Brand script               | The 32-character id on `chrome://extensions` (letters a–p).                                                                              |
+| `WXT_EXTENSION_PUBLIC_KEY`  | Optional manifest `key`    | Public key that pins the unpacked extension id. Not the Web Store private key.                                                           |
+| `CLERK_APPLICATION_ID`      | Optional platform branding | `app_…`. With a platform token, the brand script sets the application name and logo.                                                     |
+| `CLERK_PLATFORM_SECRET_KEY` | Optional                   | Platform API token when it is not the instance secret. Platform API access is separate and may be gated.                                 |
+| `WXT_ORDER_HISTORY_URL`     | Optional order API         | See below.                                                                                                                               |
+
+Rebuild and reload the unpacked extension after any `WXT_` change. Vite bakes those values into the build; editing `.env` alone does not update a loaded extension.
+
+```bash
+npm run build:extension
+# Chrome → chrome://extensions → Reload
+# Popup → Sign in → extension page account.html
+```
+
+### 3. Allow the `chrome-extension://` origin
+
+Clerk rejects Frontend API calls from an extension until that origin is on the instance. The id is stable for a given unpacked path, and it changes if you set `WXT_EXTENSION_PUBLIC_KEY` or publish to the Chrome Web Store.
+
+```bash
+# .env
+CLERK_SECRET_KEY=sk_test_…
+CLERK_EXTENSION_ID=abcdefghijklmnopabcdefghijklmnop   # from chrome://extensions, letters a-p only
+npm run clerk:brand
+```
+
+That uses `@clerk/backend` `instance.update` (`PATCH /v1/instance`) and **merges** `chrome-extension://<id>` into `allowed_origins` so other origins are kept. `CLERK_EXTRA_ALLOWED_ORIGINS` (comma-separated) is merged too. `--dry-run` prints the plan and does not call Clerk.
+
+`npm run clerk:brand` also calls Clerk’s Platform API when `CLERK_APPLICATION_ID` is set:
+
+- `PATCH /v1/platform/applications/{id}` with `{ "name": "Browser Hand" }`
+- `POST /v1/platform/applications/{id}/logo` with the transparent glove (`docs/brand/derived/mark-transparent-512.png`)
+- the same image as the favicon when Clerk accepts it
+
+If the Platform API returns 401 or 403, set the name and logo in the Dashboard under **Settings → Branding** instead. Emails and the hosted Account Portal use that name and logo. The extension components use the `appearance` prop either way.
+
+Sync host (only if a website shares the session): set `WXT_CLERK_SYNC_HOST` to that site’s origin, add the extension id under Clerk’s allowed origins (the brand script does this), and rebuild. The extension then requests the `cookies` permission, which Clerk needs for sync-host mode. Extension-only sign-in leaves that permission off and does not need a sync host.
+
+### Order history
+
+There is no order database in this repo. Until `WXT_ORDER_HISTORY_URL` is set, the account page shows **sample** orders from `extension/account/orders.ts` and says so. A real service is a `GET` endpoint:
+
+```http
+GET {WXT_ORDER_HISTORY_URL}?userId={clerkUserId}&limit=20&cursor={opaque}
+Authorization: Bearer {clerkSessionToken}
+Accept: application/json
+```
+
+```json
+{
+  "orders": [
+    {
+      "id": "ord_123",
+      "number": "BH-1042",
+      "createdAt": "2026-07-18T15:04:00.000Z",
+      "status": "fulfilled",
+      "currency": "usd",
+      "totalAmountCents": 2900,
+      "lineItems": [
+        {
+          "id": "li_1",
+          "name": "Browser Hand seat",
+          "quantity": 1,
+          "unitAmountCents": 2900,
+          "currency": "usd"
+        }
+      ]
+    }
+  ],
+  "nextCursor": null
+}
+```
+
+`status` is `pending`, `paid`, `fulfilled`, `cancelled`, or `refunded`. Amounts are integer cents. Verify the bearer token with `@clerk/backend` and return only that user’s orders. Do not trust the `userId` query param by itself.
+
+```ts
+import { verifyToken } from "@clerk/backend";
+
+const claims = await verifyToken(sessionToken, {
+  secretKey: process.env.CLERK_SECRET_KEY,
+  authorizedParties: ["chrome-extension://<extension-id>"],
+});
+const userId = claims.sub;
+```
+
+Set `WXT_ORDER_HISTORY_URL` to the endpoint, rebuild, and reload. Failures stay on the HTTP source; the page does not swap in sample orders after a real request fails.
+
 ## Headless / remote-debug (optional)
 
 For CI and throwaway automation, the upstream-style CLI remains:
