@@ -8,7 +8,7 @@
     {
       "name": "browser-hand",
       "source": "./",
-      "description": "Browser Hand \u2014 agents drive your real logged-in Chrome via a local extension bridge (no remote-debug port on the default profile).",
+      "description": "Browser Hand — agents drive your real logged-in Chrome via a local extension bridge (no remote-debug port on the default profile).",
       "strict": false,
       "keywords": [
         "browser",
@@ -18,11 +18,13 @@
         "playwright",
         "automation"
       ],
-      "skills": ["./skills/browser-hand"]
+      "skills": [
+        "./skills/browser-hand"
+      ]
     }
   ],
   "metadata": {
     "description": "Marketplace for the Browser Hand skill",
-    "version": "0.3.0"
+    "version": "0.4.0"
   }
 }
