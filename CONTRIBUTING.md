@@ -23,7 +23,7 @@ For bug reports, include steps to reproduce, `browser-hand doctor` output when r
 1. Open an issue describing the proposed change (unless it is a tiny docs fix).
 2. Wait for maintainer feedback before large work when unsure.
 3. Fork the repo and create a branch from `main`.
-4. Make your changes. Prefer conventional commit messages (`feat:`, `fix:`, `docs:`, …).
+4. Make your changes. The PR title must be a Conventional Commit (`feat:`, `fix:`, `docs:`, `chore:`, …). Squash is the only merge into `main`, and that title is what Release Please versions.
 5. Validate:
 
    **Extension / product CLI / relay:**

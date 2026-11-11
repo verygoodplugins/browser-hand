@@ -1,0 +1,50 @@
+# Release Please — version bumps, changelog, and the GitHub release.
+#
+# How it works:
+# 1. Every push to main with a conventional commit updates a Release PR
+# 2. Merging that PR bumps the version, updates CHANGELOG.md, and tags
+#    browser-hand-vX.Y.Z
+# 3. The tag push runs .github/workflows/release.yml, which publishes the
+#    headless package only when the tag matches package.json and PUBLISH_NPM=true
+#
+# Commit / squash title format (the PR title is the commit on main):
+#   feat: add new feature          → minor version bump
+#   fix: fix a bug                 → patch version bump
+#   feat!: breaking change         → minor while 0.x, major from 1.0.0
+#   chore/docs/refactor/test/ci:   → no version bump
+#
+# Tag prefix:
+#   Tags are browser-hand-vX.Y.Z, not vX.Y.Z. This repo already has v1.x tags
+#   for the extension and older release candidates. A bare v* tag would make
+#   Release Please treat those as this package's version.
+#
+# RELEASE_PLEASE_TOKEN:
+#   Org secret so the Release PR triggers CI. PRs opened with the default
+#   GITHUB_TOKEN do not trigger other workflows.
+
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@0dfd8538845b8e92600d271a895a5372865d4062 # v5
+        id: release
+        with:
+          manifest-file: ".release-please-manifest.json"
+          config-file: "release-please-config.json"
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}

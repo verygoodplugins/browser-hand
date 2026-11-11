@@ -4,6 +4,71 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      production-minor-patch:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      eslint-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "@eslint/*"
+          - "eslint"
+          - "eslint-*"
+          - "typescript-eslint"
+        update-types:
+          - "minor"
+          - "patch"
+      typescript-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "@types/*"
+          - "tsx"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
+      test-tooling-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "@jest/*"
+          - "@vitest/*"
+          - "jest"
+          - "jest-*"
+          - "ts-jest"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        exclude-patterns:
+          - "@eslint/*"
+          - "@jest/*"
+          - "@types/*"
+          - "@vitest/*"
+          - "eslint"
+          - "eslint-*"
+          - "jest"
+          - "jest-*"
+          - "ts-jest"
+          - "tsx"
+          - "typescript"
+          - "typescript-eslint"
+          - "vitest"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 10
@@ -12,6 +77,23 @@ updates:
     directory: "/extension"
     schedule:
       interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      production-minor-patch:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5
@@ -20,6 +102,23 @@ updates:
     directory: "/daemon"
     schedule:
       interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      production-minor-patch:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      development-minor-patch:
+        applies-to: version-updates
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5
@@ -28,6 +127,16 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      github-actions-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
     commit-message:
       prefix: "chore(deps)"
     open-pull-requests-limit: 5

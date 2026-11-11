@@ -1,9 +1,11 @@
 name: Release
 
+# Tags come from Release Please as browser-hand-vX.Y.Z. Bare v* tags in this
+# repo are extension releases and older release candidates, not this package.
 on:
   push:
     tags:
-      - "v*"
+      - "browser-hand-v*"
 
 jobs:
   release-plan:
@@ -18,11 +20,11 @@ jobs:
         env:
           PUBLISH_NPM: ${{ vars.PUBLISH_NPM }}
         run: |
-          tag="${GITHUB_REF_NAME#v}"
+          tag="${GITHUB_REF_NAME#browser-hand-v}"
           pkg="$(node -p "require('./package.json').version")"
           if [ "$tag" = "$pkg" ] && [ "$PUBLISH_NPM" = "true" ]; then
             echo "publish_npm=true" >> "$GITHUB_OUTPUT"
-            echo "Tag v$tag matches package.json and PUBLISH_NPM=true. Publishing the headless package."
+            echo "Tag browser-hand-v$tag matches package.json and PUBLISH_NPM=true. Publishing the headless package."
           else
             echo "publish_npm=false" >> "$GITHUB_OUTPUT"
             echo "Skipping npm publish and the binary build. Set the PUBLISH_NPM repository variable to true when the package is ready."
@@ -34,9 +36,15 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
+      - name: Create the release when Release Please has not
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists."
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" --generate-notes
 
   build-daemon:
     name: Build Daemon Bundles
@@ -167,4 +175,4 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/**/*
-          generate_release_notes: true
+          generate_release_notes: false
