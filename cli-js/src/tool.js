@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { ContextLogger } from "./logger.js";
+import { reportedHostBrowser } from "./browser-path.js";
 import { substitutePlaceholders } from "./autofill.js";
 import { buildAutofillProfilePlan } from "./autofill-profile.js";
 import { loadAutofillFile, readKeychainSecret, readProfileSecret } from "./autofill-io.js";
@@ -57,7 +58,7 @@ const MAX_CURRENT_TEXT_CHARS = 8000;
 // How long to let the page react to a click before probing for a state change.
 const CURRENT_RELAY_HOST = process.env.DEV_BROWSER_RELAY_HOST || process.env.HOST || "127.0.0.1";
 const CURRENT_RELAY_PORT = Number(process.env.DEV_BROWSER_RELAY_PORT || process.env.PORT || 9333);
-const CURRENT_RELAY_URL = `http://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}`;
+export const CURRENT_RELAY_URL = `http://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}`;
 const DEFAULT_PAGE_NAME = process.env.DEV_BROWSER_PAGE_NAME || "browser-hand-current";
 const SCREENSHOT_DIR =
   process.env.BROWSER_HAND_SCREENSHOT_DIR ||
@@ -501,7 +502,7 @@ async function fetchJson(url, { timeoutMs = 800, ...init } = {}) {
   }
 }
 
-async function probeRelay(timeoutMs = 800) {
+export async function probeRelay(timeoutMs = 800) {
   try {
     return await fetchJson(CURRENT_RELAY_URL, { timeoutMs });
   } catch {
@@ -1480,7 +1481,7 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
     },
     // Which browser the connected extension is running in. Agents read this so
     // they target that browser and never fall back to `open -a "Google Chrome"`.
-    browser: relayInfo?.browser || null,
+    browser: reportedHostBrowser(relayInfo),
     // Set when the connected browser restricts chrome.debugger (null = no limitation seen).
     debugger: relayInfo?.debugger || null,
     pages,
@@ -1974,46 +1975,50 @@ async function runCurrentOperation(input, timeoutMs) {
           error: err.message,
         };
       }
-      const ran = await runStepList(steps, async (step) => {
-        if (step.op === "click") {
-          return evalValue(
-            cdp,
-            sessionId,
-            buildClickExpression({
-              selector: step.selector,
-              text: step.text,
-              ref: step.ref,
-              role: step.role,
-              name: step.name,
-            })
-          );
-        }
-        if (step.op === "fill") {
-          return evalValue(cdp, sessionId, buildFillFieldsExpression(step.fields));
-        }
-        if (step.op === "type") {
-          return evalValue(
-            cdp,
-            sessionId,
-            buildTypeExpression({
-              selector: step.selector,
-              label: step.label,
-              text: step.text || "",
-            })
-          );
-        }
-        if (step.op === "evaluate") {
-          return evaluateUserCode(cdp, sessionId, step.code);
-        }
-        if (step.op === "snapshot") {
-          return evalValue(
-            cdp,
-            sessionId,
-            buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS, { scope: step.scope || "auto" })
-          );
-        }
-        throw new Error(`Unsupported step ${step.op}`);
-      }, { deadlineAt });
+      const ran = await runStepList(
+        steps,
+        async (step) => {
+          if (step.op === "click") {
+            return evalValue(
+              cdp,
+              sessionId,
+              buildClickExpression({
+                selector: step.selector,
+                text: step.text,
+                ref: step.ref,
+                role: step.role,
+                name: step.name,
+              })
+            );
+          }
+          if (step.op === "fill") {
+            return evalValue(cdp, sessionId, buildFillFieldsExpression(step.fields));
+          }
+          if (step.op === "type") {
+            return evalValue(
+              cdp,
+              sessionId,
+              buildTypeExpression({
+                selector: step.selector,
+                label: step.label,
+                text: step.text || "",
+              })
+            );
+          }
+          if (step.op === "evaluate") {
+            return evaluateUserCode(cdp, sessionId, step.code);
+          }
+          if (step.op === "snapshot") {
+            return evalValue(
+              cdp,
+              sessionId,
+              buildSnapshotExpression(MAX_CURRENT_TEXT_CHARS, { scope: step.scope || "auto" })
+            );
+          }
+          throw new Error(`Unsupported step ${step.op}`);
+        },
+        { deadlineAt }
+      );
       return {
         success: ran.success === true,
         mode: "current",
@@ -2554,7 +2559,14 @@ export function visibleIn(el, frameVisible) {
     if (!frameVisible) return false;
     const win = el.ownerDocument.defaultView || window;
     if (typeof el.checkVisibility === "function") {
-      if (!el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
+      if (
+        !el.checkVisibility({
+          opacityProperty: true,
+          visibilityProperty: true,
+          contentVisibilityAuto: true,
+        })
+      )
+        return false;
     }
     const rect = el.getBoundingClientRect();
     if (!(rect.width > 0 && rect.height > 0)) return false;
@@ -2563,7 +2575,13 @@ export function visibleIn(el, frameVisible) {
     for (let node = el, depth = 0; node && depth < 12; depth += 1) {
       const style = win.getComputedStyle(node);
       if (!style) break;
-      if (style.display === "none" || style.visibility === "hidden" || style.pointerEvents === "none" || Number(style.opacity) <= 0.01) return false;
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.pointerEvents === "none" ||
+        Number(style.opacity) <= 0.01
+      )
+        return false;
       const parent = node.parentElement;
       const root = !parent && node.getRootNode ? node.getRootNode() : null;
       node = parent || (root && root.host ? root.host : null);
@@ -2592,7 +2610,8 @@ export function visibleIn(el, frameVisible) {
           const root = node.getRootNode ? node.getRootNode() : null;
           node = root && root.host ? root.host : null;
         }
-        if (!chain.some((node) => hit === node || node.contains(hit) || hit.contains(node))) return false;
+        if (!chain.some((node) => hit === node || node.contains(hit) || hit.contains(node)))
+          return false;
       }
     }
     return true;

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Throwaway launches use the connected browser's executable via `browser-hand browser-path`.
+
 ## [Extension 1.2.0] - 2026-11-08
 
 - Chrome extension manifest is 1.2.0.

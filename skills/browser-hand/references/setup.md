@@ -4,7 +4,7 @@ One-time setup for Browser Hand on a developer machine.
 
 ## Requirements
 
-- Google Chrome with your normal profile (cookies, logins, open tabs)
+- A Chromium browser (Chrome, Search, Edge, Brave, or another) with the Browser Hand extension enabled in that browser, and your normal profile (cookies, logins, open tabs)
 - Node.js ≥ 18
 - This repository cloned locally (for the runtime)
 - Optional: [AutoVault](https://github.com/autoworks-ai/autovault) for skill install/sync
