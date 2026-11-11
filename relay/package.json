@@ -18,7 +18,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@hono/node-server": "^1.19.7",
+    "@hono/node-server": "^2.1.6",
     "@hono/node-ws": "^1.2.0",
     "hono": "^4.11.1"
   },
