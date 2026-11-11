@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "browser-hand CLI — drive logged-in Chrome via the Browser Hand extension relay",
+  "description": "browser-hand CLI — drive the logged-in browser that has the Browser Hand extension connected",
   "bin": {
     "browser-hand": "./bin/browser-hand.js",
     "browser-hand-cli": "./bin/browser-hand.js"

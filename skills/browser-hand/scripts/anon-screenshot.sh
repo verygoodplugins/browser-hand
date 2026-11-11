@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # anon-screenshot.sh — screenshot a public / anonymous URL via a throwaway
-# Chrome profile attached with `dev-browser --connect`.
+# profile of the browser connected to Browser Hand, attached with
+# `dev-browser --connect`.
 #
 # Unauthenticated captures only (localhost, public pages). A throwaway profile
 # has no cookies — for signed-in work use the browser-hand extension CLI.
@@ -12,7 +13,7 @@
 # Example: anon-screenshot.sh http://127.0.0.1:8788/cloud cloud.png 1440x1000
 #
 # Output:  PNG under ~/.browser-hand/tmp/ (or ~/.dev-browser/tmp/); path on stdout.
-# Env:     CHROME_BIN overrides the Chrome binary path.
+# The executable comes from `browser-hand browser-path`. CHROME_BIN is ignored.
 set -euo pipefail
 
 URL="${1:?usage: anon-screenshot.sh <url> [output_name.png] [WxH]}"
@@ -21,9 +22,30 @@ VIEWPORT="${3:-1440x1000}"
 WIDTH="${VIEWPORT%x*}"
 HEIGHT="${VIEWPORT#*x}"
 
-CHROME="${CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-[ -x "$CHROME" ] || { echo "Chrome binary not found/executable: $CHROME (set CHROME_BIN)" >&2; exit 1; }
+command -v browser-hand >/dev/null 2>&1 || { echo "browser-hand is not on PATH" >&2; exit 1; }
 command -v dev-browser >/dev/null || { echo "dev-browser not on PATH" >&2; exit 1; }
+if [ -n "${CHROME_BIN:-}" ]; then
+  echo "anon-screenshot.sh ignores CHROME_BIN and launches the browser connected to Browser Hand." >&2
+fi
+
+json="$(browser-hand browser-path)"
+BROWSER="$(printf '%s' "$json" | node -e '
+let raw = "";
+process.stdin.on("data", (chunk) => { raw += chunk; });
+process.stdin.on("end", () => {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    process.exit(1);
+  }
+  if (!parsed || typeof parsed.executablePath !== "string" || parsed.executablePath.length === 0) {
+    process.exit(1);
+  }
+  process.stdout.write(parsed.executablePath);
+});
+')"
+[ -x "$BROWSER" ] || { echo "Connected browser is not executable: $BROWSER" >&2; exit 1; }
 
 # Pick a free debug port away from the relay (:9333) and the user's Chrome (:9222).
 PORT=""
@@ -45,7 +67,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$CHROME" \
+"$BROWSER" \
   --headless=new \
   --remote-debugging-port="$PORT" \
   --remote-allow-origins="http://127.0.0.1:$PORT" \

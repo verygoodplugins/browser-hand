@@ -1,21 +1,23 @@
 ---
 name: browser-hand
 description: >
-  Drive the user's already-open, logged-in Chrome — forms, clicks, screenshots,
-  evaluate, authenticated admin UIs and real cookies/tabs. Prefer this whenever
-  work needs the normal Chrome profile (Gmail, GitHub, OAuth-backed sites, open
-  tabs). Do NOT use for disposable headless pages or plain HTTP fetches.
-  Trigger phrases: signed-in Chrome, logged-in browser, real session, existing
-  tabs, cookies, fill this form on my browser, screenshot my account, use my
-  Chrome, authenticated site, without remote debugging.
+  Drive the user's already-open, logged-in browser — the Chromium browser that
+  has the Browser Hand extension connected (Chrome, Search, Edge, Brave, and
+  others). Forms, clicks, screenshots, evaluate, authenticated admin UIs, and
+  real cookies/tabs. Prefer this whenever work needs that browser's normal
+  profile (Gmail, GitHub, OAuth-backed sites, open tabs). Do NOT use for
+  disposable headless pages or plain HTTP fetches.
+  Trigger phrases: signed-in Chrome, logged-in browser, connected browser,
+  Search, real session, existing tabs, cookies, fill this form on my browser,
+  screenshot my account, use my Chrome, authenticated site, without remote debugging.
 license: MIT
-compatibility: Requires local Chrome with the Browser Hand extension and relay.
+compatibility: Requires a local Chromium browser with the Browser Hand extension connected to the relay.
 category: browser
 tags: [browser, chrome, extension, automation, authenticated-sessions, agent]
 agents: [claude-code, codex, grok, cursor]
 metadata:
   author: verygoodplugins
-  version: "0.7.2"
+  version: "0.7.3"
 resources:
   - path: references/setup.md
     type: file
@@ -82,6 +84,8 @@ npm run relay    # leave running
 npm run doctor   # want status: tab_bootstrap_works
 ```
 
+Package `0.3.0` ships extension manifest **1.1.0**. After pulling, rebuild and reload the unpacked extension so Chrome shows 1.1.0.
+
 Switching from old `dev-browser` skill/extension? `npm run setup -- --cleanup-legacy`
 
 Details: `references/setup.md`.
@@ -114,6 +118,7 @@ Full reference: `references/extension-cli.md`.
 - Pass **`--quiet`** on snapshot, click, fill, evaluate, and steps. It drops the repeated `mode` / `target` / `url` / `title` wrapper.
 - `doctor` returns `status`, `browser: {name, version}`, `tabCount`, and the active tab. It is a health check. Use `tabs` for the inventory. `doctor --verbose` is only for diagnosing target selection. `doctor --browser <name>` asserts which connected browser you expect and warns on a mismatch.
 - **Never open tabs with OS commands.** Do not fall back to `open -a "Google Chrome" <url>`, `start`, `xdg-open`, or any shell launcher — that opens the wrong browser (not the one with the extension) and loses the session. Always use `browser-hand open`/`goto`. If `open` fails, report the error; do not route around it.
+- Anonymous screenshots go through `scripts/anon-screenshot.sh`, which launches the browser connected to the relay.
 - To show a **local file** (a generated HTML brief, report, etc.), pass its `file:` URL to `open --url file:///…`. `chrome.tabs.create` cannot navigate to `file:` URLs, so the CLI registers the file with the relay and opens a capability URL (`http://127.0.0.1:<doc-port>/local/<token>/<name>`) on a **separate origin** from the relay API. Relative resources (`./style.css`, `img/a.png`, `sub/page.html`) resolve from that URL, and the `file:` URL's query string and `#hash` are kept. Only files inside the document's own directory are served: no `..` escapes, no symlinks out, no dotfiles (`.env`), nothing from a sibling directory. The page can't call the relay or other origins (CSP `connect-src 'self'`), so a report that `fetch`es remote JSON won't work this way. The token expires after 2 hours idle and dies with the relay. If `open` says the relay can't serve local documents, restart it (`browser-hand relay`); don't open the file path directly.
 - If `doctor` reports `status: debugger_unavailable`, the connected browser restricts `chrome.debugger` (`doctor.debugger` carries the browser's reason); Browser Hand drives it via the scripting transport. open/snapshot/fill/click/evaluate still work — this is **not** the `path_b_required` (separate debug profile) case. It is reported even though the smoke tab opened, and `doctor` still exits non-zero because only `tab_bootstrap_works` is the healthy status; full-CDP methods such as `Page.navigate` are rejected on these tabs.
 - To work on the tab the user is looking at, run `snapshot` (no flags) or `tabs` first. If several windows each have an active tab, pass `--query`.

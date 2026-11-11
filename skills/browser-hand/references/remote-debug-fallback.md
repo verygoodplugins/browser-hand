@@ -1,6 +1,6 @@
 # Headless and remote-debug fallback
 
-Use this only when you need a **disposable** browser or CI — not the user’s everyday logged-in Chrome.
+Use this only when you need a **disposable** browser or CI — anonymous captures, not the user’s everyday logged-in browser.
 
 For real sessions, use the extension CLI (`extension-cli.md`).
 
@@ -23,13 +23,15 @@ EOF
 
 ## Connect to a dedicated debug profile
 
-Quit Chrome fully first (macOS single-instance ignores flags otherwise). Then:
+Resolve the executable while the extension is still connected. `browser-path` refuses to answer once that browser quits and the relay drops. Then quit the connected browser fully (macOS single-instance ignores flags otherwise) and launch that executable with a user-data directory that is not the everyday profile:
 
 ```bash
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+EXE="$(browser-hand browser-path | node -e 'let raw="";process.stdin.on("data",(c)=>raw+=c);process.stdin.on("end",()=>{process.stdout.write(JSON.parse(raw).executablePath)})')"
+# Quit the connected browser here, then:
+"$EXE" \
   --remote-debugging-port=9222 \
   --remote-allow-origins=http://127.0.0.1:9222 \
-  --user-data-dir="$HOME/.browser-hand/chrome-debug"
+  --user-data-dir="$HOME/.browser-hand/debug-profile"
 ```
 
 ```bash
@@ -39,7 +41,7 @@ console.log(JSON.stringify(tabs, null, 2));
 EOF
 ```
 
-Log into sites **once** in that profile if you need auth; do not expect it to share cookies with daily Chrome.
+Log into sites **once** in that profile if you need auth; do not expect it to share cookies with the everyday browser. The everyday profile still does not get a debugging port.
 
 ## When agents may use this
 

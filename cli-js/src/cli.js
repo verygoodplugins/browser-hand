@@ -23,8 +23,11 @@
  * 2 on argument error.
  */
 
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+
+import { checkRelayBrowser, resolveBrowserExecutable } from "./browser-path.js";
 
 // Force Browser Hand logger to stderr so stdout stays pure JSON for
 // machine-readable consumption. Must be set BEFORE the tool import because
@@ -32,7 +35,12 @@ import path from "node:path";
 process.env.AUTOHUB_LOG_STREAM = process.env.AUTOHUB_LOG_STREAM || "stderr";
 process.env.BROWSER_HAND_LOG_STREAM = process.env.BROWSER_HAND_LOG_STREAM || "stderr";
 
-const { default: devBrowserTool, startPersistentRelay } = await import("./tool.js");
+const {
+  default: devBrowserTool,
+  startPersistentRelay,
+  probeRelay,
+  CURRENT_RELAY_URL,
+} = await import("./tool.js");
 
 const OP_ALIASES = {
   "autofill-profile": "autofill_profile",
@@ -72,6 +80,7 @@ Operations:
                                         closes every tab in that Browser Hand tab group. Refuses a tab
                                         you had open unless --include-user-tabs is passed.
   doctor [--verbose]                    Health check: status, tabCount, and the active tab. Not a tab list.
+  browser-path                          Print the executable of the browser connected to the relay.
   relay                                 Start a persistent extension relay (foreground) so the
                                         Chrome extension has a stable endpoint to connect to.
                                         Run once and leave it up; Ctrl-C to stop. Idempotent —
@@ -110,6 +119,7 @@ Examples:
   browser-hand close --query example.com --all
   browser-hand close --group-title "DNS records"
   browser-hand doctor
+  browser-hand browser-path
   browser-hand click --page-name work --role combobox --name "Type"
   browser-hand click --page-name work --ref e4
   browser-hand steps --page-name work --quiet --steps '[{"op":"click","role":"button","name":"Save"}]'
@@ -403,6 +413,26 @@ export async function runCli(argv) {
 
   if (quiet) {
     process.env.LOG_LEVEL = process.env.LOG_LEVEL || "error";
+  }
+
+  if (operation === "browser-path") {
+    const relayInfo = await probeRelay(1000);
+    const checked = checkRelayBrowser(relayInfo, CURRENT_RELAY_URL);
+    if (!checked.ok) fail(checked.message);
+    const resolved = resolveBrowserExecutable({
+      name: checked.name,
+      platform: process.platform,
+      applicationsDir: "/Applications",
+      homeApplicationsDir: path.join(os.homedir(), "Applications"),
+    });
+    if (!resolved.ok) fail(resolved.message);
+    return {
+      code: 0,
+      stdout: encodeCliJson({
+        name: resolved.name,
+        executablePath: resolved.executablePath,
+      }),
+    };
   }
 
   if (operation === "relay") {

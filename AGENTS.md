@@ -4,7 +4,7 @@ This file is the **canonical** project guidance for coding agents (Claude Code, 
 
 ## Project
 
-**Browser Hand** gives agents a hand on the user's **real logged-in Chrome** — cookies, passkeys, open tabs, admin UIs — via a local MV3 extension bridge. Product default is the extension path, not remote debugging.
+**Browser Hand** gives agents a hand on the user's **real logged-in browser**, whichever Chromium has the Browser Hand extension connected — cookies, passkeys, open tabs, admin UIs — via a local MV3 extension bridge. Product default is the extension path, not remote debugging.
 
 Upstream headless CLI (fork of [SawyerHood/dev-browser](https://github.com/SawyerHood/dev-browser)) remains for CI / disposable Chromium. See [MIGRATING.md](./MIGRATING.md) for rename map and [FORK.md](./FORK.md) for product intent.
 
