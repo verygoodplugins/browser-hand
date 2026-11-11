@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: latest
       - uses: actions/setup-node@v4
@@ -144,7 +144,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts/
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: latest
       - uses: actions/setup-node@v4
