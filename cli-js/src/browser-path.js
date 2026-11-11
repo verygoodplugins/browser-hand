@@ -90,7 +90,8 @@ function listAppBundles(dir) {
   }
   return entries
     .filter((entry) => entry.name.toLowerCase().endsWith(".app"))
-    .map((entry) => path.resolve(dir, entry.name));
+    .map((entry) => path.resolve(dir, entry.name))
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function sameName(field, name) {
@@ -111,7 +112,6 @@ function collectMatches(dir, name, readPlist) {
   for (const listed of listAppBundles(dir)) {
     const bundlePath = bundleRealPath(listed);
     if (seen.has(bundlePath)) continue;
-    seen.add(bundlePath);
     const filename = path.basename(listed).replace(/\.app$/i, "");
     const read = readPlist(listed);
     const plist = read.ok ? read.plist : null;
@@ -120,6 +120,9 @@ function collectMatches(dir, name, readPlist) {
       sameName(plist?.CFBundleName, name) ||
       sameName(plist?.CFBundleDisplayName, name);
     if (!matched) continue;
+    // A non-matching alias shares this real path. Marking it seen before the
+    // name check would hide the bundle whose filename actually matches.
+    seen.add(bundlePath);
     matches.push({ bundlePath, plistOk: read.ok === true, plist });
   }
   return matches;

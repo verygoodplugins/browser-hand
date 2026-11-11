@@ -403,6 +403,24 @@ test("a non-executable file is rejected", () => {
   }
 });
 
+test("a non-matching alias listed first does not hide the real bundle", () => {
+  const applications = makeRoot();
+  const home = makeRoot();
+  try {
+    const app = makeApp(applications, "Search.app", {
+      bundleName: "NotSearch",
+      executable: "Search",
+    });
+    symlinkSync(app, path.join(applications, "Alias.app"));
+    const result = resolveAt("Search", applications, home);
+    assert.equal(result.ok, true);
+    assert.equal(result.executablePath, path.join(real(app), "Contents", "MacOS", "Search"));
+  } finally {
+    rmSync(applications, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("symlink and target that are the same bundle count once", () => {
   const applications = makeRoot();
   const home = makeRoot();

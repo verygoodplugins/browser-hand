@@ -23,10 +23,11 @@ EOF
 
 ## Connect to a dedicated debug profile
 
-Quit the connected browser fully first (macOS single-instance ignores flags otherwise). Then launch the executable `browser-hand browser-path` prints, with a user-data directory that is not the everyday profile:
+Resolve the executable while the extension is still connected. `browser-path` refuses to answer once that browser quits and the relay drops. Then quit the connected browser fully (macOS single-instance ignores flags otherwise) and launch that executable with a user-data directory that is not the everyday profile:
 
 ```bash
 EXE="$(browser-hand browser-path | node -e 'let raw="";process.stdin.on("data",(c)=>raw+=c);process.stdin.on("end",()=>{process.stdout.write(JSON.parse(raw).executablePath)})')"
+# Quit the connected browser here, then:
 "$EXE" \
   --remote-debugging-port=9222 \
   --remote-allow-origins=http://127.0.0.1:9222 \
