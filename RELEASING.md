@@ -7,117 +7,86 @@ This monorepo ships two related surfaces:
 | **Browser Hand** (product) | Extension + relay + `browser-hand` CLI + skill | Logged-in Chrome agents |
 | **Upstream headless** | `dev-browser` binary + daemon (historical package name) | CI / disposable Chromium |
 
-The steps below still describe the **upstream npm/binary release path** inherited from SawyerHood/dev-browser. Product-only changes (extension, `cli-js/`/`browser-hand` CLI, skill docs) often ship via git tags on this repo without republishing the `dev-browser` npm package — say so in the changelog.
+Versioning follows the mcp-ecosystem Release Please setup. Merges into `main` are squash-only, the PR title is the commit Release Please reads, and the Release PR is the only version bump.
 
 See [MIGRATING.md](./MIGRATING.md) for the rename map.
 
-## First-Time Setup (upstream binary / npm)
+## Versioning
 
-npm publishing uses GitHub Actions trusted publishing (OIDC), so the release
-workflow does not need an `NPM_TOKEN`. When publishing the headless package still
-named `dev-browser`, configure a trusted publisher for the **current** GitHub
-repo (`verygoodplugins/browser-hand`) and workflow filename `release.yml`.
+Release Please tracks the root package (`package.json` `0.3.0` today). On each push to `main` it updates one Release PR. Merging that PR:
 
-Historical upstream settings looked like:
+- bumps `package.json` and `package-lock.json`
+- bumps `cli/Cargo.toml`, `cli/Cargo.lock`, and `.claude-plugin/marketplace.json`
+- writes `CHANGELOG.md`
+- tags `browser-hand-vX.Y.Z` and opens the GitHub Release
 
-- Organization or user: `SawyerHood`
-- Repository: `dev-browser`
-- Workflow filename: `release.yml`
+| PR title on `main` | While 0.x | From 1.0.0 |
+|---|---|---|
+| `fix:` | patch | patch |
+| `feat:` | minor | minor |
+| `feat!:` or `BREAKING CHANGE` | minor | major |
+| `docs:`, `chore:`, `refactor:`, `test:`, `perf:`, `build:`, `ci:` | no release | no release |
 
-The workflow needs `id-token: write`, which is already configured in
-`.github/workflows/release.yml`.
+`bump-minor-pre-major` is on, so a breaking change does not jump `0.3.0` to `1.0.0`. `bump-patch-for-minor-pre-major` is off: a feature still bumps the minor, matching the releases already in `CHANGELOG.md`. The TypeScript template sets that second flag because those servers start at `1.0.0`, where the flag does nothing.
 
-## Publishing a New Version
+Tags are `browser-hand-vX.Y.Z`, not `vX.Y.Z`. This repo already has `v1.2.0` (extension) and `v1.0.0-rc.*` (older headless candidates). A bare `v*` tag would make Release Please treat `v1.2.0` as the package version.
 
-### 1. Prepare the release
+The extension (`extension/package.json`, currently `1.2.0`), relay, `cli-js`, and daemon keep their own versions. Release Please does not bump them.
 
-Start from an up-to-date `main` branch with a clean working tree. Move the
-relevant entries from `Unreleased` into a dated version section in
-`CHANGELOG.md`, then bump the version:
+`scripts/sync-version.js` remains for a local `npm version` experiment. Do not use it to cut a release.
 
-```bash
-npm version 0.2.9 --no-git-tag-version
-```
+History before the `v0.3.0` commit (`516db83049d624c62ccb71d7e6e2eb55f7dedfee`) is the bootstrap point. Release Please will not replay it. Merge commits already on `main` are not conventional titles, so they do not open a release by themselves. The next conventional squash does.
 
-The npm lifecycle hook updates all version-bearing files:
+## What you do
 
-- `package.json`
-- `package-lock.json`
-- `cli/Cargo.toml`
-- `cli/Cargo.lock`
-- `.claude-plugin/marketplace.json`
+1. Open a PR whose title is a Conventional Commit. `.github/workflows/pr-title.yml` checks it.
+2. Squash-merge into `main` after CI is green.
+3. Review the Release PR (`chore: release X.Y.Z`) and merge it when the notes look right. That merge is the release.
 
-Confirm that they all contain the intended version before tagging.
+Do not bump the version by hand, and do not push a tag yourself.
 
-### 2. Build and validate
+## First-time setup
 
-The Rust binary embeds the generated daemon bundles, so regenerate both bundles
-before building the CLI:
+`RELEASE_PLEASE_TOKEN` is an org secret. This repo has to be on its selected-repository list. PRs opened with the default `GITHUB_TOKEN` do not trigger CI, so the Release PR would sit with required checks pending.
 
-```bash
-cd daemon
-pnpm install
-pnpm bundle
-pnpm bundle:sandbox-client
-npx tsc --noEmit
-pnpm vitest run
-cd ../cli
-cargo build
-cd ..
-```
+npm publishing uses GitHub Actions trusted publishing (OIDC). The release workflow does not need an `NPM_TOKEN`. When publishing the headless package still named `dev-browser`, configure a trusted publisher for `verygoodplugins/browser-hand` and workflow filename `release.yml`.
 
-Also confirm that the normal CI checks for `main` are green before publishing.
+The workflow needs `id-token: write`, which is already configured in `.github/workflows/release.yml`.
 
-### 3. Commit
+## What the tag workflow does
 
-```bash
-git add -A
-git commit -m "release: v0.2.9"
-```
+See `.github/workflows/release.yml`. On `browser-hand-v*` (the tag Release Please pushes):
 
-### 4. Merge, tag, and push
+| Step | What happens |
+|------|-------------|
+| **Decide** | Publishes npm only when the tag version matches `package.json` and the `PUBLISH_NPM` repository variable is `true` |
+| **GitHub Release** | Leaves the Release Please notes in place. Creates a release only if one does not exist yet |
+| **Bundle** | When publishing: `pnpm bundle` and `pnpm bundle:sandbox-client` in `daemon/` |
+| **Build** | Cross-compiles the Rust CLI for each platform target, embedding the generated daemon bundles |
+| **Assemble** | Copies bin wrapper, postinstall, daemon bundles, README, LICENSE into the publish dir |
+| **Publish npm** | OIDC trusted publishing runs `npm publish` from the assembled directory |
+| **Attach binaries** | Uploads the platform binaries onto the existing GitHub Release without rewriting the notes |
 
-Merge the release commit to `main`, update the local branch, and create the tag
-on the resulting `main` commit. The tag must exactly match the version in
-`package.json`:
+Product-only changes still cut a GitHub Release and a tag. They do not republish the `dev-browser` npm package unless `PUBLISH_NPM=true`.
 
-```bash
-git switch main
-git pull --ff-only origin main
-git tag v0.2.9
-git push origin v0.2.9
-```
-
-Pushing any `v*` tag triggers the GitHub Actions release workflow. Do not push
-the tag until the release commit is merged and CI is green: the workflow does
-not independently verify that the tag and package versions match.
-
-### 5. Monitor and verify
-
-Wait for the `Release` workflow to finish, then verify both distribution
-channels:
+If publishing fails after npm accepts the version, do not reuse that version. Fix the workflow and ship a new patch.
 
 ```bash
 gh run list --workflow release.yml --limit 1
 npm info dev-browser version
-npm install -g dev-browser
-dev-browser --help
 ```
 
-If publishing fails after npm accepts the version, do not reuse that version;
-fix the release workflow and publish a new patch version.
+## Branch protection
 
-## What the CI Does
+`main` is a repository ruleset: no force-push, no deletion, pull request required, linear history, conversations resolved, squash only, code owner review. Admins can bypass on a pull request. Required checks are the CI jobs that already run on pull requests: `Build Daemon Bundles`, `Format Checks`, `Daemon (TypeScript + Tests)` on `ubuntu-24.04` and `windows-latest`, and `CLI (Rust)` on `ubuntu-latest` and `windows-latest`.
 
-See `.github/workflows/release.yml`. On tag push (`v*`):
+`Lint PR Title` runs on pull requests. It is not a required check yet, because `pull_request_target` reads the workflow from `main` and the check does not exist until this workflow is on `main`. Add it to the ruleset after that.
 
-| Step | What happens |
-|------|-------------|
-| **Bundle** | Runs `pnpm bundle` and `pnpm bundle:sandbox-client` in `daemon/` |
-| **Build** | Cross-compiles the Rust CLI for each platform target, embedding the generated daemon bundles |
-| **Assemble** | Copies bin wrapper, postinstall, daemon bundles, README, LICENSE into publish dir |
-| **Publish npm** | Uses OIDC trusted publishing to run `npm publish` from the assembled directory |
-| **GitHub Release** | Creates a release with generated notes and the platform binaries attached |
+Merge queue stays off until the `merge_group` trigger in `.github/workflows/ci.yml` is on `main`. Enabling it earlier waits forever for checks the workflow on `main` never reports. That workflow does not cancel an in-progress merge-queue run.
+
+Release tags (`v*` and `browser-hand-v*`) cannot be deleted or moved. Admins can bypass that rule.
+
+Non-major Dependabot updates are approved and set to auto-merge by the shared workflow in `verygoodplugins/.github`. Major updates are labeled for review. Auto-merge still waits for the required checks and code owner review.
 
 ## Platform Binaries
 

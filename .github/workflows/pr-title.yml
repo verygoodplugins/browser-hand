@@ -1,0 +1,45 @@
+name: PR Title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+  merge_group:
+
+permissions:
+  pull-requests: read
+
+jobs:
+  conventional-pr-title:
+    name: Lint PR Title
+    if: ${{ github.event_name == 'merge_group' || github.event.pull_request.base.ref == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate conventional PR title
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          MERGE_MESSAGE: ${{ github.event.merge_group.head_commit.message }}
+        run: |
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            title=$(printf '%s\n' "$MERGE_MESSAGE" | head -n 1)
+          else
+            title="$PR_TITLE"
+          fi
+
+          pattern='^(feat|fix|docs|chore|refactor|test|perf|build|ci|revert)(\([[:alnum:]_.-]+\))?!?: .+'
+
+          if [[ "$title" =~ $pattern ]]; then
+            echo "PR title is valid: $title"
+            exit 0
+          fi
+
+          echo "PR title must use Conventional Commits because squash merges become release-please input."
+          echo "Allowed prefixes: feat, fix, docs, chore, refactor, test, perf, build, ci, revert"
+          echo "Examples:"
+          echo "  fix: harden push approval auth flow"
+          echo "  feat(auth): add TOTP support"
+          exit 1

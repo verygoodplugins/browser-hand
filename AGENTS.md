@@ -103,15 +103,17 @@ Live Chrome claims need command evidence (`doctor`, smoke, or gym oracle) — no
 
 ## Commit style
 
-Conventional commits when releasing or when the repo is on release-please:
+Squash is the only merge into `main`. Release Please reads that squash title, which is the PR title.
 
-- `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`
-- Dogfood / gym fixes may use the Problem / Fix / Expected improvement body shape when iterating the obstacle course.
+- PR titles use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `perf:`, `build:`, `ci:`, `revert:`. A scope is optional (`fix(cli): …`).
+- `feat` bumps minor. `fix` bumps patch. `feat!` or `BREAKING CHANGE` bumps minor while the version is 0.x, and major from 1.0.0. `docs`, `chore`, `refactor`, `test`, `perf`, `build`, and `ci` do not bump.
+- Do not hand-bump `package.json`. Release Please updates the root version, `cli/Cargo.toml`, `cli/Cargo.lock`, `.claude-plugin/marketplace.json`, and `CHANGELOG.md`.
+- Dogfood / gym fixes may use the Problem / Fix / Expected improvement body shape when iterating the obstacle course. The PR title still has to be conventional.
 
 ## PR hygiene
 
 - Open PRs ready for review by default (draft only if asked).
-- Do not merge without explicit operator authorization.
+- Do not merge without explicit operator authorization. Dependabot non-major updates are the exception: they auto-merge after CI. Major dependency updates stay for review. Release PRs stay for a human.
 - Security reports: private GitHub Security Advisories (see `.github/SECURITY.md`) — never file vulns as public issues.
 
 ## Memory (when AutoMem MCP is available)
