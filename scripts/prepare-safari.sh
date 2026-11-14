@@ -46,30 +46,6 @@ xcrun safari-web-extension-converter extension/dist/safari-mv3 \
 # Converter versions may derive either or both IDs from the app name, and may
 # generate test targets. Set only the host and extension build settings.
 PROJECT="$OUTPUT/Browser Hand/Browser Hand.xcodeproj"
-python3 - "$PROJECT" "$BUNDLE_ID" <<'PY'
-from pathlib import Path
-import re
-import sys
-project = Path(sys.argv[1])
-bundle_id = sys.argv[2]
-for name in ('project.xcproj', 'project.pbxproj'):
-    path = project / name
-    if path.exists():
-        content = path.read_text()
-        pattern = re.compile(r'(?P<prefix>"?PRODUCT_BUNDLE_IDENTIFIER"?\s*[:=]\s*"?)(?P<value>[A-Za-z0-9.-]+)(?P<suffix>"?\s*[,;])')
-        ids = {match.group('value') for match in pattern.finditer(content)}
-        extensions = {item for item in ids if item.endswith('.Extension')}
-        hosts = {item for item in ids if item not in extensions and not item.endswith(('Tests', 'UITests'))}
-        if len(extensions) != 1 or len(hosts) != 1:
-            raise SystemExit('Could not safely identify generated app and extension bundle identifiers')
-        extension_id = extensions.pop()
-        host_id = hosts.pop()
-        replacements = {host_id: bundle_id, extension_id: bundle_id + '.Extension'}
-        content = pattern.sub(lambda match: match.group('prefix') + replacements.get(match.group('value'), match.group('value')) + match.group('suffix'), content)
-        path.write_text(content)
-        break
-else:
-    raise SystemExit('Cannot find the generated Xcode project settings')
-PY
+python3 "$ROOT/scripts/fix-safari-identifiers.py" "$PROJECT" "$BUNDLE_ID"
 printf '\nProject ready: %s\nRelay port: %s\n' "$PROJECT" "$PORT"
 printf '%s\n' 'Open in Xcode, select your signing team for both targets, build and run; then copy the signed app into Applications and enable its Safari extension.'

@@ -140,6 +140,12 @@ the app and image, and adds `Browser-Hand-macOS.dmg` and its SHA-256 file to
 that release. The workflow can also be retried with **Build Safari download**
 from the Actions tab for an existing matching release tag.
 
+The normal build uses the release tag. To backfill an existing release after a
+packaging fix, run the workflow manually with `source_ref` set to the full SHA
+of a commit that descends from that tag and still has the same package version.
+The job records the build commit in its log; the backfilled download therefore
+comes from that commit rather than the original tag.
+
 The GitHub repository needs these Actions secrets before the workflow can run:
 
 | Secret | Value |

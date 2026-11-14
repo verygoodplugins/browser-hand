@@ -7,6 +7,10 @@ on:
         description: Existing Browser Hand release tag
         required: true
         type: string
+      source_ref:
+        description: Optional full commit SHA for a release backfill
+        required: false
+        type: string
     secrets:
       APPLE_SIGNING_CERTIFICATE_BASE64:
         required: false
@@ -24,6 +28,10 @@ on:
         description: Existing Browser Hand release tag (browser-hand-vX.Y.Z)
         required: true
         type: string
+      source_ref:
+        description: Optional full commit SHA descended from the release tag
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -38,6 +46,7 @@ jobs:
     timeout-minutes: 60
     env:
       RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_REF: ${{ inputs.source_ref }}
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
       APPLE_DEVELOPER_IDENTITY: Developer ID Application
@@ -49,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^browser-hand-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a browser-hand-vX.Y.Z release tag.' >&2; exit 1; }
+          [[ -z "$SOURCE_REF" || "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'source_ref must be a full lowercase commit SHA.' >&2; exit 1; }
           assets="$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name]')"
           dmg="$(jq '[.[] | select(. == "Browser-Hand-macOS.dmg")] | length' <<< "$assets")"
           sum="$(jq '[.[] | select(. == "Browser-Hand-macOS.dmg.sha256")] | length' <<< "$assets")"
@@ -64,7 +74,8 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.release.outputs.build == 'true'
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.source_ref || inputs.tag }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         if: steps.release.outputs.build == 'true'
         with:
@@ -75,18 +86,11 @@ jobs:
         run: |
           set -euo pipefail
           [[ "browser-hand-v$(node -p 'require("./package.json").version')" == "$RELEASE_TAG" ]] || { echo 'Tag does not match package.json.' >&2; exit 1; }
+          git merge-base --is-ancestor "$RELEASE_TAG" HEAD || { echo 'Build commit must descend from the release tag.' >&2; exit 1; }
+          echo "Building commit $(git rev-parse HEAD) for $RELEASE_TAG"
       - name: Install dependencies
         if: steps.release.outputs.build == 'true'
         run: npm ci
-      - name: Diagnose converter output
-        if: steps.release.outputs.build == 'true'
-        shell: bash
-        run: |
-          npm run safari:prepare -- "$RUNNER_TEMP/converter-diagnostic"
-          find "$RUNNER_TEMP/converter-diagnostic" -maxdepth 5 -type f | sort
-          find "$RUNNER_TEMP/converter-diagnostic" -name 'project.pbxproj' -o -name 'project.xcproj'
-          find "$RUNNER_TEMP/converter-diagnostic" \( -name 'project.pbxproj' -o -name 'project.xcproj' \) -exec grep -n -C 2 PRODUCT_BUNDLE_IDENTIFIER {} \;
-          exit 1
       - name: Import signing certificate and configure notarization
         if: steps.release.outputs.build == 'true'
         shell: bash
