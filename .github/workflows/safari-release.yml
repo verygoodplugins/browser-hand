@@ -78,6 +78,15 @@ jobs:
       - name: Install dependencies
         if: steps.release.outputs.build == 'true'
         run: npm ci
+      - name: Diagnose converter output
+        if: steps.release.outputs.build == 'true'
+        shell: bash
+        run: |
+          npm run build:safari -w browser-hand-extension
+          xcrun safari-web-extension-converter extension/dist/safari-mv3 --project-location "$RUNNER_TEMP/converter-diagnostic" --app-name 'Browser Hand' --bundle-identifier ai.autojack.browserhand.safari --swift --macos-only --copy-resources --no-open --no-prompt
+          find "$RUNNER_TEMP/converter-diagnostic" -name 'project.pbxproj' -o -name 'project.xcproj'
+          find "$RUNNER_TEMP/converter-diagnostic" \( -name 'project.pbxproj' -o -name 'project.xcproj' \) -exec grep -n -C 2 PRODUCT_BUNDLE_IDENTIFIER {} \;
+          exit 1
       - name: Import signing certificate and configure notarization
         if: steps.release.outputs.build == 'true'
         shell: bash
