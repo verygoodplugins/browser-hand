@@ -23,6 +23,8 @@ Browser Hand takes a different route: a small **Chrome extension** bridges your 
 
 The extension is also **debugger-free by default**: it uses `chrome.scripting` and `chrome.tabs` rather than `chrome.debugger`, so there is no “started debugging this browser” infobar for sites to detect. That is why it also runs in Chrome-extension-compatible browsers that stub `chrome.debugger`, such as the macOS **Search** browser. Pick the CDP debugger transport in the popup (**Page control**) only if you want it; see [the skill](./skills/browser-hand/SKILL.md#page-control-debugger-free-by-default) for what each mode can and cannot do.
 
+Safari support is experimental. The standalone macOS app includes the extension, relay, and CLI; see [Safari installation and limitations](./docs/safari-experiment.md).
+
 ## What you get
 
 - **Real sessions** — use the Chrome profile you already use (cookies, passkeys, extensions, open tabs).

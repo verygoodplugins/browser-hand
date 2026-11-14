@@ -48,3 +48,13 @@ jobs:
           manifest-file: ".release-please-manifest.json"
           config-file: "release-please-config.json"
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+
+  safari-release:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/safari-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit

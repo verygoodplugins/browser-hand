@@ -1,0 +1,118 @@
+name: Build Safari download
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing Browser Hand release tag
+        required: true
+        type: string
+    secrets:
+      APPLE_SIGNING_CERTIFICATE_BASE64:
+        required: false
+      APPLE_SIGNING_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_NOTARY_APPLE_ID:
+        required: false
+      APPLE_NOTARY_TEAM_ID:
+        required: false
+      APPLE_NOTARY_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Browser Hand release tag (browser-hand-vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: safari-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      APPLE_DEVELOPER_IDENTITY: Developer ID Application
+      APPLE_NOTARY_PROFILE: browser-hand-ci
+    steps:
+      - name: Check release and existing assets
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^browser-hand-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected a browser-hand-vX.Y.Z release tag.' >&2; exit 1; }
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[].name]')"
+          dmg="$(jq '[.[] | select(. == "Browser-Hand-macOS.dmg")] | length' <<< "$assets")"
+          sum="$(jq '[.[] | select(. == "Browser-Hand-macOS.dmg.sha256")] | length' <<< "$assets")"
+          if [[ "$dmg" == 1 && "$sum" == 1 ]]; then
+            echo 'Both Safari release assets already exist; leaving them unchanged.'
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$dmg" == 0 && "$sum" == 0 ]]; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Only one Safari asset exists. Resolve the partial upload before retrying.' >&2
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.build == 'true'
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.build == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validate the release version
+        if: steps.release.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          [[ "browser-hand-v$(node -p 'require("./package.json").version')" == "$RELEASE_TAG" ]] || { echo 'Tag does not match package.json.' >&2; exit 1; }
+      - name: Install dependencies
+        if: steps.release.outputs.build == 'true'
+        run: npm ci
+      - name: Import signing certificate and configure notarization
+        if: steps.release.outputs.build == 'true'
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.APPLE_SIGNING_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_SIGNING_CERTIFICATE_PASSWORD }}
+          NOTARY_APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in CERTIFICATE CERTIFICATE_PASSWORD NOTARY_APPLE_ID NOTARY_TEAM_ID NOTARY_PASSWORD; do
+            [[ -n "${!name}" ]] || { echo "Missing required signing/notarization secret: $name" >&2; exit 1; }
+          done
+          keychain="$RUNNER_TEMP/browser-hand-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$CERTIFICATE" | base64 -D > "$RUNNER_TEMP/browser-hand-certificate.p12"
+          chmod 600 "$RUNNER_TEMP/browser-hand-certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/browser-hand-certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          xcrun notarytool store-credentials "$APPLE_NOTARY_PROFILE" --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" --password "$NOTARY_PASSWORD"
+      - name: Build, sign, and notarize
+        if: steps.release.outputs.build == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-hand-release"
+          npm run safari:standalone -- "$RUNNER_TEMP/browser-hand-release/Browser-Hand-macOS.dmg"
+      - name: Attach download to release
+        if: steps.release.outputs.build == 'true'
+        run: gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/browser-hand-release/Browser-Hand-macOS.dmg" "$RUNNER_TEMP/browser-hand-release/Browser-Hand-macOS.dmg.sha256"
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/browser-hand-certificate.p12"
+          security delete-keychain "$RUNNER_TEMP/browser-hand-signing.keychain-db" 2>/dev/null || true
