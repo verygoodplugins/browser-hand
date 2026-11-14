@@ -7,6 +7,7 @@
     "dev:firefox": "wxt --browser firefox",
     "build": "wxt build",
     "build:firefox": "wxt build --browser firefox",
+    "build:safari": "wxt build --browser safari --mv3",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip --browser firefox",
     "test": "vitest",

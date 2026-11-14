@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+resources="$(cd "$(dirname "$0")/.." && pwd -P)"
+export HOST=127.0.0.1
+export PORT="${PORT:-19334}"
+exec "$resources/runtime/node" "$resources/runtime/relay.mjs"

@@ -426,8 +426,6 @@ export class TabManager {
     return /\bdebugger\b/i.test(message) && /(isn['’]t|is not|not)\s+available/i.test(message);
   }
 
-  private debuggerUnavailableReason: string | null = null;
-
   /** Whether this host browser has reported chrome.debugger as unavailable. */
   isDebuggerUnavailable(): boolean {
     return this.debuggerUnavailableReason !== null;
@@ -674,7 +672,7 @@ export class TabManager {
     if (typeof api?.execute !== "function") {
       return {
         ok: false,
-        error: `${blockedError} — this page's CSP blocks string evaluation. Turn on "Allow User Scripts" for Browser Hand on the browser's extensions page, or use the debugger transport where the browser has one.`,
+        error: `${blockedError} — this page's CSP blocks string evaluation. If your browser supports "Allow User Scripts", enable it for Browser Hand; otherwise use the debugger transport if available.`,
       };
     }
     // A newline after the expression keeps a trailing // comment from eating the wrapper.

@@ -26,6 +26,10 @@ describe("pickBrand", () => {
 });
 
 describe("parseUserAgent", () => {
+  it("recognizes Safari and uses its product version", () => {
+    expect(parseUserAgent("Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15 Version/18.5 Safari/605.1.15"))
+      .toEqual({ name: "Safari", version: "18.5" });
+  });
   it("recognizes Edge before generic Chrome", () => {
     const ua =
       "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML) Chrome/140.0.0.0 Safari/537.36 Edg/140.0.1";

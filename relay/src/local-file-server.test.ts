@@ -190,6 +190,12 @@ describe("local documents through the relay", () => {
     assert.equal((await raw(relayPort, "/", { Origin: "http://localhost:3000" })).status, 200);
   });
 
+  test("document-origin isolation also applies to paths with encoded line terminators", async () => {
+    for (const ending of ["%0A", "%0D", "%E2%80%A8", "%E2%80%A9"]) {
+      assert.equal((await raw(relayPort, `/unknown${ending}`, { Origin: relay.localDocOrigin })).status, 403, ending);
+    }
+  });
+
   test("registration is CLI-only and validates input", async () => {
     for (const origin of [relay.localDocOrigin, "http://evil.example"]) {
       assert.equal((await register(indexPath, { Origin: origin })).status, 403, origin);

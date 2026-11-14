@@ -840,11 +840,14 @@ export function classifyDevBrowserDoctor({
   targetCount = 0,
   smoke = null,
   debuggerState = null,
+  safariStandalone = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1",
 } = {}) {
   if (!relayInfo) {
     return {
       status: "relay_down",
-      action: `Start the Browser Hand relay: npm run relay  (or browser-hand relay) on ${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}.`,
+      action: safariStandalone
+        ? "Open Browser Hand from Applications and click Set up Browser Hand."
+        : `Start the Browser Hand relay: npm run relay  (or browser-hand relay) on ${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}.`,
     };
   }
   if (relayInfo.extensionConnected !== true) {
@@ -852,12 +855,16 @@ export function classifyDevBrowserDoctor({
       return {
         status: "extension_asleep",
         action:
-          "Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.",
+          safariStandalone
+            ? "Open Safari, check that Browser Hand is enabled in Settings → Extensions, then rerun doctor."
+            : "Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.",
       };
     }
     return {
       status: "extension_disconnected",
-      action: `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
+      action: safariStandalone
+        ? "Enable Browser Hand in Safari Settings → Extensions, then allow the websites you want it to use."
+        : `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
     };
   }
   const debuggerUnavailable =
@@ -1574,6 +1581,7 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
   result.success = classification.status === "tab_bootstrap_works";
   // debugger_unavailable is a browser capability gap, not a failed bootstrap or path_b.
   if (
+    process.env.BROWSER_HAND_SAFARI_STANDALONE !== "1" &&
     classification.status !== "tab_bootstrap_works" &&
     classification.status !== "debugger_unavailable"
   ) {

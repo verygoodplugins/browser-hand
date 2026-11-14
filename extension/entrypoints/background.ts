@@ -268,6 +268,10 @@ export default defineBackground(() => {
     ensureConnectionIfActive().catch(() => {});
   });
 
+  chrome.runtime.onInstalled.addListener(() => {
+    ensureConnectionIfActive().catch(() => {});
+  });
+
   logger.log("Extension initialized");
 
   // Initialize from stored state
