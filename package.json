@@ -13,6 +13,11 @@
     "version": "npm run version:sync && git add cli/Cargo.toml cli/Cargo.lock .claude-plugin/marketplace.json",
     "build:relay": "npm run build -w browser-hand-relay",
     "build:extension": "npm run build -w browser-hand-extension",
+    "safari:prepare": "bash scripts/prepare-safari.sh",
+    "safari:package": "bash scripts/package-safari-release.sh",
+    "safari:standalone": "bash scripts/build-safari-standalone.sh",
+    "safari:test": "node --test safari/standalone/setup.test.mjs",
+    "safari:relay:install": "bash scripts/install-safari-relay.sh",
     "build": "npm run build:relay && npm run build:extension",
     "setup": "bash scripts/setup.sh",
     "browser-hand": "node cli-js/src/cli.js",
@@ -63,5 +68,8 @@
     "relay",
     "cli-js",
     "extension"
-  ]
+  ],
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
 }

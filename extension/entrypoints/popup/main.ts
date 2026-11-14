@@ -14,11 +14,12 @@ const focusPolicySelect = document.getElementById("focus-policy") as HTMLSelectE
 const focusHint = document.getElementById("focus-hint") as HTMLParagraphElement;
 const transportSelect = document.getElementById("transport-mode") as HTMLSelectElement;
 const transportHint = document.getElementById("transport-hint") as HTMLParagraphElement;
+const transportControl = document.getElementById("transport-control") as HTMLDivElement;
 
 const FOCUS_HINTS: Record<FocusPolicy, string> = {
   background: "Agents keep working without stealing your keyboard focus.",
-  tab: "Switches to the automation tab inside Chrome, but leaves other apps focused.",
-  window: "Brings Chrome to the front (old behavior).",
+  tab: "Switches to the automation tab inside the browser, but leaves other apps focused.",
+  window: "Brings the browser to the front.",
 };
 
 const TRANSPORT_HINTS: Record<TransportMode, string> = {
@@ -34,14 +35,8 @@ function updateUI(state: StateResponse): void {
   focusHint.textContent = FOCUS_HINTS[state.focusPolicy] || FOCUS_HINTS.background;
   const transportMode = state.transportMode || "scripting";
   transportSelect.value = transportMode;
-  const debuggerOption = transportSelect.querySelector('option[value="debugger"]');
-  if (debuggerOption instanceof HTMLOptionElement) {
-    debuggerOption.disabled = state.debuggerAvailable === false;
-  }
-  transportHint.textContent =
-    state.debuggerAvailable === false
-      ? "This browser has no usable chrome.debugger; Browser Hand runs debugger-free."
-      : TRANSPORT_HINTS[transportMode];
+  transportControl.hidden = state.debuggerAvailable !== true;
+  transportHint.textContent = TRANSPORT_HINTS[transportMode];
 
   if (state.isActive) {
     connectionStatus.textContent = state.isConnected ? "Connected to relay" : "Connecting...";

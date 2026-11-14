@@ -59,6 +59,7 @@ export function parseUserAgent(ua: string | undefined): HostBrowser {
     [/OPR\/([\d.]+)/, "Opera"],
     [/Brave\/([\d.]+)/, "Brave"],
     [/Chrome\/([\d.]+)/, "Google Chrome"],
+    [/Version\/([\d.]+).*Safari\//, "Safari"],
   ];
   for (const [re, name] of patterns) {
     const m = text.match(re);

@@ -86,6 +86,15 @@ test("doctor stays healthy when the smoke tab bootstraps", () => {
   assert.equal(healthy.status, "tab_bootstrap_works");
 });
 
+test("standalone Safari doctor describes its own setup and extension", () => {
+  assert.match(classifyDevBrowserDoctor({ safariStandalone: true }).action, /Set up Browser Hand/);
+  const disconnected = classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false } });
+  assert.equal(disconnected.status, "extension_disconnected");
+  assert.match(disconnected.action, /Safari Settings/);
+  assert.doesNotMatch(disconnected.action, /Chrome|unpacked/);
+  assert.match(classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false }, recentExtensionDisconnected: true }).action, /Safari/);
+});
+
 /** Stub relay recording what the CLI sends; the real relay is covered in relay/src/local-file-server.test.ts. */
 async function withStubRelay(reply, fn) {
   const requests = [];

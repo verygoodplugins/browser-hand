@@ -5,8 +5,9 @@
 import type { Logger } from "../utils/logger";
 import type { ExtensionCommandMessage, ExtensionResponseMessage } from "../utils/types";
 
-const RELAY_HTTP_URL = "http://127.0.0.1:9333";
-const RELAY_URL = "ws://127.0.0.1:9333/extension";
+declare const __BROWSER_HAND_RELAY_PORT__: string | undefined;
+const RELAY_PORT = typeof __BROWSER_HAND_RELAY_PORT__ === "undefined" ? "9333" : __BROWSER_HAND_RELAY_PORT__;
+const RELAY_URL = `ws://127.0.0.1:${RELAY_PORT}/extension`;
 const RECONNECT_INTERVAL = 3000;
 // Send a WebSocket message at least this often while connected. Chrome 116+
 // resets the MV3 service-worker idle timer on WebSocket activity, so a sub-30s
@@ -72,31 +73,11 @@ export class ConnectionManager {
   }
 
   /**
-   * Validate connection by checking if server is reachable.
-   * More reliable than isConnected() as it detects server crashes.
+   * The WebSocket close/error events detect a lost relay. Avoid a separate
+   * HTTP probe: Safari applies CORS to extension fetches to the local relay.
    */
   async checkConnection(): Promise<boolean> {
-    if (!this.isConnected()) {
-      return false;
-    }
-
-    // Verify server is actually reachable
-    try {
-      const response = await fetch(RELAY_HTTP_URL, {
-        method: "GET",
-        signal: AbortSignal.timeout(1000),
-      });
-      return response.ok;
-    } catch {
-      // Server unreachable - close stale socket
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-        this.onDisconnect();
-        this.scheduleReconnect();
-      }
-      return false;
-    }
+    return this.isConnected();
   }
 
   /**
@@ -173,13 +154,6 @@ export class ConnectionManager {
     this.connecting = true;
 
     try {
-      // Check if server is available
-      try {
-        await fetch(RELAY_HTTP_URL, { method: "GET" });
-      } catch {
-        return;
-      }
-
       this.logger.debug("Connecting to relay server...");
       const socket = new WebSocket(RELAY_URL);
 
