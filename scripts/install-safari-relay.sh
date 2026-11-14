@@ -2,12 +2,12 @@
 # Install a user-scoped launchd relay for Safari; never replace an existing job.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PORT="${DEV_BROWSER_RELAY_PORT:-19333}"
+PORT="${DEV_BROWSER_RELAY_PORT:-9333}"
 LABEL="com.browser-hand.safari-relay"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/.browser-hand/logs"
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  printf '%s\n' 'Usage: DEV_BROWSER_RELAY_PORT=19333 npm run safari:relay:install' 'Installs a persistent user LaunchAgent; it refuses an existing job or occupied port.'
+  printf '%s\n' 'Usage: npm run safari:relay:install' 'Set DEV_BROWSER_RELAY_PORT to override the default port 9333.' 'Installs a persistent user LaunchAgent; it refuses an existing job or occupied port.'
   exit 0
 fi
 [[ "$(uname -s)" == Darwin ]] || { echo 'Requires macOS.' >&2; exit 1; }

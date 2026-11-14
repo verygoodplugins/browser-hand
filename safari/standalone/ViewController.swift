@@ -2,7 +2,7 @@ import Cocoa
 import SafariServices
 import WebKit
 
-private let extensionID = "ai.autojack.browserhand.safari.Extension"
+private let extensionID = (Bundle.main.bundleIdentifier ?? "ai.autojack.browserhand.safari") + ".Extension"
 
 class ViewController: NSViewController, WKNavigationDelegate, WKScriptMessageHandler {
     @IBOutlet var webView: WKWebView!
