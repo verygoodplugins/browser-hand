@@ -33,3 +33,5 @@ jobs:
     uses: verygoodplugins/.github/.github/workflows/dependabot-auto-merge.yml@main
     secrets:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      AUTOMERGE_APP_CLIENT_ID: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+      AUTOMERGE_APP_PRIVATE_KEY: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
