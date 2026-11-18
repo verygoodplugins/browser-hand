@@ -1,10 +1,10 @@
 # Safari support
 
 Browser Hand's Safari extension runs through a signed macOS app. Safari 27.0.1
-has been tested with a development-signed installation, including a Safari
-restart. Building it locally requires macOS, Xcode, and an Apple Development
-signing identity. This repository does not yet publish a notarized app, so
-installation from a published release is not yet available.
+has been tested with the notarized release, including a Safari restart. Download
+the standalone image from [GitHub Releases](https://github.com/verygoodplugins/browser-hand/releases).
+Building from source requires macOS, Xcode, and an Apple Development signing
+identity; installing the published app does not.
 
 ## Standalone download
 
@@ -139,6 +139,12 @@ download. It checks that the tag matches `package.json`, signs and notarizes
 the app and image, and adds `Browser-Hand-macOS.dmg` and its SHA-256 file to
 that release. The workflow can also be retried with **Build Safari download**
 from the Actions tab for an existing matching release tag.
+
+The normal build uses the release tag. To backfill an existing release after a
+packaging fix, run the workflow manually with `source_ref` set to the full SHA
+of a commit that descends from that tag and still has the same package version.
+The job records the build commit in its log; the backfilled download therefore
+comes from that commit rather than the original tag.
 
 The GitHub repository needs these Actions secrets before the workflow can run:
 

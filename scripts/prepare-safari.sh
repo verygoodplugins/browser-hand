@@ -43,32 +43,9 @@ xcrun safari-web-extension-converter extension/dist/safari-mv3 \
   --bundle-identifier "$BUNDLE_ID" \
   --swift --macos-only --copy-resources --no-open --no-prompt
 
-# Xcode 27's converter derives the app target ID from the app name but uses the
-# supplied ID for the extension. Match the app ID to its generated extension.
+# Converter versions may derive either or both IDs from the app name, and may
+# generate test targets. Set only the host and extension build settings.
 PROJECT="$OUTPUT/Browser Hand/Browser Hand.xcodeproj"
-python3 - "$PROJECT" "$BUNDLE_ID" <<'PY'
-from pathlib import Path
-import re
-import sys
-project = Path(sys.argv[1])
-bundle_id = sys.argv[2]
-for name in ('project.xcproj', 'project.pbxproj'):
-    path = project / name
-    if path.exists():
-        content = path.read_text()
-        extension_id = bundle_id + '.Extension'
-        patterns = [r'"PRODUCT_BUNDLE_IDENTIFIER"\s*:\s*"([^"]+)"',
-                    r'PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s]+)']
-        ids = []
-        for pattern in patterns:
-            ids.extend(re.findall(pattern, content))
-        app_ids = {item.strip('"') for item in ids if item.strip('"') != extension_id}
-        if extension_id not in content or len(app_ids) != 1:
-            raise SystemExit('Could not safely identify generated app and extension bundle identifiers')
-        path.write_text(content.replace(app_ids.pop(), bundle_id))
-        break
-else:
-    raise SystemExit('Cannot find the generated Xcode project settings')
-PY
+python3 "$ROOT/scripts/fix-safari-identifiers.py" "$PROJECT" "$BUNDLE_ID"
 printf '\nProject ready: %s\nRelay port: %s\n' "$PROJECT" "$PORT"
 printf '%s\n' 'Open in Xcode, select your signing team for both targets, build and run; then copy the signed app into Applications and enable its Safari extension.'
