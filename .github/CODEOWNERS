@@ -1,3 +1,15 @@
-# Default reviewer for everything in this repo.
-# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# Default owner. Last matching pattern wins:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 *       @jack-arturo
+
+# Keep a human in the loop for CI and supply-chain changes,
+# including Dependabot bumps of GitHub Actions.
+/.github/ @jack-arturo
+
+# No owner: a later line with no owner clears ownership, at any depth.
+# Dependabot PRs that only touch these files need no code-owner review,
+# so auto-merge can land them once required status checks pass.
+package.json
+package-lock.json
+Cargo.toml
+Cargo.lock
