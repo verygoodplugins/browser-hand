@@ -10,7 +10,13 @@
 - **`extension_asleep`** → click the Browser Hand Chrome toolbar icon once to
   wake the MV3 service worker; relay-side traffic does not wake it.
 - **`extension_disconnected`** → enable the extension in the default Chrome
-  profile and confirm it points at `ws://127.0.0.1:9333/extension`.
+  profile and confirm it points at `ws://127.0.0.1:9333/extension`. When another
+  well-known relay has a browser (for example Safari on 19334 while 9333 is
+  empty), the action and `otherRelay` name it and the CLI to run
+  (`browser-hand-safari`). Switch to that CLI; do not fall back to headless.
+  With `browser-hand-safari`, the action says whether Safari is not running or
+  the extension is most likely turned off (Safari > Settings > Extensions >
+  Browser Hand). Turning it on is the user's step: ask them.
 - **`target_registry_empty`** → the socket is alive but tab inventory is not
   reaching the relay. Reload the extension in `chrome://extensions`, confirm
   same-profile permissions, then rerun doctor.

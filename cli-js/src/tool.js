@@ -502,9 +502,68 @@ async function fetchJson(url, { timeoutMs = 800, ...init } = {}) {
   }
 }
 
+let lastRelayInfo = null;
+
 export async function probeRelay(timeoutMs = 800) {
   try {
-    return await fetchJson(CURRENT_RELAY_URL, { timeoutMs });
+    lastRelayInfo = await fetchJson(CURRENT_RELAY_URL, { timeoutMs });
+    return lastRelayInfo;
+  } catch {
+    return null;
+  }
+}
+
+// The default relay and the Safari standalone relay. When the one this CLI uses
+// has no browser, the other may be the healthy one (9333 empty, 19334 Safari).
+const WELL_KNOWN_RELAY_PORTS = [9333, 19334];
+
+export function cliNameForEnv(env = process.env) {
+  return env.BROWSER_HAND_SAFARI_STANDALONE === "1" ? "browser-hand-safari" : "browser-hand";
+}
+
+/** One line naming the browser, CLI and relay a command used: "Safari 27.0.1 via browser-hand-safari, relay 127.0.0.1:19334". */
+export function describeVia(
+  relayInfo,
+  { cli = cliNameForEnv(), host = CURRENT_RELAY_HOST, port = CURRENT_RELAY_PORT } = {}
+) {
+  const browser = relayInfo?.extensionConnected === true ? reportedHostBrowser(relayInfo) : null;
+  const who = browser?.name
+    ? [browser.name, browser.version].filter(Boolean).join(" ")
+    : "no browser connected";
+  return `${who} via ${cli}, relay ${host}:${port}`;
+}
+
+/** The other well-known relay, when it has a browser connected. */
+export async function probeOtherRelay(timeoutMs = 600) {
+  for (const port of WELL_KNOWN_RELAY_PORTS) {
+    if (port === CURRENT_RELAY_PORT) continue;
+    try {
+      const info = await fetchJson(`http://${CURRENT_RELAY_HOST}:${port}`, { timeoutMs });
+      if (info?.extensionConnected === true) {
+        return {
+          port,
+          browser: reportedHostBrowser(info),
+          cli: port === 19334 ? "browser-hand-safari" : "browser-hand",
+        };
+      }
+    } catch {
+      /* not running */
+    }
+  }
+  return null;
+}
+
+/** Sentence pointing at the healthy relay, or "" when there is none. */
+export function otherRelayHint(other) {
+  if (!other) return "";
+  const name = other.browser?.name || "A browser";
+  return ` ${name} is connected on ${CURRENT_RELAY_HOST}:${other.port}; run ${other.cli} to use it.`;
+}
+
+function safariIsRunning() {
+  if (process.platform !== "darwin") return null;
+  try {
+    return spawnSync("pgrep", ["-x", "Safari"], { encoding: "utf8" }).status === 0;
   } catch {
     return null;
   }
@@ -841,6 +900,8 @@ export function classifyDevBrowserDoctor({
   smoke = null,
   debuggerState = null,
   safariStandalone = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1",
+  safariRunning = null,
+  otherRelay = null,
 } = {}) {
   if (!relayInfo) {
     return {
@@ -851,6 +912,12 @@ export function classifyDevBrowserDoctor({
     };
   }
   if (relayInfo.extensionConnected !== true) {
+    if (safariStandalone && safariRunning === false) {
+      return {
+        status: "extension_disconnected",
+        action: `Safari is not running. Open Safari; Browser Hand connects when Safari starts.${otherRelayHint(otherRelay)}`,
+      };
+    }
     if (recentExtensionDisconnected) {
       return {
         status: "extension_asleep",
@@ -863,8 +930,8 @@ export function classifyDevBrowserDoctor({
     return {
       status: "extension_disconnected",
       action: safariStandalone
-        ? "Enable Browser Hand in Safari Settings → Extensions, then allow the websites you want it to use."
-        : `Enable the Browser Hand Chrome extension (Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`,
+        ? "Safari is running but Browser Hand is not connected, so the extension is most likely turned off. Turn it on in Safari > Settings > Extensions > Browser Hand (tick the box), then allow it on every website. The Browser Hand app also shows whether it is on."
+        : `Enable the Browser Hand extension (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.${otherRelayHint(otherRelay)}`,
     };
   }
   const debuggerUnavailable =
@@ -1041,8 +1108,13 @@ async function ensureRelayConnected(timeoutMs) {
   }
 
   if (info?.wsEndpoint && info.extensionConnected !== true) {
+    const other = await probeOtherRelay();
+    const fix =
+      process.env.BROWSER_HAND_SAFARI_STANDALONE === "1"
+        ? "Turn it on in Safari > Settings > Extensions > Browser Hand, then retry."
+        : `Enable the Browser Hand extension in the browser you want to drive (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`;
     throw new Error(
-      `Browser Hand relay is running at ${CURRENT_RELAY_URL}, but the Chrome extension is not connected. Enable the Browser Hand extension (extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`
+      `Browser Hand relay is running at ${CURRENT_RELAY_URL}, but no browser extension is connected to it. ${fix}${otherRelayHint(other)}`
     );
   }
 
@@ -1569,12 +1641,19 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
     result.debugger = (await probeRelay(1000))?.debugger || result.debugger;
   }
 
+  const disconnected = Boolean(relayInfo) && relayInfo.extensionConnected !== true;
+  const safariStandalone = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1";
+  const otherRelay = disconnected ? await probeOtherRelay() : null;
+  if (otherRelay) result.otherRelay = otherRelay;
   const classification = classifyDevBrowserDoctor({
     relayInfo,
     recentExtensionDisconnected,
     targetCount: result.targetCount,
     smoke: result.smoke,
     debuggerState: result.debugger,
+    safariStandalone,
+    safariRunning: disconnected && safariStandalone ? safariIsRunning() : null,
+    otherRelay,
   });
   result.status = classification.status;
   result.action = classification.action;
@@ -4477,6 +4556,7 @@ Resolved placeholder values are redacted from tool output.`,
       return redactSensitiveObject(
         {
           ...result,
+          ...(lastRelayInfo ? { via: describeVia(lastRelayInfo) } : {}),
           redacted: sub.redactions.length > 0,
         },
         sub.redactions
@@ -4488,6 +4568,7 @@ Resolved placeholder values are redacted from tool output.`,
           mode,
           operation,
           error: err.message,
+          ...(lastRelayInfo ? { via: describeVia(lastRelayInfo) } : {}),
         },
         sub.redactions
       );

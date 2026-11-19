@@ -13,7 +13,10 @@ import test from "node:test";
 
 import {
   classifyDevBrowserDoctor,
+  cliNameForEnv,
+  describeVia,
   isDebuggerUnavailableError,
+  otherRelayHint,
   rewriteLocalFileUrl,
 } from "../src/tool.js";
 
@@ -90,9 +93,47 @@ test("standalone Safari doctor describes its own setup and extension", () => {
   assert.match(classifyDevBrowserDoctor({ safariStandalone: true }).action, /Set up Browser Hand/);
   const disconnected = classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false } });
   assert.equal(disconnected.status, "extension_disconnected");
-  assert.match(disconnected.action, /Safari Settings/);
+  assert.match(disconnected.action, /Safari > Settings > Extensions > Browser Hand/);
   assert.doesNotMatch(disconnected.action, /Chrome|unpacked/);
   assert.match(classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false }, recentExtensionDisconnected: true }).action, /Safari/);
+});
+
+test("Safari doctor tells a stopped Safari apart from a turned-off extension", () => {
+  const stopped = classifyDevBrowserDoctor({
+    safariStandalone: true,
+    safariRunning: false,
+    relayInfo: { extensionConnected: false },
+  });
+  assert.match(stopped.action, /Safari is not running/);
+  const off = classifyDevBrowserDoctor({
+    safariStandalone: true,
+    safariRunning: true,
+    relayInfo: { extensionConnected: false },
+  });
+  assert.match(off.action, /most likely turned off/);
+  assert.match(off.action, /Safari > Settings > Extensions > Browser Hand/);
+});
+
+test("an empty default relay points at the relay that has a browser", () => {
+  const other = { port: 19334, browser: { name: "Safari", version: "27.0.1" }, cli: "browser-hand-safari" };
+  const out = classifyDevBrowserDoctor({ relayInfo: { extensionConnected: false }, otherRelay: other });
+  assert.equal(out.status, "extension_disconnected");
+  assert.match(out.action, /Safari is connected on 127\.0\.0\.1:19334; run browser-hand-safari/);
+  assert.equal(otherRelayHint(null), "");
+});
+
+test("via names the browser, CLI and relay a command used", () => {
+  const info = { extensionConnected: true, browser: { name: "Safari", version: "27.0.1" } };
+  assert.equal(
+    describeVia(info, { cli: "browser-hand-safari", host: "127.0.0.1", port: 19334 }),
+    "Safari 27.0.1 via browser-hand-safari, relay 127.0.0.1:19334"
+  );
+  assert.equal(
+    describeVia({ extensionConnected: false }, { cli: "browser-hand", host: "127.0.0.1", port: 9333 }),
+    "no browser connected via browser-hand, relay 127.0.0.1:9333"
+  );
+  assert.equal(cliNameForEnv({ BROWSER_HAND_SAFARI_STANDALONE: "1" }), "browser-hand-safari");
+  assert.equal(cliNameForEnv({}), "browser-hand");
 });
 
 /** Stub relay recording what the CLI sends; the real relay is covered in relay/src/local-file-server.test.ts. */
