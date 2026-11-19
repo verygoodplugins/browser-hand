@@ -2010,7 +2010,7 @@ async function runCurrentOperation(input, timeoutMs) {
                 selector: step.selector,
                 label: step.label,
                 ref: step.ref,
-                text: step.text || "",
+                text: typeStepText(step),
               })
             );
           }
@@ -2125,7 +2125,7 @@ async function runCurrentOperation(input, timeoutMs) {
           selector: input.selector,
           label: input.label,
           ref: input.ref,
-          text: input.text || input.value || "",
+          text: typeStepText(input),
         })
       );
       // The page reads the field back; success means the text is in it.
@@ -3998,6 +3998,13 @@ export async function typeIntoControl(el, text, { delayMs = 0 } = {}) {
   return { mode, stuck: stuck(), attempts, actual: readback() };
 }
 
+/** Text for a type step or call: `text`, else its `value` alias. Never silently empty. */
+export function typeStepText(step = {}) {
+  if (typeof step.text === "string") return step.text;
+  if (typeof step.value === "string") return step.value;
+  return "";
+}
+
 /**
  * Resolve a type target. Order: snapshot ref, CSS selector, label (the fill
  * scorer, so a short id no longer steals a longer label), then the focused
@@ -4144,7 +4151,7 @@ export function buildTypeExpression({ selector, label, ref, text }) {
       matchedBy,
       field: described,
       mode: written.mode,
-      via: written.attempts,
+      writePath: written.attempts,
       url: location.href,
       title: document.title,
     };

@@ -10,7 +10,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
 
-import { buildTypeExpression, typeIntoControl } from "../src/tool.js";
+import { normalizeSteps } from "../src/agent-contract.js";
+import { buildTypeExpression, typeIntoControl, typeStepText } from "../src/tool.js";
 
 class FakeEvent {
   constructor(type, init = {}) {
@@ -248,4 +249,11 @@ test("no focused field gives a clear next step instead of typing somewhere else"
   );
   assert.equal(out.success, false);
   assert.match(out.error, /No text field has focus/);
+});
+
+test("a type step written with value types that value, not an empty string", () => {
+  const [step] = normalizeSteps([{ op: "type", ref: "e3", value: "Jack" }]);
+  assert.equal(typeStepText(step), "Jack");
+  assert.equal(typeStepText({ text: "", value: "ignored" }), "", "explicit empty text wins");
+  assert.throws(() => normalizeSteps([{ op: "type", ref: "e3" }]), /type requires text/);
 });
