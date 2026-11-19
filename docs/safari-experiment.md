@@ -16,10 +16,10 @@ Enable the extension in Safari Settings and choose its website permissions. Run
 `~/.local/bin/browser-hand-safari doctor` to check the connection. When the
 extension is not connected, doctor asks the app for Safari's own on/off setting
 (`Browser Hand.app/Contents/MacOS/Browser Hand --extension-state`, which prints
-JSON and opens no window), so it reports `extension_disabled` when Safari says
-the extension is off. Safari can keep reporting "on" for a while after the
-extension is turned off, so doctor treats "on" as unconfirmed and asks you to
-check the setting. Add `~/.local/bin` to your shell's PATH if you
+JSON and opens no window), so it reports `extension_disabled` when the extension
+is turned off instead of guessing. When Safari says it is on but it is not
+connected, doctor points at the Active switch in the extension's toolbar popup,
+which is separate from Safari's checkbox. Add `~/.local/bin` to your shell's PATH if you
 want to type `browser-hand-safari` without the full path.
 
 If you installed an earlier experimental **Browser Hand Safari.app**, quit it

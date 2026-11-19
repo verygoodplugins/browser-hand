@@ -985,9 +985,9 @@ export function classifyDevBrowserDoctor({
     if (safariStandalone && safariExtension?.enabled === true) {
       return {
         status: "extension_disconnected",
-        // Safari 27 keeps reporting "on" after the user turns the extension off, until it
-        // saves the change (tested live), so "on" is not proof. Only "off" is definitive.
-        action: `Browser Hand has not connected. Safari lists it as on, but Safari can keep reporting the old setting after it is turned off. Ask the user to check that it is ticked in ${SAFARI_EXTENSION_SETTING} and allowed on every website, then open a web page in Safari or click the Browser Hand toolbar button to wake it, and rerun doctor.`,
+        // Safari's checkbox is on, so the extension's own Active switch (toolbar popup,
+        // kept across restarts) is off, or its background page is asleep.
+        action: "Browser Hand is turned on in Safari but is not connected to the relay. Ask the user to click the Browser Hand toolbar button and switch it to Active. If it already shows Active, open a web page in Safari to wake it, then rerun doctor.",
       };
     }
     return {
@@ -1176,7 +1176,7 @@ async function ensureRelayConnected(timeoutMs) {
     const enabled = safari ? readSafariExtensionState()?.enabled : null;
     const fix = safari
       ? enabled === true
-        ? `Safari lists Browser Hand as on, but it may have just been turned off. Check that it is ticked in ${SAFARI_EXTENSION_SETTING}, open a web page in Safari to wake it, then retry.`
+        ? "Browser Hand is turned on in Safari but is not connected to the relay. Click its toolbar button and switch it to Active (or open a web page in Safari to wake it), then retry."
         : `${enabled === false ? "Browser Hand is turned off in Safari. " : ""}Turn it on in ${SAFARI_EXTENSION_SETTING}, then retry.`
       : `Enable the Browser Hand extension in the browser you want to drive (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`;
     throw new Error(

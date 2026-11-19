@@ -130,10 +130,10 @@ test("Safari doctor uses Safari's reported toggle instead of guessing (#105)", (
 
   const on = classifyDevBrowserDoctor({ ...base, safariRunning: true, safariExtension: { enabled: true } });
   assert.equal(on.status, "extension_disconnected");
-  // "On" can be stale (Safari reports it after a fresh switch-off), so never claim it is on.
-  assert.match(on.action, /can keep reporting the old setting/);
-  assert.match(on.action, /ticked in Safari > Settings > Extensions > Browser Hand/);
-  assert.doesNotMatch(on.action, /is on in Safari/);
+  // The Safari checkbox is on, so point at the extension's own Active switch.
+  assert.match(on.action, /not connected to the relay/);
+  assert.match(on.action, /switch it to Active/);
+  assert.doesNotMatch(on.action, /most likely/);
   assert.equal(
     classifyDevBrowserDoctor({ ...base, safariRunning: false, safariExtension: { enabled: true } }).action.startsWith("Safari is not running"),
     true
