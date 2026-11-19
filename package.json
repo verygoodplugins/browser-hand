@@ -39,7 +39,6 @@
   "dependencies": {
     "playwright": "1.65.1",
     "playwright-core": "1.65.1",
-    "puppeteer-core": "^24.43.1",
     "quickjs-emscripten": "^0.32.0"
   },
   "keywords": [
@@ -70,6 +69,7 @@
     "extension"
   ],
   "devDependencies": {
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "puppeteer-core": "^25.17.0"
   }
 }
