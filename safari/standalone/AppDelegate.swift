@@ -3,7 +3,7 @@ import SafariServices
 
 private let extensionID = (Bundle.main.bundleIdentifier ?? "ai.autojack.browserhand.safari") + ".Extension"
 
-/// `Browser Hand --extension-state` prints Safari's real on/off state for the extension
+/// `Browser Hand --extension-state` prints Safari's on/off setting for the extension
 /// as one line of JSON and exits before any window opens. `browser-hand-safari doctor`
 /// runs it, because a relay with no extension cannot tell "Safari is closed" from
 /// "the extension is turned off". Any other launch starts the app normally.

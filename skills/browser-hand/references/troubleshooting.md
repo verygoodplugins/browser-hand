@@ -15,10 +15,12 @@
   empty), the action and `otherRelay` name it and the CLI to run
   (`browser-hand-safari`). Switch to that CLI; do not fall back to headless.
   With `browser-hand-safari`, doctor reads Safari's own setting through the
-  Browser Hand app (`safariExtension.enabled` in the result). An extension that
-  is on but not connected needs a page opened in Safari or a click on its toolbar
-  button. When Safari's setting can't be read, the action says whether Safari is
-  not running or the extension is most likely turned off.
+  Browser Hand app (`safariExtension.enabled` in the result). Only `false` is
+  definitive: Safari keeps reporting `true` for a while after the user turns the
+  extension off, so with `true` ask the user to check the setting, then open a
+  page in Safari or click its toolbar button. When Safari's setting can't be
+  read, the action says whether Safari is not running or the extension is most
+  likely turned off.
 - **`extension_disabled`** → Safari reports the Browser Hand extension turned
   off (`browser-hand-safari` only). Turning it on in Safari > Settings >
   Extensions > Browser Hand is the user's step: ask them, then rerun doctor.

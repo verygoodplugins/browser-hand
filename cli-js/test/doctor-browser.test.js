@@ -130,7 +130,10 @@ test("Safari doctor uses Safari's reported toggle instead of guessing (#105)", (
 
   const on = classifyDevBrowserDoctor({ ...base, safariRunning: true, safariExtension: { enabled: true } });
   assert.equal(on.status, "extension_disconnected");
-  assert.match(on.action, /on in Safari but has not connected/);
+  // "On" can be stale (Safari reports it after a fresh switch-off), so never claim it is on.
+  assert.match(on.action, /can keep reporting the old setting/);
+  assert.match(on.action, /ticked in Safari > Settings > Extensions > Browser Hand/);
+  assert.doesNotMatch(on.action, /is on in Safari/);
   assert.equal(
     classifyDevBrowserDoctor({ ...base, safariRunning: false, safariExtension: { enabled: true } }).action.startsWith("Safari is not running"),
     true
