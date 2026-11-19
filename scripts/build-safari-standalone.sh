@@ -26,7 +26,7 @@ BROWSER_HAND_EXTENSION_RELAY_PORT=19334 npm run safari:prepare -- "$WORK/project
 PROJECT_DIR="$WORK/project/Browser Hand"
 PROJECT="$PROJECT_DIR/Browser Hand.xcodeproj"
 HOST_DIR="$PROJECT_DIR/Browser Hand"
-cp safari/standalone/ViewController.swift "$HOST_DIR/ViewController.swift"
+cp safari/standalone/AppDelegate.swift safari/standalone/ViewController.swift "$HOST_DIR/"
 cp safari/standalone/Main.html "$HOST_DIR/Resources/Base.lproj/Main.html"
 cp safari/standalone/Script.js safari/standalone/Style.css "$HOST_DIR/Resources/"
 npx -y xcodebuildmcp@2.7.0 macos build --project-path "$PROJECT" --scheme 'Browser Hand' \
