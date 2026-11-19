@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { fakeBrowser } from "wxt/testing";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { fakeBrowser } from "wxt/testing/fake-browser";
 import { CDPRouter } from "../services/CDPRouter";
-import { TabManager } from "../services/TabManager";
+import { TabManager, cspBlockedAdvice } from "../services/TabManager";
 import type { Logger } from "../utils/logger";
 import type { ExtensionCommandMessage, TransportMode } from "../utils/types";
 
@@ -28,7 +28,9 @@ function installChrome(overrides: Record<string, unknown> = {}) {
       remove: vi.fn(),
     },
     scripting: { executeScript },
-    // No tabGroups / tabs.group: Search grants neither.
+    // No tabGroups / tabs.group: Search grants neither. wxt 0.21's fakeBrowser
+    // stubs userScripts with a throwing execute; model "not granted" instead.
+    userScripts: undefined,
     ...overrides,
   });
 }
@@ -128,6 +130,79 @@ describe("debugger-free transport", () => {
     await manager.ensureDebuggerAttached(7);
     expect(debuggerAttach).toHaveBeenCalledTimes(1);
     expect(manager.usesScriptingFallback(7)).toBe(false);
+  });
+
+  describe("pages that require Trusted Types", () => {
+    const refusal =
+      "Refused to evaluate a string as JavaScript because this document requires a 'Trusted Type' assignment.";
+    const realEval = globalThis.eval;
+    let createPolicy: ReturnType<typeof vi.fn>;
+
+    beforeEach(() => {
+      // eval refuses plain strings and accepts the policy's TrustedScript, as
+      // Safari 27 and Chrome do on a require-trusted-types-for 'script' page.
+      vi.stubGlobal("eval", (code: unknown) => {
+        if (typeof code === "string") throw new EvalError(refusal);
+        return realEval((code as { trusted: string }).trusted);
+      });
+      createPolicy = vi.fn((_name: string, rules: { createScript: (s: string) => string }) => ({
+        createScript: (source: string) => ({ trusted: rules.createScript(source) }),
+      }));
+      vi.stubGlobal("trustedTypes", { createPolicy });
+    });
+
+    afterEach(() => {
+      vi.stubGlobal("eval", realEval);
+      vi.stubGlobal("trustedTypes", undefined);
+    });
+
+    it("evaluates through a Trusted Types policy instead of failing", async () => {
+      const info = await registerTab();
+      const out = (await router.handleCommand(
+        command("Runtime.evaluate", { expression: "20 + 22" }, info.sessionId)
+      )) as { result: { value: number }; exceptionDetails?: unknown };
+      expect(out.exceptionDetails).toBeUndefined();
+      expect(out.result.value).toBe(42);
+      expect(createPolicy).toHaveBeenCalledTimes(1);
+      expect(createPolicy.mock.calls[0]?.[0]).toMatch(/^browser-hand-/);
+    });
+
+    it("does not re-run code that threw its own error", async () => {
+      vi.stubGlobal("eval", realEval);
+      const info = await registerTab();
+      const out = (await router.handleCommand(
+        command("Runtime.evaluate", { expression: "throw new EvalError('mine')" }, info.sessionId)
+      )) as { exceptionDetails: { text: string } };
+      expect(createPolicy).not.toHaveBeenCalled();
+      expect(out.exceptionDetails.text).toMatch(/mine/);
+    });
+
+    it("falls through to the CSP advice when the page limits policy names", async () => {
+      createPolicy.mockImplementation(() => {
+        throw new TypeError("Policy with name browser-hand-x is not allowed");
+      });
+      const info = await registerTab();
+      const out = (await router.handleCommand(
+        command("Runtime.evaluate", { expression: "1" }, info.sessionId)
+      )) as { exceptionDetails: { text: string } };
+      expect(out.exceptionDetails.text).toMatch(/Trusted Type/);
+      expect(out.exceptionDetails.text).toMatch(/screenshot/);
+    });
+  });
+
+  describe("CSP advice", () => {
+    it("tells Chromium builds to turn on Allow User Scripts", () => {
+      expect(cspBlockedAdvice(["scripting", "userScripts"])).toMatch(
+        /Turn on "Allow User Scripts" for Browser Hand/
+      );
+    });
+
+    it("never sends Safari users to a setting their build lacks", () => {
+      const advice = cspBlockedAdvice(["scripting", "tabs", "storage", "alarms"]);
+      expect(advice).not.toMatch(/Turn on "Allow User Scripts"/);
+      expect(advice).toMatch(/no user-scripts fallback/);
+      expect(advice).toMatch(/screenshot/);
+    });
   });
 
   describe("pages whose CSP forbids eval", () => {

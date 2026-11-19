@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { fakeBrowser } from "wxt/testing";
+import { fakeBrowser } from "wxt/testing/fake-browser";
 import { CDPRouter } from "../services/CDPRouter";
 import { TabManager } from "../services/TabManager";
 import type { Logger } from "../utils/logger";
