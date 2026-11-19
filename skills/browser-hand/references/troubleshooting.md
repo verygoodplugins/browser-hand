@@ -35,6 +35,7 @@ Two failure modes look identical but have different owners — probe first, then
 - `curl :9333` **refused** = no relay listening → the extension has nothing to connect to → start a persistent relay. This is yours to fix, don't ask the user.
 - `curl :9333` returns **`extensionConnected: false`** = relay is up but the extension is disabled/misconfigured in Chrome → that one needs the user.
 - An **asleep MV3 service worker** (recent `[relay] Extension disconnected` in the relay log) just needs one click on the extension icon; a **disabled extension** needs the user to enable it. Relay-side `goto`/`snapshot` traffic does NOT wake a sleeping worker — don't burn calls trying. Grep the relay log to tell them apart.
+- A relay log line `Rejected request from Origin "chrome-extension://…"` = the relay is up and the extension is enabled, but it was loaded from a different path than the relay's checkout, so its ID is not the pinned one → restart the relay from the checkout the extension was loaded from, or set `BROWSER_HAND_ALLOWED_ORIGINS` to that origin (the ID is on `chrome://extensions`).
 
 ---
 

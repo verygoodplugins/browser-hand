@@ -109,6 +109,21 @@ npm run smoke:live
 
 **Skip the skill** for plain public HTTP fetches, or for disposable headless browsers (upstream `dev-browser` CLI).
 
+## Relay access control
+
+The relay drives your logged-in browser, so it only answers the local CLI and the Browser Hand extension. Web pages you visit are refused, whatever they send:
+
+- **Origin.** A request with no `Origin` header (the CLI, Node clients) is allowed. Otherwise the origin must be a Browser Hand extension: this checkout's unpacked Chrome extension (its ID is derived from the path of `extension/dist/chrome-mv3`, the same way Chromium derives it), or Safari's. Anything else gets `403`, including other extensions.
+- **Host.** The `Host` header must be `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`, or the configured bind host with that port.
+- **Bind address.** The relay only listens on a literal loopback address (`127.0.0.0/8` or `::1`). A name such as `localhost` is refused; use `127.0.0.1`.
+
+| Variable | Effect |
+|---|---|
+| `BROWSER_HAND_ALLOWED_ORIGINS` | Comma- or space-separated origins that **replace** the default allow-list, e.g. `chrome-extension://<id>,safari-web-extension://<uuid>`. `scheme://*` allows any host of a non-web scheme. Invalid entries stop the relay from starting. |
+| `BROWSER_HAND_ALLOW_REMOTE_BIND=1` | Lets `HOST` be a non-loopback address. Anyone who can reach that address can then drive your browser; the `Host` check still limits requests to loopback names and the configured bind host. Off by default. |
+
+The pinned ID depends on where the extension was loaded from. If you loaded it from a different checkout or a copied directory, the relay logs `Rejected request from Origin …` and the extension stays disconnected. Restart the relay from the checkout you loaded, or set `BROWSER_HAND_ALLOWED_ORIGINS` to the ID shown on `chrome://extensions`. Safari uses a per-install origin, so the default accepts any `safari-web-extension://` origin; set the variable to pin yours.
+
 ## Layout
 
 | Path | Role |

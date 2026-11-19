@@ -14,6 +14,7 @@ import {
   LocalDocError,
   LocalDocRegistry,
 } from "./local-file.js";
+import { assertSafeBind, createOriginGuard, resolveAllowedOrigins } from "./origin-guard.js";
 
 /** Host browser reported by the extension on connect. */
 export interface HostBrowser {
@@ -28,6 +29,8 @@ export interface RelayOptions {
   localDocPort?: number;
   /** Idle lifetime of a local-document capability token (default 2h, sliding). */
   localDocTtlMs?: number;
+  /** Environment for BROWSER_HAND_ALLOWED_ORIGINS / BROWSER_HAND_ALLOW_REMOTE_BIND (default `process.env`). */
+  env?: NodeJS.ProcessEnv;
 }
 
 export interface RelayServer {
@@ -163,6 +166,9 @@ function urlHost(host: string): string {
 export async function serveRelay(options: RelayOptions = {}): Promise<RelayServer> {
   const port = options.port ?? 9222;
   const host = options.host ?? "127.0.0.1";
+  const env = options.env ?? process.env;
+  assertSafeBind(host, env);
+  const allowedOrigins = resolveAllowedOrigins(env);
   if (options.localDocPort !== undefined && options.localDocPort === port) {
     throw new Error("localDocPort must differ from the relay port (separate origins)");
   }
@@ -667,6 +673,11 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
     }
     await next();
   });
+
+  // Only the Browser Hand extension (by Origin) and non-browser clients (no
+  // Origin) may talk to the relay, and only under a loopback Host. @hono/node-ws
+  // runs app middleware before it upgrades, so this covers /cdp and /extension too.
+  app.use("*", createOriginGuard({ port, bindHost: host, allowedOrigins, onReject: (m) => log(m) }));
 
   app.get("/", (c) => {
     return c.json({
@@ -1312,6 +1323,7 @@ export async function serveRelay(options: RelayOptions = {}): Promise<RelayServe
   log(`  CDP endpoint: ${wsEndpoint}`);
   log(`  Extension endpoint: ws://${host}:${port}/extension`);
   log(`  Local documents: ${localDocOrigin} (capability URLs only)`);
+  log(`  Allowed origins: ${allowedOrigins.join(", ")} (and clients that send no Origin)`);
   log("Waiting for extension to connect...");
 
   return {
