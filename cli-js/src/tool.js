@@ -2009,6 +2009,7 @@ async function runCurrentOperation(input, timeoutMs) {
               buildTypeExpression({
                 selector: step.selector,
                 label: step.label,
+                ref: step.ref,
                 text: step.text || "",
               })
             );
@@ -2117,21 +2118,26 @@ async function runCurrentOperation(input, timeoutMs) {
     }
 
     if (operation === "type") {
+      const typed = await evalValue(
+        cdp,
+        sessionId,
+        buildTypeExpression({
+          selector: input.selector,
+          label: input.label,
+          ref: input.ref,
+          text: input.text || input.value || "",
+        })
+      );
+      // The page reads the field back; success means the text is in it.
+      const ok = Boolean(typed) && typed.success === true;
       return {
-        success: true,
+        success: ok,
         mode: "current",
         operation,
         target: compactTarget(selected),
         ...(targetPlan.source === "named_page" ? { pageName: targetPlan.pageName } : {}),
-        result: await evalValue(
-          cdp,
-          sessionId,
-          buildTypeExpression({
-            selector: input.selector,
-            label: input.label,
-            text: input.text || input.value || "",
-          })
-        ),
+        ...(ok ? {} : { error: typed?.error || "type did not report a result" }),
+        result: typed,
       };
     }
 
@@ -3874,6 +3880,19 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
       }
     }
 
+    // A real mousedown focuses a text field; a synthetic one does not. Without
+    // this, "click --ref e1" then "type" wrote into whichever field typed last.
+    if (!interrupted && el.isConnected !== false) {
+      const tag = String(el.tagName || '').toUpperCase();
+      const textEntry = el.isContentEditable === true
+        || tag === 'TEXTAREA'
+        || (tag === 'INPUT' && !/^(button|submit|reset|image|file|checkbox|radio|hidden|range|color)$/i.test(String(el.type || '')));
+      const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
+      if (textEntry && root.activeElement !== el && typeof el.focus === 'function') {
+        try { el.focus({ preventScroll: true }); } catch (err) { /* best effort */ }
+      }
+    }
+
     const stateAfter = readControlState(el);
     const changed = controlStateChanged(stateBefore, stateAfter);
     return {
@@ -3904,13 +3923,95 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
   })()`;
 }
 
-function buildTypeExpression({ selector, label, text }) {
+/**
+ * Type into one control, then read it back. Rich editors (Gmail compose,
+ * ProseMirror, Lexical) own their DOM and overwrite a raw textContent write, so
+ * contenteditable goes through execCommand('insertText'), the browser's own
+ * editing path, first. Text inputs keep the per-character insertText events
+ * that search-as-you-type widgets need, and fall back to execCommand when a
+ * framework ignored them. The readback, not the write, decides `stuck`.
+ */
+export async function typeIntoControl(el, text, { delayMs = 0 } = {}) {
+  const str = String(text ?? "");
+  const doc = (el && el.ownerDocument) || (typeof document !== "undefined" ? document : null);
+  const editable = fillControlIsEditable(el);
+  const mode = editable ? "contenteditable" : "text";
+  const attempts = [];
+  const readback = () => String((editable ? el.textContent : el.value) ?? "");
+  const fold = (raw) =>
+    String(raw ?? "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  const autocompletes = () => {
+    if (isComboboxWidget(el)) return true;
+    try {
+      const auto = typeof el.getAttribute === "function" ? el.getAttribute("aria-autocomplete") : null;
+      return auto === "inline" || auto === "both";
+    } catch {
+      return false;
+    }
+  };
+  // An inline-autocomplete field shows "New York" after "New" was typed.
+  const stuck = () =>
+    fillValueStuck(el, str, mode) ||
+    (str !== "" && autocompletes() && fold(readback()).startsWith(fold(str)));
+  const execInsert = () => {
+    if (!doc || typeof doc.execCommand !== "function") return false;
+    try {
+      if (typeof el.focus === "function") el.focus();
+      if (editable) {
+        const view = doc.defaultView || (typeof window !== "undefined" ? window : null);
+        const range = doc.createRange();
+        range.selectNodeContents(el);
+        const selection = view.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else if (typeof el.select === "function") {
+        el.select();
+      }
+      const ok = str
+        ? doc.execCommand("insertText", false, str)
+        : doc.execCommand("delete", false);
+      if (ok) attempts.push("execCommand");
+      return ok === true;
+    } catch {
+      return false;
+    }
+  };
+  const insertText = async () => {
+    await typeByInsertText(el, str, { delayMs });
+    attempts.push("insertText");
+  };
+  if (editable) {
+    execInsert();
+    if (!stuck()) await insertText();
+  } else {
+    await insertText();
+    if (!stuck() && !usesAtomicValueAssign(el)) execInsert();
+  }
+  return { mode, stuck: stuck(), attempts, actual: readback() };
+}
+
+/**
+ * Resolve a type target. Order: snapshot ref, CSS selector, label (the fill
+ * scorer, so a short id no longer steals a longer label), then the focused
+ * field, so `click --ref e4` followed by `type --text …` lands in that field.
+ */
+export function buildTypeExpression({ selector, label, ref, text }) {
   return `(async () => {
     ${FILL_HELPER_SOURCE}
+    ${FILL_MATCH_HELPER_SOURCE}
+    ${typeIntoControl.toString()}
+    ${snapshotPageHelpersSource()}
+    ${visibleIn.toString()}
+    ${frameTreeVisible.toString()}
+    ${embeddingVisible.toString()}
     const selector = ${JSON.stringify(selector || "")};
     const label = ${JSON.stringify(label || "")};
+    const typeRef = ${JSON.stringify(ref || "")};
     const text = ${JSON.stringify(text || "")};
-    const norm = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const optionKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const visible = el => {
       try {
         const style = window.getComputedStyle(el);
@@ -3944,51 +4045,112 @@ function buildTypeExpression({ selector, label, text }) {
       }
       return out;
     };
-    const labelsFor = (el, root) => {
-      const labels = [];
-      if (el.id && root && root.querySelectorAll) {
-        labels.push(...Array.from(root.querySelectorAll('label')).filter(labelEl => labelEl.htmlFor === el.id).map(labelEl => labelEl.innerText));
-      }
-      try {
-        const wrappingLabel = el.closest && el.closest('label');
-        if (wrappingLabel) labels.push(wrappingLabel.innerText);
-      } catch {}
-      labels.push(el.getAttribute('aria-label'), el.getAttribute('placeholder'), el.getAttribute('name'), el.id);
-      return labels.map(norm).filter(Boolean);
+    const NON_TEXT_INPUT = /^(button|submit|reset|image|file|checkbox|radio|hidden)$/;
+    const typeable = el => {
+      if (!el || typeof el.getAttribute !== 'function') return false;
+      if (fillControlIsEditable(el)) return true;
+      if (el.getAttribute('role') === 'textbox') return true;
+      const tag = String(el.tagName || '').toUpperCase();
+      if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      return tag === 'INPUT' && !NON_TEXT_INPUT.test(String(el.type || '').toLowerCase());
     };
-    let el = null;
-    if (selector) {
-      try { el = document.querySelector(selector); } catch {}
-      if (!el) {
-        for (const { el: candidate } of allControls()) {
-          // selector may not match shadow hosts; skip
+    // A snapshot ref or a label can point at a wrapper; type into its control.
+    const controlWithin = el => {
+      if (!el || typeable(el)) return el;
+      try { if (el.control && typeable(el.control)) return el.control; } catch {}
+      try { return el.querySelector && el.querySelector(CONTROL_SEL); } catch { return null; }
+    };
+    const focusedControl = () => {
+      let active = document.activeElement;
+      for (let depth = 0; active && depth < 8; depth += 1) {
+        if (active.shadowRoot && active.shadowRoot.activeElement) {
+          active = active.shadowRoot.activeElement;
+          continue;
         }
+        if (String(active.tagName || '').toUpperCase() === 'IFRAME') {
+          try {
+            const inner = active.contentDocument && active.contentDocument.activeElement;
+            if (inner && inner !== active.contentDocument.body) { active = inner; continue; }
+          } catch {}
+        }
+        break;
       }
-    }
-    if (!el && label) {
-      const wanted = norm(label);
-      const hit = allControls().find(({ el: item, root }) => {
-        const labels = labelsFor(item, root);
-        return labels.some(candidate => candidate === wanted || candidate.includes(wanted) || wanted.includes(candidate));
+      return typeable(active) ? active : null;
+    };
+    const fail = (error, extra) => ({ success: false, error, url: location.href, title: document.title, ...(extra || {}) });
+
+    let el = null;
+    let matchedBy = '';
+    if (typeRef) {
+      const entries = collectSnapshotEntries(document, {
+        scope: 'auto',
+        visible: (item) => visibleIn(item, embeddingVisible(item)),
       });
-      el = hit ? hit.el : null;
+      const resolved = resolveSnapshotClick(entries, { ref: typeRef });
+      if (!resolved.entry) return fail('No snapshot ref ' + typeRef + ' on this page. Take a fresh snapshot; refs change when the page does.');
+      el = controlWithin(resolved.entry.el);
+      if (!el) return fail('Snapshot ref ' + typeRef + ' is not a text field.');
+      matchedBy = 'ref';
+    } else if (selector) {
+      try { el = document.querySelector(selector); } catch {}
+      el = controlWithin(el);
+      if (!el) return fail('No input element matched selector ' + JSON.stringify(selector));
+      matchedBy = 'selector';
+    } else if (label) {
+      const controls = allControls();
+      const picked = pickFillCandidate(
+        controls.map(({ el: item, root }) => ({ labels: collectFillLabels(item, root) })),
+        label
+      );
+      el = picked ? controls[picked.index].el : null;
+      if (!el) return fail('No input element matched label ' + JSON.stringify(label));
+      matchedBy = 'label';
+    } else {
+      el = focusedControl();
+      if (!el) return fail('No text field has focus. Click the field first, or pass --ref, --label, or --selector.');
+      matchedBy = 'focused';
     }
-    if (!el) throw new Error('No input element matched');
+
     const str = String(text ?? '');
+    let fieldLabels = [];
+    try { fieldLabels = collectFillLabels(el, el.getRootNode ? el.getRootNode() : document); } catch {}
+    const described = {
+      tag: String(el.tagName || '').toLowerCase(),
+      ...(el.type ? { type: String(el.type) } : {}),
+      ...(fieldLabels[0] ? { label: fieldLabels[0] } : {}),
+    };
     try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-    if (el.tagName === 'SELECT') {
-      const wanted = norm(str);
-      const option = Array.from(el.options).find(item => norm(item.textContent) === wanted || norm(item.value) === wanted)
-        || Array.from(el.options).find(item => norm(item.textContent).includes(wanted) || norm(item.value).includes(wanted));
-      if (!option) throw new Error('No select option matched');
+    let written;
+    if (String(el.tagName || '').toUpperCase() === 'SELECT') {
+      const wanted = optionKey(str);
+      const option = Array.from(el.options).find(item => optionKey(item.textContent) === wanted || optionKey(item.value) === wanted)
+        || Array.from(el.options).find(item => optionKey(item.textContent).includes(wanted) || optionKey(item.value).includes(wanted));
+      if (!option) return fail('No select option matched ' + JSON.stringify(str), { matchedBy, field: described });
       el.value = option.value;
       el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      written = { mode: 'select', stuck: fillValueStuck(el, str, 'select'), attempts: ['select'], actual: String(el.value ?? '') };
     } else {
-      await typeByInsertText(el, str, { delayMs: insertTextDelayMs(el, str) });
+      written = await typeIntoControl(el, str, { delayMs: insertTextDelayMs(el, str) });
       el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
-    return { typed: label || selector, url: location.href, title: document.title };
+    const result = {
+      success: written.stuck === true,
+      typed: typeRef || selector || label || 'focused field',
+      matchedBy,
+      field: described,
+      mode: written.mode,
+      via: written.attempts,
+      url: location.href,
+      title: document.title,
+    };
+    if (!written.stuck) {
+      // Lengths only: the field may hold an earlier value the user typed.
+      result.error = 'Typed text did not stick: the field holds a different value after typing. The page may have rejected synthetic input or reformatted it; snapshot the field to see what it holds.';
+      result.expectedLength = str.length;
+      result.actualLength = written.actual.length;
+    }
+    return result;
   })()`;
 }
 
@@ -4242,7 +4404,7 @@ Resolved placeholder values are redacted from tool output.`,
       ref: {
         type: "string",
         description:
-          'Snapshot ref for click, such as "e4". Refs match the default snapshot (dialog, then main, no nav).',
+          'Snapshot ref for click or type, such as "e4". Refs match the default snapshot (dialog, then main, no nav).',
       },
       role: {
         type: "string",
@@ -4271,7 +4433,8 @@ Resolved placeholder values are redacted from tool output.`,
       },
       label: {
         type: "string",
-        description: "Human field label for type.",
+        description:
+          "Human field label for type. With no label, ref, or selector, type writes into the focused field. type reads the field back and fails when the text did not stick.",
       },
       text: {
         type: "string",
