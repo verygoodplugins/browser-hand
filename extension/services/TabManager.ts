@@ -23,9 +23,10 @@ const DEBUGGER_UNAVAILABLE_RE =
   /isn['’]?t available|debugger (api )?(is )?(unavailable|not available|not supported)|not implemented/i;
 
 /** Page CSP (or the isolated-world CSP) refused string evaluation. */
-const EVAL_BLOCKED_RE = /unsafe-eval|content security policy|trusted ?types?/i;
 
-type EvalOutcome = { ok: true; value?: unknown } | { ok: false; error?: string; name?: string };
+type EvalOutcome =
+  | { ok: true; value?: unknown }
+  | { ok: false; error?: string; name?: string; blocked?: boolean };
 
 /**
  * One next step for a page whose CSP refused evaluation even through a
@@ -627,19 +628,35 @@ export class TabManager {
       world: "MAIN",
       args: [expression],
       func: async (expr: string) => {
+        type Policy = { createScript: (source: string) => unknown };
+        // True when the page refuses `source` before running it. A constant
+        // probe can't throw on its own, so a throw here is the page's CSP or
+        // Trusted Types, never the caller's code.
+        const refuses = (source: unknown) => {
+          try {
+            // eslint-disable-next-line no-eval
+            (0, eval)(source as string);
+            return false;
+          } catch {
+            return true;
+          }
+        };
+        const describe = (e: unknown) => {
+          const err = e as { name?: string; message?: string };
+          return { error: err?.message ? String(err.message) : String(e), name: err?.name };
+        };
         try {
           let value: unknown;
           try {
             // eslint-disable-next-line no-eval
             value = (0, eval)(expr);
-          } catch (blocked) {
+          } catch (first) {
+            // Retry only when string eval itself is refused page-wide; then the
+            // expression never ran. An error the expression threw (even one that
+            // mentions Trusted Types) is rethrown, so nothing runs twice.
+            if (!refuses("0")) throw first;
             // Trusted Types (Gmail): eval refuses a plain string but accepts a
-            // TrustedScript. Only retry on that refusal; the browser rejects the
-            // string before running it, so nothing runs twice. A page that limits
-            // policy names or forbids eval outright still fails here, and the
-            // caller falls back to userScripts.
-            const message = String((blocked as { message?: unknown })?.message ?? "");
-            type Policy = { createScript: (source: string) => unknown };
+            // TrustedScript from a policy.
             const tt = (
               globalThis as {
                 trustedTypes?: {
@@ -650,15 +667,20 @@ export class TabManager {
                 };
               }
             ).trustedTypes;
-            if (!tt || !/trusted.?(type|script)/i.test(message)) throw blocked;
-            let policy: Policy;
+            let policy: Policy | null = null;
             try {
               // Unique name: a `trusted-types *` page may forbid duplicates.
-              policy = tt.createPolicy(`browser-hand-${Math.random().toString(36).slice(2)}`, {
-                createScript: (source) => source,
-              });
+              policy =
+                tt?.createPolicy(`browser-hand-${Math.random().toString(36).slice(2)}`, {
+                  createScript: (source) => source,
+                }) ?? null;
             } catch {
-              throw blocked;
+              policy = null; // the page limits policy names
+            }
+            if (!policy || refuses(policy.createScript("0"))) {
+              // Still refused (no policy, or no 'unsafe-eval'): the caller
+              // falls back to userScripts or explains the next step.
+              return { ok: false as const, blocked: true as const, ...describe(first) };
             }
             // eslint-disable-next-line no-eval
             value = (0, eval)(policy.createScript(expr) as string);
@@ -677,20 +699,14 @@ export class TabManager {
           }
           return { ok: true as const, value: safe };
         } catch (e) {
-          const err = e as { name?: string; message?: string };
-          return {
-            ok: false as const,
-            error: err?.message ? String(err.message) : String(e),
-            name: err?.name,
-          };
+          return { ok: false as const, ...describe(e) };
         }
       },
     });
     let result = first?.result as EvalOutcome | undefined;
-    if (
-      result?.ok === false &&
-      (result.name === "EvalError" || EVAL_BLOCKED_RE.test(result.error ?? ""))
-    ) {
+    // Only a confirmed page-wide refusal falls back; an error the expression
+    // threw must not be run a second time through userScripts.
+    if (result?.ok === false && result.blocked === true) {
       this.logger.debug("Page CSP blocked eval; injecting as script text", tabId);
       result = await this.evaluateViaUserScripts(tabId, expression, result.error);
     }

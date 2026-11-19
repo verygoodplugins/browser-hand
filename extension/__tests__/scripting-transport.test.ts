@@ -177,6 +177,43 @@ describe("debugger-free transport", () => {
       expect(out.exceptionDetails.text).toMatch(/mine/);
     });
 
+    it("runs an expression once when it throws an error that mentions Trusted Types", async () => {
+      // Plain eval is allowed here; the Trusted Types API merely exists.
+      vi.stubGlobal("eval", realEval);
+      const execute = vi.fn();
+      installChrome({ userScripts: { execute } });
+      const g = globalThis as { bhRuns?: number };
+      g.bhRuns = 0;
+      const info = await registerTab();
+      const out = (await router.handleCommand(
+        command(
+          "Runtime.evaluate",
+          {
+            expression:
+              "(() => { globalThis.bhRuns++; throw new Error('TrustedScript rejected by application'); })()",
+          },
+          info.sessionId
+        )
+      )) as { exceptionDetails: { text: string } };
+      expect(g.bhRuns).toBe(1);
+      expect(createPolicy).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      expect(out.exceptionDetails.text).toMatch(/rejected by application/);
+      delete g.bhRuns;
+    });
+
+    it("falls back when a policy exists but the page also forbids eval", async () => {
+      vi.stubGlobal("eval", () => {
+        throw new EvalError("Refused to evaluate a string as JavaScript because 'unsafe-eval' is not allowed");
+      });
+      const info = await registerTab();
+      const out = (await router.handleCommand(
+        command("Runtime.evaluate", { expression: "1" }, info.sessionId)
+      )) as { exceptionDetails: { text: string } };
+      expect(createPolicy).toHaveBeenCalledTimes(1);
+      expect(out.exceptionDetails.text).toMatch(/screenshot/);
+    });
+
     it("falls through to the CSP advice when the page limits policy names", async () => {
       createPolicy.mockImplementation(() => {
         throw new TypeError("Policy with name browser-hand-x is not allowed");
@@ -207,7 +244,14 @@ describe("debugger-free transport", () => {
 
   describe("pages whose CSP forbids eval", () => {
     const blocked = [
-      { result: { ok: false, name: "EvalError", error: "Refused: 'unsafe-eval' is not allowed" } },
+      {
+        result: {
+          ok: false,
+          blocked: true,
+          name: "EvalError",
+          error: "Refused: 'unsafe-eval' is not allowed",
+        },
+      },
     ];
 
     it("injects the expression as script text through chrome.userScripts", async () => {
