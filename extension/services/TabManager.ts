@@ -23,9 +23,30 @@ const DEBUGGER_UNAVAILABLE_RE =
   /isn['’]?t available|debugger (api )?(is )?(unavailable|not available|not supported)|not implemented/i;
 
 /** Page CSP (or the isolated-world CSP) refused string evaluation. */
-const EVAL_BLOCKED_RE = /unsafe-eval|content security policy|trusted ?types?/i;
 
-type EvalOutcome = { ok: true; value?: unknown } | { ok: false; error?: string; name?: string };
+type EvalOutcome =
+  | { ok: true; value?: unknown }
+  | { ok: false; error?: string; name?: string; blocked?: boolean };
+
+/**
+ * One next step for a page whose CSP refused evaluation even through a
+ * Trusted Types policy. Builds without the userScripts permission (Safari) have
+ * no setting to flip, so they must not be told to "Allow User Scripts".
+ */
+export function cspBlockedAdvice(
+  permissions: string[] | undefined = (() => {
+    try {
+      return chrome.runtime?.getManifest?.()?.permissions as string[] | undefined;
+    } catch {
+      return undefined;
+    }
+  })()
+): string {
+  if (permissions?.includes("userScripts")) {
+    return 'this page\'s CSP blocks string evaluation. Turn on "Allow User Scripts" for Browser Hand (open the browser\'s extensions page, then Browser Hand → Details), then retry. Until then, use screenshot to read the page.';
+  }
+  return "this page's CSP blocks string evaluation, and this browser has no user-scripts fallback for Browser Hand. Use screenshot to read the page, or open it in a Chromium browser with Browser Hand and Allow User Scripts turned on.";
+}
 
 function stripHash(url: string | undefined): string {
   return (url ?? "").split("#")[0];
@@ -607,9 +628,63 @@ export class TabManager {
       world: "MAIN",
       args: [expression],
       func: async (expr: string) => {
+        type Policy = { createScript: (source: string) => unknown };
+        // True when the page refuses `source` before running it. A constant
+        // probe can't throw on its own, so a throw here is the page's CSP or
+        // Trusted Types, never the caller's code.
+        const refuses = (source: unknown) => {
+          try {
+            // eslint-disable-next-line no-eval
+            (0, eval)(source as string);
+            return false;
+          } catch {
+            return true;
+          }
+        };
+        const describe = (e: unknown) => {
+          const err = e as { name?: string; message?: string };
+          return { error: err?.message ? String(err.message) : String(e), name: err?.name };
+        };
         try {
-          // eslint-disable-next-line no-eval
-          let value: unknown = (0, eval)(expr);
+          let value: unknown;
+          try {
+            // eslint-disable-next-line no-eval
+            value = (0, eval)(expr);
+          } catch (first) {
+            // Retry only when string eval itself is refused page-wide; then the
+            // expression never ran. An error the expression threw (even one that
+            // mentions Trusted Types) is rethrown, so nothing runs twice.
+            if (!refuses("0")) throw first;
+            // Trusted Types (Gmail): eval refuses a plain string but accepts a
+            // TrustedScript from a policy.
+            const tt = (
+              globalThis as {
+                trustedTypes?: {
+                  createPolicy: (
+                    name: string,
+                    rules: { createScript: (source: string) => string }
+                  ) => Policy;
+                };
+              }
+            ).trustedTypes;
+            let policy: Policy | null = null;
+            try {
+              // Unique name: a `trusted-types *` page may forbid duplicates.
+              policy =
+                tt?.createPolicy(`browser-hand-${Math.random().toString(36).slice(2)}`, {
+                  createScript: (source) => source,
+                }) ?? null;
+            } catch {
+              policy = null; // the page limits policy names
+            }
+            if (!policy || refuses(policy.createScript("0"))) {
+              // Still refused (no policy, or no 'unsafe-eval'): the caller
+              // falls back to userScripts or explains the next step.
+              return { ok: false as const, blocked: true as const, ...describe(first) };
+            }
+            // eslint-disable-next-line no-eval
+            value = (0, eval)(policy.createScript(expr) as string);
+          }
           if (value != null && typeof (value as { then?: unknown }).then === "function") {
             value = await value;
           }
@@ -624,20 +699,14 @@ export class TabManager {
           }
           return { ok: true as const, value: safe };
         } catch (e) {
-          const err = e as { name?: string; message?: string };
-          return {
-            ok: false as const,
-            error: err?.message ? String(err.message) : String(e),
-            name: err?.name,
-          };
+          return { ok: false as const, ...describe(e) };
         }
       },
     });
     let result = first?.result as EvalOutcome | undefined;
-    if (
-      result?.ok === false &&
-      (result.name === "EvalError" || EVAL_BLOCKED_RE.test(result.error ?? ""))
-    ) {
+    // Only a confirmed page-wide refusal falls back; an error the expression
+    // threw must not be run a second time through userScripts.
+    if (result?.ok === false && result.blocked === true) {
       this.logger.debug("Page CSP blocked eval; injecting as script text", tabId);
       result = await this.evaluateViaUserScripts(tabId, expression, result.error);
     }
@@ -670,10 +739,7 @@ export class TabManager {
       api = undefined;
     }
     if (typeof api?.execute !== "function") {
-      return {
-        ok: false,
-        error: `${blockedError} — this page's CSP blocks string evaluation. If your browser supports "Allow User Scripts", enable it for Browser Hand; otherwise use the debugger transport if available.`,
-      };
+      return { ok: false, error: `${blockedError} — ${cspBlockedAdvice()}` };
     }
     // A newline after the expression keeps a trailing // comment from eating the wrapper.
     // Try a synchronous wrapper first: some Chromium forks (e.g. the macOS Search
