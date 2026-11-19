@@ -17,6 +17,7 @@ import {
   describeVia,
   isDebuggerUnavailableError,
   otherRelayHint,
+  readSafariExtensionState,
   rewriteLocalFileUrl,
 } from "../src/tool.js";
 
@@ -112,6 +113,69 @@ test("Safari doctor tells a stopped Safari apart from a turned-off extension", (
   });
   assert.match(off.action, /most likely turned off/);
   assert.match(off.action, /Safari > Settings > Extensions > Browser Hand/);
+});
+
+test("Safari doctor uses Safari's reported toggle instead of guessing (#105)", () => {
+  const base = { safariStandalone: true, relayInfo: { extensionConnected: false } };
+  const off = classifyDevBrowserDoctor({ ...base, safariRunning: true, safariExtension: { enabled: false } });
+  assert.equal(off.status, "extension_disabled");
+  assert.match(off.action, /turned off in Safari/);
+  assert.match(off.action, /Safari > Settings > Extensions > Browser Hand/);
+  assert.doesNotMatch(off.action, /most likely/);
+
+  // Opening Safari would not help while the extension is off, so that comes first.
+  const offAndClosed = classifyDevBrowserDoctor({ ...base, safariRunning: false, safariExtension: { enabled: false } });
+  assert.equal(offAndClosed.status, "extension_disabled");
+  assert.match(offAndClosed.action, /then open Safari/);
+
+  const on = classifyDevBrowserDoctor({ ...base, safariRunning: true, safariExtension: { enabled: true } });
+  assert.equal(on.status, "extension_disconnected");
+  assert.match(on.action, /on in Safari but has not connected/);
+  assert.equal(
+    classifyDevBrowserDoctor({ ...base, safariRunning: false, safariExtension: { enabled: true } }).action.startsWith("Safari is not running"),
+    true
+  );
+
+  const unknown = classifyDevBrowserDoctor({ ...base, safariRunning: true, safariExtension: { enabled: null, error: "x" } });
+  assert.match(unknown.action, /most likely turned off/);
+
+  const chromium = classifyDevBrowserDoctor({ relayInfo: { extensionConnected: false }, safariStandalone: false, safariExtension: { enabled: false } });
+  assert.equal(chromium.status, "extension_disconnected");
+});
+
+test("readSafariExtensionState asks the app only when the Safari wrapper names it", () => {
+  const calls = [];
+  const fake = (stdout, extra = {}) => (bin, args, opts) => {
+    calls.push({ bin, args, opts });
+    return { stdout, status: 0, ...extra };
+  };
+  const env = { BROWSER_HAND_SAFARI_APP_BIN: process.execPath };
+
+  assert.equal(readSafariExtensionState({ env: {}, platform: "darwin", run: fake("{}") }), null);
+  assert.equal(readSafariExtensionState({ env, platform: "linux", run: fake("{}") }), null);
+  assert.equal(calls.length, 0, "an app is never launched unless the wrapper set the variable");
+
+  assert.deepEqual(readSafariExtensionState({ env, platform: "darwin", run: fake('{"enabled":true,"extension":"x"}\n') }), { enabled: true });
+  assert.deepEqual(readSafariExtensionState({ env, platform: "darwin", run: fake('{"enabled":false}') }), { enabled: false });
+  assert.deepEqual(calls.at(-1).args, ["--extension-state"]);
+  assert.ok(calls.at(-1).opts.timeout > 0, "a hung app cannot hang doctor");
+
+  assert.deepEqual(
+    readSafariExtensionState({ env, platform: "darwin", run: fake('{"error":"SFErrorDomain error 1"}', { status: 1 }) }),
+    { enabled: null, error: "SFErrorDomain error 1" }
+  );
+  assert.match(
+    readSafariExtensionState({ env, platform: "darwin", run: fake("not json", { status: 3 }) }).error,
+    /status 3/
+  );
+  assert.match(
+    readSafariExtensionState({ env, platform: "darwin", run: fake("", { status: null, error: new Error("spawnSync ETIMEDOUT") }) }).error,
+    /ETIMEDOUT/
+  );
+  assert.match(
+    readSafariExtensionState({ env: { BROWSER_HAND_SAFARI_APP_BIN: "/nonexistent/Browser Hand" }, platform: "darwin", run: fake("{}") }).error,
+    /not found/
+  );
 });
 
 test("an empty default relay points at the relay that has a browser", () => {

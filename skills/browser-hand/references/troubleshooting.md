@@ -14,9 +14,14 @@
   well-known relay has a browser (for example Safari on 19334 while 9333 is
   empty), the action and `otherRelay` name it and the CLI to run
   (`browser-hand-safari`). Switch to that CLI; do not fall back to headless.
-  With `browser-hand-safari`, the action says whether Safari is not running or
-  the extension is most likely turned off (Safari > Settings > Extensions >
-  Browser Hand). Turning it on is the user's step: ask them.
+  With `browser-hand-safari`, doctor reads Safari's own setting through the
+  Browser Hand app (`safariExtension.enabled` in the result). An extension that
+  is on but not connected needs a page opened in Safari or a click on its toolbar
+  button. When Safari's setting can't be read, the action says whether Safari is
+  not running or the extension is most likely turned off.
+- **`extension_disabled`** → Safari reports the Browser Hand extension turned
+  off (`browser-hand-safari` only). Turning it on in Safari > Settings >
+  Extensions > Browser Hand is the user's step: ask them, then rerun doctor.
 - **`target_registry_empty`** → the socket is alive but tab inventory is not
   reaching the relay. Reload the extension in `chrome://extensions`, confirm
   same-profile permissions, then rerun doctor.

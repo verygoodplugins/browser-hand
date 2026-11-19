@@ -575,6 +575,47 @@ function safariIsRunning() {
   }
 }
 
+/**
+ * Safari's own on/off state for the Browser Hand extension (#105), so doctor does not
+ * have to guess it from "relay up, no extension". The Browser Hand app answers
+ * `--extension-state` with one JSON line and exits without opening a window.
+ *
+ * Only the browser-hand-safari wrapper sets BROWSER_HAND_SAFARI_APP_BIN, and it ships
+ * in the same app bundle as the binary it names. An app that predates the flag would
+ * open its window instead, so it is never asked.
+ *
+ * Returns null when there is no app to ask, `{ enabled }` when Safari answered, and
+ * `{ enabled: null, error }` when it did not.
+ */
+export function readSafariExtensionState({
+  env = process.env,
+  platform = process.platform,
+  run = spawnSync,
+} = {}) {
+  const bin = env.BROWSER_HAND_SAFARI_APP_BIN;
+  if (platform !== "darwin" || !bin) return null;
+  if (!existsSync(bin)) return { enabled: null, error: `Browser Hand app not found at ${bin}` };
+  let out;
+  try {
+    out = run(bin, ["--extension-state"], { encoding: "utf8", timeout: 8000 });
+  } catch (err) {
+    return { enabled: null, error: err.message };
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(String(out?.stdout || "").trim().split("\n").pop() || "null");
+  } catch {
+    // Reported below with the exit status.
+  }
+  if (typeof parsed?.enabled === "boolean") return { enabled: parsed.enabled };
+  return {
+    enabled: null,
+    error: parsed?.error || out?.error?.message || `Browser Hand app exited with status ${out?.status}`,
+  };
+}
+
+const SAFARI_EXTENSION_SETTING = "Safari > Settings > Extensions > Browser Hand";
+
 function relayPageEndpoint(name) {
   return `${CURRENT_RELAY_URL}/pages${name ? `/${encodeURIComponent(name)}` : ""}`;
 }
@@ -907,6 +948,7 @@ export function classifyDevBrowserDoctor({
   debuggerState = null,
   safariStandalone = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1",
   safariRunning = null,
+  safariExtension = null,
   otherRelay = null,
 } = {}) {
   if (!relayInfo) {
@@ -918,6 +960,13 @@ export function classifyDevBrowserDoctor({
     };
   }
   if (relayInfo.extensionConnected !== true) {
+    // Safari reported its own toggle (readSafariExtensionState): no guessing needed.
+    if (safariStandalone && safariExtension?.enabled === false) {
+      return {
+        status: "extension_disabled",
+        action: `Browser Hand is turned off in Safari. Ask the user to turn it on in ${SAFARI_EXTENSION_SETTING} (tick the box) and allow it on every website${safariRunning === false ? ", then open Safari" : ""}.`,
+      };
+    }
     if (safariStandalone && safariRunning === false) {
       return {
         status: "extension_disconnected",
@@ -933,10 +982,16 @@ export function classifyDevBrowserDoctor({
             : "Click the Browser Hand Chrome toolbar icon once to wake the MV3 service worker, then rerun doctor.",
       };
     }
+    if (safariStandalone && safariExtension?.enabled === true) {
+      return {
+        status: "extension_disconnected",
+        action: `Browser Hand is on in Safari but has not connected. Open a web page in Safari or click the Browser Hand toolbar button to wake it, then rerun doctor. If it stays disconnected, check that ${SAFARI_EXTENSION_SETTING} allows it on every website.`,
+      };
+    }
     return {
       status: "extension_disconnected",
       action: safariStandalone
-        ? "Safari is running but Browser Hand is not connected, so the extension is most likely turned off. Turn it on in Safari > Settings > Extensions > Browser Hand (tick the box), then allow it on every website. The Browser Hand app also shows whether it is on."
+        ? `Safari is running but Browser Hand is not connected, so the extension is most likely turned off. Turn it on in ${SAFARI_EXTENSION_SETTING} (tick the box), then allow it on every website. The Browser Hand app also shows whether it is on.`
         : `Enable the Browser Hand extension (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.${otherRelayHint(otherRelay)}`,
     };
   }
@@ -1115,10 +1170,13 @@ async function ensureRelayConnected(timeoutMs) {
 
   if (info?.wsEndpoint && info.extensionConnected !== true) {
     const other = await probeOtherRelay();
-    const fix =
-      process.env.BROWSER_HAND_SAFARI_STANDALONE === "1"
-        ? "Turn it on in Safari > Settings > Extensions > Browser Hand, then retry."
-        : `Enable the Browser Hand extension in the browser you want to drive (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`;
+    const safari = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1";
+    const enabled = safari ? readSafariExtensionState()?.enabled : null;
+    const fix = safari
+      ? enabled === true
+        ? "Browser Hand is on in Safari but has not connected. Open a web page in Safari or click the Browser Hand toolbar button, then retry."
+        : `${enabled === false ? "Browser Hand is turned off in Safari. " : ""}Turn it on in ${SAFARI_EXTENSION_SETTING}, then retry.`
+      : `Enable the Browser Hand extension in the browser you want to drive (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`;
     throw new Error(
       `Browser Hand relay is running at ${CURRENT_RELAY_URL}, but no browser extension is connected to it. ${fix}${otherRelayHint(other)}`
     );
@@ -1651,6 +1709,8 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
   const safariStandalone = process.env.BROWSER_HAND_SAFARI_STANDALONE === "1";
   const otherRelay = disconnected ? await probeOtherRelay() : null;
   if (otherRelay) result.otherRelay = otherRelay;
+  const safariExtension = disconnected && safariStandalone ? readSafariExtensionState() : null;
+  if (safariExtension) result.safariExtension = safariExtension;
   const classification = classifyDevBrowserDoctor({
     relayInfo,
     recentExtensionDisconnected,
@@ -1659,6 +1719,7 @@ async function runCurrentDoctor(timeoutMs, input = {}) {
     debuggerState: result.debugger,
     safariStandalone,
     safariRunning: disconnected && safariStandalone ? safariIsRunning() : null,
+    safariExtension,
     otherRelay,
   });
   result.status = classification.status;

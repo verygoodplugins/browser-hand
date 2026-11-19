@@ -13,9 +13,12 @@ universal Node runtime; recipients do not need Xcode, Node, or an Apple
 Developer account. It requires macOS 13.5 or later. Open the disk image and drag
 **Browser Hand** to Applications. Open the app and click **Set up Browser Hand**.
 Enable the extension in Safari Settings and choose its website permissions. Run
-`~/.local/bin/browser-hand-safari doctor` to check the connection. Add
-`~/.local/bin` to your shell's PATH if you want to type `browser-hand-safari`
-without the full path.
+`~/.local/bin/browser-hand-safari doctor` to check the connection. When the
+extension is not connected, doctor asks the app for Safari's own on/off setting
+(`Browser Hand.app/Contents/MacOS/Browser Hand --extension-state`, which prints
+JSON and opens no window), so it reports `extension_disabled` when the extension
+is turned off instead of guessing. Add `~/.local/bin` to your shell's PATH if you
+want to type `browser-hand-safari` without the full path.
 
 If you installed an earlier experimental **Browser Hand Safari.app**, quit it
 and remove that old app from Applications before using the renamed app. Having

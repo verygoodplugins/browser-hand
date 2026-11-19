@@ -6,4 +6,6 @@ resources="$(cd "$(dirname "$source_path")/.." && pwd -P)"
 export DEV_BROWSER_RELAY_PORT="${DEV_BROWSER_RELAY_PORT:-19334}"
 export BROWSER_HAND_SAFARI_STANDALONE=1
 export BROWSER_HAND_RELAY_BIN="$resources/bin/browser-hand-safari-relay"
+# The app binary answers --extension-state for doctor (same bundle, same version).
+export BROWSER_HAND_SAFARI_APP_BIN="$(dirname "$resources")/MacOS/Browser Hand"
 exec "$resources/runtime/node" "$resources/cli/cli.js" "$@"
