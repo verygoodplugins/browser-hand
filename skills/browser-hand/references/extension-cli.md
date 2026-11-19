@@ -62,7 +62,9 @@ browser-hand click --page-name smoke --role button --name "Submit" --quiet
 browser-hand click --page-name smoke --ref e12 --quiet
 browser-hand click --page-name smoke --text "Submit" --quiet
 browser-hand click --page-name smoke --selector 'button[type=submit]' --quiet
+browser-hand type --page-name smoke --ref e7 --text "Hello"
 browser-hand type --page-name smoke --label "Bio" --text "Hello"
+browser-hand type --page-name smoke --text "Hello"   # into the focused field, e.g. after click --ref
 browser-hand evaluate --page-name smoke --code 'document.title' --quiet
 browser-hand screenshot --page-name smoke
 browser-hand goto --page-name smoke --url https://example.com/next
@@ -72,10 +74,11 @@ browser-hand goto --page-name smoke --url https://example.com/next
 - Keys match the visible label, aria-label, placeholder, name, or id. An exact label beats a substring of the name attribute.
 - The process exits 1 when any key is unmatched or the value does not stick. Read `result.filled` and `result.failed`. `success: true` means every requested field was written.
 - Click by `--ref` (from the default snapshot) or `--role` plus `--name` (exact accessible name). `--text` still works and is ambiguous when the same string is a value and a label (`A`, `CNAME`).
-- Click uses a full pointer sequence (not bare `el.click()`). It does not focus the tab or the window.
+- Click uses a full pointer sequence (not bare `el.click()`). It does not focus the tab or the window. Clicking a text field focuses that field in the page, so `click --ref e7` then `type --text …` writes into it.
+- `type` targets `--ref` (from the default snapshot), `--selector`, `--label`, or, with none of them, the field that has focus. It reads the field back and exits 1 with `error: "Typed text did not stick…"`, `expectedLength`, and `actualLength` when the text is not there. It never echoes the field's contents. `result.writePath` lists the write paths tried (`insertText`, then `execCommand` when a page ignored synthetic input; contenteditable tries `execCommand` first).
 - The click result includes `state` (`ariaChecked`, `checked`, `value`, `ariaPressed`, `ariaExpanded` when the control has them) and `stateChanged` for toggles and fields. `success: true` means the events were dispatched. `documentHidden: true`, or `stateChanged: false` on a switch, means the click may not have landed.
 - `--quiet` drops `mode`, `target`, and the extra url/title copy. Use it on every repeated call.
-- Type/fill on contenteditable fire `beforeinput` + `input` for editors like Lexical.
+- Fill on contenteditable fires `beforeinput` + `input` for editors like Lexical; `type` uses the browser's own editing path first, which rich editors (Gmail compose, ProseMirror) keep.
 - Screenshots land under `~/.browser-hand/screenshots/` (override with `BROWSER_HAND_SCREENSHOT_DIR`).
 
 ## Steps

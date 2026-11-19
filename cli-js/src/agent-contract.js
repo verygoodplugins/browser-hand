@@ -576,8 +576,9 @@ export function normalizeSteps(raw) {
     if (op === "evaluate" && typeof step.code !== "string") {
       throw new Error(`steps[${index}] evaluate requires code`);
     }
-    if (op === "type" && !step.selector && !step.label) {
-      throw new Error(`steps[${index}] type requires selector or label`);
+    // A type step with no target writes into the focused field (after a click step).
+    if (op === "type" && typeof step.text !== "string" && typeof step.value !== "string") {
+      throw new Error(`steps[${index}] type requires text`);
     }
     return { ...step, op };
   });

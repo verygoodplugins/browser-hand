@@ -102,7 +102,7 @@ browser-hand click --page-name work --role button --name "Submit" --quiet
 browser-hand click --page-name work --ref e12 --quiet
 browser-hand fill --page-name work --fields '{"Email":"a@b.c"}' --quiet
 browser-hand steps --page-name work --quiet --steps '[{"op":"click","role":"combobox","name":"Type"},{"op":"fill","fields":{"Name":"www"}}]'
-browser-hand type --page-name work --label "Bio" --text "Hello"
+browser-hand type --page-name work --ref e7 --text "Hello"
 browser-hand evaluate --page-name work --code 'document.title' --quiet
 browser-hand screenshot --page-name work
 browser-hand close --page-name work
@@ -134,6 +134,7 @@ Full reference: `references/extension-cli.md`.
 - Chrome shows "Browser Hand started debugging this browser" when `chrome.debugger.attach` runs. Cancel or X is detach reason `canceled_by_user`. Browser Hand keeps that tab in the session and does not reattach. Later commands on the tab use the scripting transport, so the bar stays dismissed until the extension is reloaded or toggled off and on. Do not focus the window to fight the bar.
 - Fill from `snapshot.nodes` or `snapshot.forms` (label, type, name). A visible label is the right key (`"Name"`), not the input's name attribute.
 - After `fill`, read `result.failed`. `success: true` means every key was written.
+- `type` reads the field back. `success: false` with "did not stick" means the text is not in the field; snapshot it before retrying, and do not report it as typed. Target with `--ref`, or click the field and run `type --text …` with no target.
 - On username/password manager weirdness, soft recovery is built in — retry evaluate/fill; re-open the named page if screenshot still fails.
 
 ## Optional headless

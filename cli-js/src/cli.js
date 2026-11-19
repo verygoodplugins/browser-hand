@@ -61,7 +61,9 @@ Operations:
   click (--ref <eN> | --role <r> --name <n> | --text <s> | --selector <css>)
                                         Click by snapshot ref, role+name, visible text, or CSS.
   steps --steps <json>                  Run click/fill/type/evaluate/snapshot in one call (max 20).
-  type --label <s> --text <s>           Type into an input matched by label.
+  type [--ref <eN> | --label <s> | --selector <css>] --text <s>
+                                        Type into a field, then read it back (fails if it did not stick).
+                                        With no target, types into the focused field.
   evaluate --code <js>                  Evaluate JavaScript in the active tab.
   goto --url <url>                      Navigate the active tab.
   open --url <url> [--page-name <name>] [--group-title <text>]
@@ -98,7 +100,7 @@ Global flags:
   --quiet                   Suppress stderr progress; compact stdout (no mode/target/url/title wrappers). Use it on snapshot, click, fill, evaluate, and steps.
   --verbose                 Doctor only: include every tab. Prefer \`browser-hand tabs\` for inventory.
   --scope auto|full|nav     Snapshot scope. Default auto is the open dialog plus main, without nav.
-  --ref <eN>                Click the snapshot ref from the default (auto) snapshot.
+  --ref <eN>                Click or type into the snapshot ref from the default (auto) snapshot.
   --role <role>             Click by ARIA role. Requires --name.
   --name <name>             Accessible name for --role. Exact match.
   --group-title <text>      Optional tab-group label for open/goto. A new title starts a new group.
@@ -368,10 +370,13 @@ function buildHandlerInput(operation, args) {
       if (args.label) {
         input.label = args.label;
       }
-      input.text = typeof args.text === "string" ? args.text : "";
-      if (!input.selector && !input.label) {
-        fail("type requires --selector or --label");
+      if (typeof args.ref === "string" && args.ref.trim()) {
+        input.ref = args.ref.trim();
       }
+      if (typeof args.text !== "string") {
+        fail("type requires --text (target with --ref, --label, or --selector; or omit them to type into the focused field)");
+      }
+      input.text = args.text;
       break;
     case "evaluate":
       if (typeof args.code !== "string") {
