@@ -509,6 +509,8 @@ export async function probeRelay(timeoutMs = 800) {
     lastRelayInfo = await fetchJson(CURRENT_RELAY_URL, { timeoutMs });
     return lastRelayInfo;
   } catch {
+    // A relay that stopped answering must not keep the last browser's name.
+    lastRelayInfo = null;
     return null;
   }
 }
@@ -4551,6 +4553,8 @@ Resolved placeholder values are redacted from tool output.`,
       fieldKeys: Object.keys(input.fields || {}),
       substituted: sub.substituted,
     });
+    // `via` describes this invocation only, never a probe from an earlier call.
+    lastRelayInfo = null;
     try {
       const result = await runCurrentOperation(input, timeoutMs);
       return redactSensitiveObject(

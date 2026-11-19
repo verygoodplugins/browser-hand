@@ -136,6 +136,52 @@ test("via names the browser, CLI and relay a command used", () => {
   assert.equal(cliNameForEnv({}), "browser-hand");
 });
 
+test("via never names a browser from an earlier probe once the relay is gone", async () => {
+  // Same process, two doctor calls: Safari answers the first, then the relay stops.
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ extensionConnected: true, browser: { name: "Safari", version: "27" } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const toolUrl = new URL("../src/tool.js", import.meta.url).href;
+  const script = `
+    const { default: tool } = await import(${JSON.stringify(toolUrl)});
+    const first = await tool.handler({ mode: "current", operation: "doctor", timeoutMs: 3000 });
+    process.stdout.write(JSON.stringify({ first: first.via }) + "\\n");
+    await new Promise((r) => process.stdin.once("data", r));
+    const second = await tool.handler({ mode: "current", operation: "doctor", timeoutMs: 3000 });
+    process.stdout.write(JSON.stringify({ second: second.via ?? null, status: second.status }) + "\\n");
+    process.exit(0);
+  `;
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, DEV_BROWSER_RELAY_PORT: String(port), LOG_LEVEL: "error" },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const lines = [];
+  let buffer = "";
+  const done = new Promise((resolve) => child.on("exit", resolve));
+  child.stdout.on("data", async (chunk) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) !== -1) {
+      const line = JSON.parse(buffer.slice(0, index));
+      buffer = buffer.slice(index + 1);
+      lines.push(line);
+      if (line.first !== undefined) {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+        child.stdin.write("go\n");
+      }
+    }
+  });
+  await done;
+  assert.match(lines[0].first, /^Safari 27 via browser-hand, relay 127\.0\.0\.1:/);
+  assert.equal(lines[1].status, "relay_down");
+  assert.equal(lines[1].second, null);
+});
+
 /** Stub relay recording what the CLI sends; the real relay is covered in relay/src/local-file-server.test.ts. */
 async function withStubRelay(reply, fn) {
   const requests = [];
