@@ -133,6 +133,8 @@ test("Safari doctor uses Safari's reported toggle instead of guessing (#105)", (
   // The Safari checkbox is on, so point at the extension's own Active switch.
   assert.match(on.action, /not connected to the relay/);
   assert.match(on.action, /switch it to Active/);
+  // A disabled extension has no toolbar button, so the checkbox stays as the fallback.
+  assert.match(on.action, /button is missing, check that it is ticked in Safari > Settings > Extensions > Browser Hand/);
   assert.doesNotMatch(on.action, /most likely/);
   assert.equal(
     classifyDevBrowserDoctor({ ...base, safariRunning: false, safariExtension: { enabled: true } }).action.startsWith("Safari is not running"),

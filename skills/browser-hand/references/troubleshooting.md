@@ -18,7 +18,8 @@
   Browser Hand app (`safariExtension.enabled` in the result). With `true`,
   Safari's checkbox is on, so the extension's own Active switch is off or its
   background page is asleep: ask the user to click the Browser Hand toolbar
-  button and switch it to Active, or open a page in Safari. When Safari's
+  button and switch it to Active, or open a page in Safari (if the button is
+  missing, check Safari's checkbox). When Safari's
   setting can't be read, the action says whether Safari is not running or the
   extension is most likely turned off.
 - **`extension_disabled`** → Safari reports the Browser Hand extension turned

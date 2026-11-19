@@ -987,7 +987,7 @@ export function classifyDevBrowserDoctor({
         status: "extension_disconnected",
         // Safari's checkbox is on, so the extension's own Active switch (toolbar popup,
         // kept across restarts) is off, or its background page is asleep.
-        action: "Browser Hand is turned on in Safari but is not connected to the relay. Ask the user to click the Browser Hand toolbar button and switch it to Active. If it already shows Active, open a web page in Safari to wake it, then rerun doctor.",
+        action: `Browser Hand is turned on in Safari but is not connected to the relay. Ask the user to click the Browser Hand toolbar button and switch it to Active. If it already shows Active, open a web page in Safari to wake it, then rerun doctor. If the button is missing, check that it is ticked in ${SAFARI_EXTENSION_SETTING}.`,
       };
     }
     return {
@@ -1176,7 +1176,7 @@ async function ensureRelayConnected(timeoutMs) {
     const enabled = safari ? readSafariExtensionState()?.enabled : null;
     const fix = safari
       ? enabled === true
-        ? "Browser Hand is turned on in Safari but is not connected to the relay. Click its toolbar button and switch it to Active (or open a web page in Safari to wake it), then retry."
+        ? `Browser Hand is turned on in Safari but is not connected to the relay. Click its toolbar button and switch it to Active (or open a web page in Safari to wake it), then retry. If the button is missing, check that it is ticked in ${SAFARI_EXTENSION_SETTING}.`
         : `${enabled === false ? "Browser Hand is turned off in Safari. " : ""}Turn it on in ${SAFARI_EXTENSION_SETTING}, then retry.`
       : `Enable the Browser Hand extension in the browser you want to drive (Chromium: Load unpacked → extension/dist/chrome-mv3) and confirm it points to ws://${CURRENT_RELAY_HOST}:${CURRENT_RELAY_PORT}/extension.`;
     throw new Error(
