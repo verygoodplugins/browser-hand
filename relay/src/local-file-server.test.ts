@@ -184,10 +184,11 @@ describe("local documents through the relay", () => {
       assert.equal(await upgrade(relayPort, path, origin), 403, path);
     }
 
-    // Controls: the CLI (no doc Origin/Host) and unrelated origins are unaffected.
+    // Controls: the CLI (no Origin, loopback Host) is unaffected; an unrelated web
+    // origin is refused too (see origin-guard.test.ts).
     assert.equal(await upgrade(relayPort, "/cdp"), 101);
     assert.equal((await raw(relayPort, "/pages")).status, 200);
-    assert.equal((await raw(relayPort, "/", { Origin: "http://localhost:3000" })).status, 200);
+    assert.equal((await raw(relayPort, "/", { Origin: "http://localhost:3000" })).status, 403);
   });
 
   test("document-origin isolation also applies to paths with encoded line terminators", async () => {

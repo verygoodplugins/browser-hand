@@ -7,7 +7,14 @@ import { serveRelay } from "./relay.js";
 const host = (process.env.HOST || process.env.DEV_BROWSER_RELAY_HOST || "127.0.0.1").trim();
 const port = Number(process.env.PORT || process.env.DEV_BROWSER_RELAY_PORT || 9333);
 
-const server = await serveRelay({ host, port });
+let server: Awaited<ReturnType<typeof serveRelay>>;
+try {
+  server = await serveRelay({ host, port });
+} catch (err) {
+  // Misconfiguration (e.g. a non-loopback HOST): say why, no stack trace.
+  console.error(`[browser-hand-relay] ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
 console.error(`[browser-hand-relay] listening on http://${host}:${port}`);
 console.error(`[browser-hand-relay] extension: ws://${host}:${port}/extension`);
 console.error(`[browser-hand-relay] cdp:       ${server.wsEndpoint}`);

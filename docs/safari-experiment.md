@@ -80,6 +80,15 @@ Settings → Developer → **Add Temporary Extension…** after enabling unsigne
 extensions. That is not the persistent signed installation. The signed app was
 verified with **Allow unsigned extensions** turned off.
 
+## Relay access
+
+The relay refuses web pages and other extensions; see "Relay access control" in
+the README. Safari assigns each installation its own `safari-web-extension://`
+origin, so the relay accepts any origin with that scheme by default. Only
+installed Safari extensions can have one; web pages cannot. To accept just yours,
+set `BROWSER_HAND_ALLOWED_ORIGINS` to its origin (the relay logs a rejected origin
+when it refuses one).
+
 ## Capabilities and limits
 
 Safari uses a nonpersistent background page and the scripting transport. It

@@ -10,7 +10,10 @@
 - **`extension_asleep`** → click the Browser Hand Chrome toolbar icon once to
   wake the MV3 service worker; relay-side traffic does not wake it.
 - **`extension_disconnected`** → enable the extension in the default Chrome
-  profile and confirm it points at `ws://127.0.0.1:9333/extension`.
+  profile and confirm it points at `ws://127.0.0.1:9333/extension`. If the relay
+  log shows `Rejected request from Origin "chrome-extension://…"`, the extension
+  was loaded from a different path than the relay's checkout: restart the relay
+  from that checkout, or set `BROWSER_HAND_ALLOWED_ORIGINS` to that origin.
 - **`target_registry_empty`** → the socket is alive but tab inventory is not
   reaching the relay. Reload the extension in `chrome://extensions`, confirm
   same-profile permissions, then rerun doctor.
