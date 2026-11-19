@@ -132,6 +132,10 @@ test("via names the browser, CLI and relay a command used", () => {
     describeVia({ extensionConnected: false }, { cli: "browser-hand", host: "127.0.0.1", port: 9333 }),
     "no browser connected via browser-hand, relay 127.0.0.1:9333"
   );
+  assert.equal(
+    describeVia({ extensionConnected: true }, { cli: "browser-hand", host: "127.0.0.1", port: 9333 }),
+    "unknown browser via browser-hand, relay 127.0.0.1:9333"
+  );
   assert.equal(cliNameForEnv({ BROWSER_HAND_SAFARI_STANDALONE: "1" }), "browser-hand-safari");
   assert.equal(cliNameForEnv({}), "browser-hand");
 });

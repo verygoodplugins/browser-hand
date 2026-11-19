@@ -528,10 +528,14 @@ export function describeVia(
   relayInfo,
   { cli = cliNameForEnv(), host = CURRENT_RELAY_HOST, port = CURRENT_RELAY_PORT } = {}
 ) {
-  const browser = relayInfo?.extensionConnected === true ? reportedHostBrowser(relayInfo) : null;
+  const connected = relayInfo?.extensionConnected === true;
+  const browser = connected ? reportedHostBrowser(relayInfo) : null;
+  // An older extension can be connected without reporting its browser.
   const who = browser?.name
     ? [browser.name, browser.version].filter(Boolean).join(" ")
-    : "no browser connected";
+    : connected
+      ? "unknown browser"
+      : "no browser connected";
   return `${who} via ${cli}, relay ${host}:${port}`;
 }
 
