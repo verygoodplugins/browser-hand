@@ -3821,11 +3821,24 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
     const view = el.ownerDocument.defaultView || window;
-    const fire = (Ctor, type, extra) => {
-      el.dispatchEvent(new Ctor(type, Object.assign({
-        bubbles: true, cancelable: true, composed: true, view,
-        button: 0, clientX: cx, clientY: cy,
-      }, extra)));
+    const fire = (Ctor, type, extra) => el.dispatchEvent(new Ctor(type, Object.assign({
+      bubbles: true, cancelable: true, composed: true, view,
+      button: 0, clientX: cx, clientY: cy,
+    }, extra)));
+    // A real mousedown focuses a text field unless a handler cancels it; a
+    // synthetic one does not. Focus at that point, so a click handler that
+    // moves focus elsewhere still wins, and "click --ref e1" then "type" lands
+    // in e1 rather than whichever field typed last.
+    const focusLikeMousedown = () => {
+      if (el.isConnected === false) return;
+      const tag = String(el.tagName || '').toUpperCase();
+      const textEntry = el.isContentEditable === true
+        || tag === 'TEXTAREA'
+        || (tag === 'INPUT' && !/^(button|submit|reset|image|file|checkbox|radio|hidden|range|color)$/i.test(String(el.type || '')));
+      const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
+      if (textEntry && root.activeElement !== el && typeof el.focus === 'function') {
+        try { el.focus({ preventScroll: true }); } catch (err) { /* best effort */ }
+      }
     };
     // Full pointer sequence: a bare el.click() fires one untrusted click event
     // and is ignored by handlers bound to pointerdown/mousedown, which is most
@@ -3851,8 +3864,9 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
       // A handler can disable the control mid-sequence. A native interaction
       // stops activating it at that point; dispatchEvent would not.
       if (step[1] === 'click' && isDisabled(el)) { interrupted = 'click (control became disabled)'; break; }
-      fire(step[0], step[1], step[2]);
+      const proceeded = fire(step[0], step[1], step[2]);
       sent[step[1]] = true;
+      if (step[1] === 'mousedown' && proceeded !== false) focusLikeMousedown();
     }
     if (interrupted) {
       // pointerdown already bubbled to the document and may have left pressed or
@@ -3877,19 +3891,6 @@ export function buildClickExpression({ selector, text, ref, role, name } = {}) {
             }, extra)));
           } catch (err) { /* best effort */ }
         }
-      }
-    }
-
-    // A real mousedown focuses a text field; a synthetic one does not. Without
-    // this, "click --ref e1" then "type" wrote into whichever field typed last.
-    if (!interrupted && el.isConnected !== false) {
-      const tag = String(el.tagName || '').toUpperCase();
-      const textEntry = el.isContentEditable === true
-        || tag === 'TEXTAREA'
-        || (tag === 'INPUT' && !/^(button|submit|reset|image|file|checkbox|radio|hidden|range|color)$/i.test(String(el.type || '')));
-      const root = typeof el.getRootNode === 'function' ? el.getRootNode() : document;
-      if (textEntry && root.activeElement !== el && typeof el.focus === 'function') {
-        try { el.focus({ preventScroll: true }); } catch (err) { /* best effort */ }
       }
     }
 
@@ -3990,6 +3991,10 @@ export async function typeIntoControl(el, text, { delayMs = 0 } = {}) {
     await insertText();
     if (!stuck() && !usesAtomicValueAssign(el)) execInsert();
   }
+  // Read back after change: a change handler may clear or reject the value.
+  try {
+    el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+  } catch {}
   return { mode, stuck: stuck(), attempts, actual: readback() };
 }
 
@@ -4132,7 +4137,6 @@ export function buildTypeExpression({ selector, label, ref, text }) {
       written = { mode: 'select', stuck: fillValueStuck(el, str, 'select'), attempts: ['select'], actual: String(el.value ?? '') };
     } else {
       written = await typeIntoControl(el, str, { delayMs: insertTextDelayMs(el, str) });
-      el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     }
     const result = {
       success: written.stuck === true,

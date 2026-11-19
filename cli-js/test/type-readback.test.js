@@ -150,6 +150,20 @@ test("a field that rejects every write reports stuck:false with what it holds", 
   assert.equal(out.actual, "");
 });
 
+test("a change handler that clears the field makes type fail", async () => {
+  const doc = makeDoc();
+  const el = makeInput(doc);
+  const dispatch = el.dispatchEvent;
+  el.dispatchEvent = (event) => {
+    dispatch(event);
+    if (event.type === "change") el.value = "";
+    return true;
+  };
+  const out = await typeIntoControl(el, "gone on change");
+  assert.equal(out.stuck, false);
+  assert.equal(out.actual, "");
+});
+
 test("inline autocomplete that extends the typed text still counts as typed", async () => {
   const doc = makeDoc();
   const el = makeInput(doc, {
