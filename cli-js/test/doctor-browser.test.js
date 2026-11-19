@@ -13,7 +13,10 @@ import test from "node:test";
 
 import {
   classifyDevBrowserDoctor,
+  cliNameForEnv,
+  describeVia,
   isDebuggerUnavailableError,
+  otherRelayHint,
   rewriteLocalFileUrl,
 } from "../src/tool.js";
 
@@ -90,9 +93,97 @@ test("standalone Safari doctor describes its own setup and extension", () => {
   assert.match(classifyDevBrowserDoctor({ safariStandalone: true }).action, /Set up Browser Hand/);
   const disconnected = classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false } });
   assert.equal(disconnected.status, "extension_disconnected");
-  assert.match(disconnected.action, /Safari Settings/);
+  assert.match(disconnected.action, /Safari > Settings > Extensions > Browser Hand/);
   assert.doesNotMatch(disconnected.action, /Chrome|unpacked/);
   assert.match(classifyDevBrowserDoctor({ safariStandalone: true, relayInfo: { extensionConnected: false }, recentExtensionDisconnected: true }).action, /Safari/);
+});
+
+test("Safari doctor tells a stopped Safari apart from a turned-off extension", () => {
+  const stopped = classifyDevBrowserDoctor({
+    safariStandalone: true,
+    safariRunning: false,
+    relayInfo: { extensionConnected: false },
+  });
+  assert.match(stopped.action, /Safari is not running/);
+  const off = classifyDevBrowserDoctor({
+    safariStandalone: true,
+    safariRunning: true,
+    relayInfo: { extensionConnected: false },
+  });
+  assert.match(off.action, /most likely turned off/);
+  assert.match(off.action, /Safari > Settings > Extensions > Browser Hand/);
+});
+
+test("an empty default relay points at the relay that has a browser", () => {
+  const other = { port: 19334, browser: { name: "Safari", version: "27.0.1" }, cli: "browser-hand-safari" };
+  const out = classifyDevBrowserDoctor({ relayInfo: { extensionConnected: false }, otherRelay: other });
+  assert.equal(out.status, "extension_disconnected");
+  assert.match(out.action, /Safari is connected on 127\.0\.0\.1:19334; run browser-hand-safari/);
+  assert.equal(otherRelayHint(null), "");
+});
+
+test("via names the browser, CLI and relay a command used", () => {
+  const info = { extensionConnected: true, browser: { name: "Safari", version: "27.0.1" } };
+  assert.equal(
+    describeVia(info, { cli: "browser-hand-safari", host: "127.0.0.1", port: 19334 }),
+    "Safari 27.0.1 via browser-hand-safari, relay 127.0.0.1:19334"
+  );
+  assert.equal(
+    describeVia({ extensionConnected: false }, { cli: "browser-hand", host: "127.0.0.1", port: 9333 }),
+    "no browser connected via browser-hand, relay 127.0.0.1:9333"
+  );
+  assert.equal(
+    describeVia({ extensionConnected: true }, { cli: "browser-hand", host: "127.0.0.1", port: 9333 }),
+    "unknown browser via browser-hand, relay 127.0.0.1:9333"
+  );
+  assert.equal(cliNameForEnv({ BROWSER_HAND_SAFARI_STANDALONE: "1" }), "browser-hand-safari");
+  assert.equal(cliNameForEnv({}), "browser-hand");
+});
+
+test("via never names a browser from an earlier probe once the relay is gone", async () => {
+  // Same process, two doctor calls: Safari answers the first, then the relay stops.
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ extensionConnected: true, browser: { name: "Safari", version: "27" } }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const toolUrl = new URL("../src/tool.js", import.meta.url).href;
+  const script = `
+    const { default: tool } = await import(${JSON.stringify(toolUrl)});
+    const first = await tool.handler({ mode: "current", operation: "doctor", timeoutMs: 3000 });
+    process.stdout.write(JSON.stringify({ first: first.via }) + "\\n");
+    await new Promise((r) => process.stdin.once("data", r));
+    const second = await tool.handler({ mode: "current", operation: "doctor", timeoutMs: 3000 });
+    process.stdout.write(JSON.stringify({ second: second.via ?? null, status: second.status }) + "\\n");
+    process.exit(0);
+  `;
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["--input-type=module", "-e", script], {
+    env: { ...process.env, DEV_BROWSER_RELAY_PORT: String(port), LOG_LEVEL: "error" },
+    stdio: ["pipe", "pipe", "ignore"],
+  });
+  const lines = [];
+  let buffer = "";
+  const done = new Promise((resolve) => child.on("exit", resolve));
+  child.stdout.on("data", async (chunk) => {
+    buffer += chunk;
+    let index;
+    while ((index = buffer.indexOf("\n")) !== -1) {
+      const line = JSON.parse(buffer.slice(0, index));
+      buffer = buffer.slice(index + 1);
+      lines.push(line);
+      if (line.first !== undefined) {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+        child.stdin.write("go\n");
+      }
+    }
+  });
+  await done;
+  assert.match(lines[0].first, /^Safari 27 via browser-hand, relay 127\.0\.0\.1:/);
+  assert.equal(lines[1].status, "relay_down");
+  assert.equal(lines[1].second, null);
 });
 
 /** Stub relay recording what the CLI sends; the real relay is covered in relay/src/local-file-server.test.ts. */

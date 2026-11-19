@@ -26,6 +26,8 @@ Run `doctor` before authenticated multi-step work. Only `status: "tab_bootstrap_
 
 Default doctor JSON is `status`, `tabCount`, `active` (the one current tab), and a hint. It does not list every tab. `tabs` is the inventory.
 
+Every non-quiet command result also carries `via`, for example `"Safari 27.0.1 via browser-hand-safari, relay 127.0.0.1:19334"`. Read it when it matters which browser did the work. If this CLI's relay has no browser but the other well-known relay does (9333 vs 19334), the error and doctor's `otherRelay` name the CLI to run instead.
+
 `open` creates or reuses a **named** tab, then navigates. Prefer names for anything longer than one command.
 
 On the first `open` of a task, add a short `--group-title`. Tabs Browser Hand creates join a Chrome tab group with that title and a color chosen from Chrome's palette (grey excluded). The same title keeps joining that group. A different title starts a new group and a new color. Omit the flag and the group stays named Browser Hand.
@@ -107,7 +109,15 @@ browser-hand autofill-profile --page-name smoke --context personal
 
 **Default: background** — do not activate the tab or focus the Chrome window.
 
-Popup → Focus while automating: Background | Tab only | Window.
+Popup → Focus while automating. It decides what happens when Browser Hand opens or brings forward a tab:
+
+| Setting | What it does | Use it when |
+|---|---|---|
+| Background (default) | Never switches tabs or raises the browser. New tabs open behind your current one. | You are working in another app or tab and the agent should stay out of your way. |
+| Activate tab only | Switches the browser window to the automation tab, but does not raise the browser over other apps. If the browser is behind another app, you see nothing change. | The browser is already frontmost and you want to follow along without it jumping above other apps. |
+| Focus browser window | Switches to the automation tab and brings that browser window to the front. | Someone is watching the session (screen share, voice call). This is the setting to recommend for human-watched work. |
+
+Each `open`/`goto`/`focus` can override the setting once with `--focus tab|window` (plus `--reason`).
 
 ### One-shot focus (human in the loop)
 
