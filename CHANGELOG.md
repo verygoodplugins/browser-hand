@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0](https://github.com/verygoodplugins/browser-hand/compare/browser-hand-v0.5.0...browser-hand-v0.6.0) (2026-11-19)
+
+
+### Features
+
+* **cli:** report which browser and relay each command used ([#102](https://github.com/verygoodplugins/browser-hand/issues/102)) ([10b5201](https://github.com/verygoodplugins/browser-hand/commit/10b5201d5a0a4e10876917f22e8ac486787d0f3b))
+* **safari:** doctor reads the extension's real on/off state ([#112](https://github.com/verygoodplugins/browser-hand/issues/112)) ([6878bf8](https://github.com/verygoodplugins/browser-hand/commit/6878bf854ddf773f7705cda61397057b57c1ba2c))
+
+
+### Bug Fixes
+
+* **cli:** make type verify the value and accept refs or the focused field ([#100](https://github.com/verygoodplugins/browser-hand/issues/100)) ([26947fb](https://github.com/verygoodplugins/browser-hand/commit/26947fb7751051231a7d8ddd32348fb2d2a77de2))
+* **daemon:** upgrade Zod to 4.6.7 ([#110](https://github.com/verygoodplugins/browser-hand/issues/110)) ([53517fb](https://github.com/verygoodplugins/browser-hand/commit/53517fbacf3c289c1787344a324f3a8e8e41bc2c))
+* **extension:** evaluate through a Trusted Types policy on strict-CSP pages ([#101](https://github.com/verygoodplugins/browser-hand/issues/101)) ([df080e4](https://github.com/verygoodplugins/browser-hand/commit/df080e41e46957a13131fbe5a1a40e94da0e4669))
+* **relay:** restrict relay access to the Browser Hand extension (security) ([#109](https://github.com/verygoodplugins/browser-hand/issues/109)) ([d7dda02](https://github.com/verygoodplugins/browser-hand/commit/d7dda025ca883b4dc90f71d1fc58b26a366083db))
+
 ## [0.5.0](https://github.com/verygoodplugins/browser-hand/compare/browser-hand-v0.4.0...browser-hand-v0.5.0) (2026-11-14)
 
 
