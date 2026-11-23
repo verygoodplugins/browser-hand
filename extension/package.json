@@ -15,7 +15,7 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.3.7",
-    "typescript": "^5.0.0",
+    "typescript": "^7.0.2",
     "vitest": "^3.0.0",
     "wxt": "^0.21.5"
   }
