@@ -19,8 +19,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.19",
-    "@hono/node-ws": "^1.2.0",
-    "hono": "^4.13.18"
+    "@hono/node-ws": "^1.3.2",
+    "hono": "^4.13.20"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
